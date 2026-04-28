@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Set
 
@@ -22,7 +25,9 @@ from PySide6.QtWidgets import (
 
 from encoder_worker import EncoderWorker
 from download_worker import DownloadWorker
-from ffmpeg_utils import build_ffmpeg_command, detect_gpu_encoders
+from ffmpeg_utils import build_ffmpeg_command, detect_gpu_encoders, detect_gpu_hardware, check_ffmpeg_availability
+from styles import LIQUID_GLASS_STYLE
+from cache_utils import get_cache_manager
 
 
 class DropArea(QLabel):
@@ -59,12 +64,16 @@ class ConverterWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Converter by Lee")
-        self.setFixedSize(520, 440)
+        self.setFixedSize(800, 700)
+
+        # Check ffmpeg availability
+        self.ffmpeg_available, ffmpeg_error = check_ffmpeg_availability()
 
         self.current_file: Path | None = None
         self.worker: EncoderWorker | None = None
         self.download_worker: DownloadWorker | None = None
         self.available_gpu_encoders: Set[str] = set()
+        self.detected_gpu_hardware: List[str] = []
 
         self._build_ui()
         self._populate_gpu_encoders()
@@ -121,25 +130,48 @@ class ConverterWindow(QWidget):
         self.file_path_edit.setReadOnly(True)
         file_info_layout.addWidget(self.file_path_edit, 0, 1)
 
-        self.format_label = QLabel("Output format (optional):")
+        self.format_label = QLabel("Output format:")
         file_info_layout.addWidget(self.format_label, 1, 0)
-        self.format_edit = QLineEdit()
-        self.format_edit.setPlaceholderText("e.g. mp4, mkv, jpg, png (optional)")
-        file_info_layout.addWidget(self.format_edit, 1, 1)
+        self.format_combo = QComboBox()
+        self.format_combo.setEditable(True)
+        self.format_combo.addItem("Auto (default)", "")
+        self.format_combo.addItem("MP4", "mp4")
+        self.format_combo.addItem("MKV", "mkv")
+        self.format_combo.addItem("AVI", "avi")
+        self.format_combo.addItem("MOV", "mov")
+        self.format_combo.addItem("JPG", "jpg")
+        self.format_combo.addItem("JPEG", "jpeg")
+        self.format_combo.addItem("PNG", "png")
+        self.format_combo.addItem("WEBP", "webp")
+        file_info_layout.addWidget(self.format_combo, 1, 1)
 
-        self.target_size_label = QLabel("Target size MB (size reduce, optional):")
+        self.target_size_label = QLabel("Size reduction:")
         file_info_layout.addWidget(self.target_size_label, 2, 0)
+        self.target_size_combo = QComboBox()
+        self.target_size_combo.addItem("None (keep original)", "none")
+        self.target_size_combo.addItem("Target size (MB)", "mb")
+        self.target_size_combo.addItem("Reduce by (%)", "percent")
+        self.target_size_combo.addItem("Quality preset", "preset")
+        file_info_layout.addWidget(self.target_size_combo, 2, 1)
+
         self.target_size_edit = QLineEdit()
-        self.target_size_edit.setPlaceholderText("e.g. 50  (approx. output size in MB)")
-        file_info_layout.addWidget(self.target_size_edit, 2, 1)
+        self.target_size_edit.setPlaceholderText("e.g. 50")
+        file_info_layout.addWidget(self.target_size_edit, 3, 1)
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("High quality (large file)", "high")
+        self.preset_combo.addItem("Medium quality", "medium")
+        self.preset_combo.addItem("Low quality (small file)", "low")
+        file_info_layout.addWidget(self.preset_combo, 3, 1)
+        self.preset_combo.setVisible(False)
 
         self.resolution_label = QLabel("Resolution (video):")
-        file_info_layout.addWidget(self.resolution_label, 3, 0)
+        file_info_layout.addWidget(self.resolution_label, 4, 0)
         self.resolution_combo = QComboBox()
         self.resolution_combo.addItem("Original", None)
         self.resolution_combo.addItem("1080p (1920x1080)", "1920:1080")
         self.resolution_combo.addItem("4K (3840x2160)", "3840:2160")
-        file_info_layout.addWidget(self.resolution_combo, 3, 1)
+        file_info_layout.addWidget(self.resolution_combo, 4, 1)
 
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_encoding)
@@ -159,8 +191,12 @@ class ConverterWindow(QWidget):
         self.convert_radio.toggled.connect(self._update_mode_visibility)
         self.reduce_radio.toggled.connect(self._update_mode_visibility)
         self.download_radio.toggled.connect(self._update_mode_visibility)
+        self.target_size_combo.currentIndexChanged.connect(self._update_size_controls)
 
         self._update_mode_visibility()
+
+        # Apply the liquid glass stylesheet
+        self.setStyleSheet(LIQUID_GLASS_STYLE)
 
     def _set_ui_enabled(self, enabled: bool):
         self.convert_radio.setEnabled(enabled)
@@ -169,8 +205,10 @@ class ConverterWindow(QWidget):
         self.gpu_combo.setEnabled(enabled)
         self.drop_area.setEnabled(enabled)
         self.drop_area.setAcceptDrops(enabled)
-        self.format_edit.setEnabled(enabled)
+        self.format_combo.setEnabled(enabled)
+        self.target_size_combo.setEnabled(enabled)
         self.target_size_edit.setEnabled(enabled)
+        self.preset_combo.setEnabled(enabled)
         self.resolution_combo.setEnabled(enabled)
         self.start_button.setEnabled(enabled)
         self.url_edit.setEnabled(enabled)
@@ -178,7 +216,23 @@ class ConverterWindow(QWidget):
         self.url_format_combo.setEnabled(enabled)
 
     def _populate_gpu_encoders(self):
+        # Detect available hardware
+        self.detected_gpu_hardware = detect_gpu_hardware()
         encoders = detect_gpu_encoders()
+
+        # Update combo box header based on detected hardware
+        if self.detected_gpu_hardware:
+            hw_names = []
+            if 'nvidia' in self.detected_gpu_hardware:
+                hw_names.append('NVIDIA')
+            if 'amd' in self.detected_gpu_hardware:
+                hw_names.append('AMD')
+            if 'intel' in self.detected_gpu_hardware:
+                hw_names.append('Intel')
+            hw_string = ', '.join(hw_names)
+            self.gpu_combo.setItemText(0, f"Auto (detected: {hw_string})")
+        else:
+            self.gpu_combo.setItemText(0, "Auto (CPU only - no GPU detected)")
 
         for name, desc in encoders:
             label = f"{name} - {desc}"
@@ -218,8 +272,7 @@ class ConverterWindow(QWidget):
 
         self._set_ui_enabled(False)
         self.progress_bar.setValue(0)
-        
-        import tempfile
+
         temp_dir = Path(tempfile.gettempdir())
         
         format_type = "bestvideo+bestaudio/best"
@@ -236,9 +289,6 @@ class ConverterWindow(QWidget):
     def _on_download_finished(self, ok: bool, message: str, file_path: str):
         self._set_ui_enabled(True)
         if ok and file_path:
-            import os
-            import shutil
-            
             default_name = os.path.basename(file_path)
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -266,6 +316,15 @@ class ConverterWindow(QWidget):
             QMessageBox.critical(self, "Download Error", f"Failed to download:\n{message}")
 
     def start_encoding(self):
+        if not self.ffmpeg_available:
+            QMessageBox.critical(
+                self,
+                "ffmpeg Not Available",
+                "ffmpeg is not installed or not in PATH.\n"
+                "Please install ffmpeg and ffprobe to use this application."
+            )
+            return
+
         if not self.current_file:
             QMessageBox.information(self, "No file", "Please drag and drop a file first.")
             return
@@ -282,22 +341,71 @@ class ConverterWindow(QWidget):
             gpu_choice = "auto"
 
         target_size_mb = None
-        if is_video and not is_convert:
-            raw = self.target_size_edit.text().strip()
-            if raw:
-                try:
-                    value = float(raw)
-                    if value <= 0:
-                        raise ValueError
-                    target_size_mb = value
-                except ValueError:
-                    QMessageBox.warning(
-                        self,
-                        "Invalid size",
-                        "Please enter a positive number for target size in MB, "
-                        "or leave it empty.",
-                    )
-                    return
+        reduction_method = self.target_size_combo.currentData()
+
+        if is_video and not is_convert and reduction_method != "none":
+            if reduction_method == "mb":
+                raw = self.target_size_edit.text().strip()
+                if raw:
+                    try:
+                        value = float(raw)
+                        if value <= 0:
+                            raise ValueError
+                        target_size_mb = value
+                    except ValueError:
+                        QMessageBox.warning(
+                            self,
+                            "Invalid size",
+                            "Please enter a positive number for target size in MB.",
+                        )
+                        return
+            elif reduction_method == "percent":
+                raw = self.target_size_edit.text().strip()
+                if raw:
+                    try:
+                        percent = float(raw)
+                        if percent <= 0 or percent >= 100:
+                            raise ValueError
+
+                        # Get original file size
+                        cache_manager = get_cache_manager()
+                        original_size_bytes = cache_manager.get_file_size(self.current_file)
+                        if original_size_bytes is None:
+                            try:
+                                original_size_bytes = self.current_file.stat().st_size
+                            except OSError:
+                                QMessageBox.warning(
+                                    self,
+                                    "File error",
+                                    "Cannot read file size for percentage calculation."
+                                )
+                                return
+
+                        # Calculate target size
+                        target_size_bytes = original_size_bytes * (1 - percent / 100)
+                        target_size_mb = target_size_bytes / (1024 * 1024)
+
+                        # Ensure minimum size
+                        if target_size_mb < 1:
+                            target_size_mb = 1
+
+                    except ValueError:
+                        QMessageBox.warning(
+                            self,
+                            "Invalid percentage",
+                            "Please enter a percentage between 1 and 99.",
+                        )
+                        return
+            elif reduction_method == "preset":
+                preset = self.preset_combo.currentData()
+                # Map presets to approximate target sizes
+                # This is a rough estimate - could be improved with actual bitrate calculations
+                if preset == "high":
+                    target_size_mb = 100  # Rough estimate
+                elif preset == "medium":
+                    target_size_mb = 50   # Rough estimate
+                elif preset == "low":
+                    target_size_mb = 20   # Rough estimate
 
         target_resolution = None
         if is_video:
@@ -325,10 +433,19 @@ class ConverterWindow(QWidget):
         self.worker.start()
 
     def _determine_output_extension(self, is_video: bool, is_convert: bool) -> str:
-        custom = self.format_edit.text().strip().lstrip(".")
-        if custom:
-            return "." + custom
+        selected = self.format_combo.currentText()
+        if selected and selected != "Auto (default)":
+            # Get the extension from the item data or text
+            data = self.format_combo.currentData()
+            if data:
+                return "." + data
+            else:
+                # If user typed something, use it
+                ext = selected.strip().lstrip(".")
+                if ext:
+                    return "." + ext
 
+        # Auto/default behavior
         if is_video:
             return ".mp4"
         if is_convert:
@@ -361,11 +478,16 @@ class ConverterWindow(QWidget):
         if not is_download:
             show_format = is_convert
             self.format_label.setVisible(show_format)
-            self.format_edit.setVisible(show_format)
+            self.format_combo.setVisible(show_format)
 
             show_target_size = (not is_convert) and is_video
             self.target_size_label.setVisible(show_target_size)
-            self.target_size_edit.setVisible(show_target_size)
+            self.target_size_combo.setVisible(show_target_size)
+            if show_target_size:
+                self._update_size_controls()
+            else:
+                self.target_size_edit.setVisible(False)
+                self.preset_combo.setVisible(False)
 
             self.resolution_label.setVisible(is_video)
             self.resolution_combo.setVisible(is_video)
@@ -383,6 +505,24 @@ class ConverterWindow(QWidget):
             ".webm",
         }
         return self.current_file.suffix.lower() in video_exts
+
+    def _update_size_controls(self):
+        """Update visibility of size control inputs based on selected method."""
+        method = self.target_size_combo.currentData()
+        if method == "none":
+            self.target_size_edit.setVisible(False)
+            self.preset_combo.setVisible(False)
+        elif method == "mb":
+            self.target_size_edit.setVisible(True)
+            self.target_size_edit.setPlaceholderText("e.g. 50  (target size in MB)")
+            self.preset_combo.setVisible(False)
+        elif method == "percent":
+            self.target_size_edit.setVisible(True)
+            self.target_size_edit.setPlaceholderText("e.g. 50  (reduce by %)")
+            self.preset_combo.setVisible(False)
+        elif method == "preset":
+            self.target_size_edit.setVisible(False)
+            self.preset_combo.setVisible(True)
 
     def _on_encoding_finished(self, ok: bool, message: str):
         self._set_ui_enabled(True)

@@ -29,7 +29,7 @@ A modern, GPU-accelerated desktop application for converting media, reducing fil
 
 ### Option 1: Pre-compiled Executable (Recommended)
 - **Windows 10/11**
-- **No installation required** - Download the latest `Converter.exe` from [Releases](https://github.com/yourusername/converter/releases)
+- **No installation required** - Download the latest `Converter.exe` from [Releases](https://github.com/leeisfailing/Converter-Size-Reducer/releases)
 - Includes bundled ffmpeg binaries
 
 ### Option 2: Run from Source
@@ -46,14 +46,14 @@ A modern, GPU-accelerated desktop application for converting media, reducing fil
 ## Installation & Running
 
 ### Using Pre-compiled Executable
-1. Download `Converter.exe` from the [Releases](https://github.com/yourusername/converter/releases) page
+1. Download `Converter.exe` from the [Releases](https://github.com/leeisfailing/Converter-Size-Reducer/releases) page
 2. Double-click to run - no installation required!
 
 ### Running from Source
 1. Clone or download the repository:
    ```bash
-   git clone https://github.com/yourusername/converter.git
-   cd converter
+   git clone https://github.com/leeisfailing/Converter-Size-Reducer.git
+   cd Converter-Size-Reducer
    ```
 2. Install Python dependencies:
    ```bash

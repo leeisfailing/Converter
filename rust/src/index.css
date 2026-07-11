@@ -1,0 +1,257 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --glass-bg: #0f1117;
+  --glass-panel: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-accent: #5dadec;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(135deg, #0a0a1a 0%, #121228 40%, #0d1525 100%);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Glass panel base */
+.glass-panel {
+  background: var(--glass-panel);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Glass input */
+.glass-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.glass-input:focus {
+  border-color: rgba(93, 173, 236, 0.5);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 0 3px rgba(93, 173, 236, 0.1);
+}
+
+.glass-input::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.glass-input:read-only {
+  color: rgba(255, 255, 255, 0.5);
+  cursor: default;
+}
+
+/* Glass select / combo */
+.glass-select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.glass-select:focus {
+  border-color: rgba(93, 173, 236, 0.5);
+  box-shadow: 0 0 0 3px rgba(93, 173, 236, 0.1);
+}
+
+.glass-select option {
+  background: #1a1e2e;
+  color: #e8eaed;
+}
+
+/* Glass button */
+.glass-btn {
+  background: rgba(93, 173, 236, 0.15);
+  border: 1px solid rgba(93, 173, 236, 0.25);
+  border-radius: 10px;
+  padding: 10px 24px;
+  color: #b0d4f1;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.glass-btn:hover {
+  background: rgba(93, 173, 236, 0.25);
+  border-color: rgba(93, 173, 236, 0.4);
+  color: #dceefb;
+  box-shadow: 0 0 20px rgba(93, 173, 236, 0.12);
+}
+
+.glass-btn:active {
+  background: rgba(93, 173, 236, 0.12);
+  transform: scale(0.98);
+}
+
+.glass-btn:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.2);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.glass-btn-primary {
+  background: linear-gradient(135deg, rgba(93, 173, 236, 0.3), rgba(93, 173, 236, 0.15));
+  border-color: rgba(93, 173, 236, 0.35);
+  color: #dceefb;
+}
+
+.glass-btn-primary:hover {
+  background: linear-gradient(135deg, rgba(93, 173, 236, 0.4), rgba(93, 173, 236, 0.25));
+  box-shadow: 0 0 30px rgba(93, 173, 236, 0.18);
+}
+
+/* Glass radio */
+.glass-radio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 8px 14px;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.glass-radio:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.glass-radio input[type="radio"] {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.glass-radio input[type="radio"]:checked {
+  border-color: var(--glass-accent);
+  background: radial-gradient(circle at center, #7ec8e3, #5dadec 55%, #3a86c8);
+  box-shadow: 0 0 10px rgba(93, 173, 236, 0.3);
+}
+
+.glass-radio input[type="radio"]:checked::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: white;
+}
+
+/* Progress bar */
+.glass-progress-track {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.glass-progress-fill {
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, rgba(93, 173, 236, 0.6), rgba(126, 200, 227, 0.8), rgba(93, 173, 236, 0.6));
+  transition: width 0.3s ease;
+  box-shadow: 0 0 12px rgba(93, 173, 236, 0.3);
+}
+
+/* Drop area */
+.drop-area {
+  border: 2px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 32px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.35);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.drop-area:hover,
+.drop-area.active {
+  border-color: rgba(93, 173, 236, 0.4);
+  background: rgba(93, 173, 236, 0.04);
+  color: rgba(93, 173, 236, 0.7);
+}
+
+.drop-area.has-file {
+  border-color: rgba(93, 173, 236, 0.3);
+  background: rgba(93, 173, 236, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Section label */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  margin-bottom: 8px;
+}

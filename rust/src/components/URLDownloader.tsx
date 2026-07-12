@@ -127,7 +127,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"
+            className="text-xs text-glass-danger bg-glass-danger-dim border border-glass-danger/20 rounded-lg px-3 py-2"
           >
             {detectError || "Failed to detect URL. Try a different link."}
           </motion.div>
@@ -144,7 +144,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             className="space-y-4"
           >
             {/* Title bar */}
-            <div className="flex items-center gap-3 bg-white/[0.03] rounded-lg px-3 py-2.5">
+            <div className="flex items-center gap-3 bg-glass-surface rounded-lg px-3 py-2.5">
               {detectedInfo.thumbnail && (
                 <img
                   src={detectedInfo.thumbnail}
@@ -154,19 +154,19 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
                 />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-white/80 font-medium truncate">{detectedInfo.title}</p>
+                <p className="text-xs text-glass-text font-medium truncate">{detectedInfo.title}</p>
                 <div className="flex items-center gap-2 mt-0.5">
                   {detectedInfo.duration && (
-                    <span className="text-[10px] text-white/30 flex items-center gap-1">
+                    <span className="text-[10px] text-glass-text-muted flex items-center gap-1">
                       <Clock size={9} />
                       {detectedInfo.duration}
                     </span>
                   )}
-                  <span className="text-[10px] text-white/30">
+                  <span className="text-[10px] text-glass-text-muted">
                     {detectedInfo.format_type === "video" ? "Video" : "Audio"}
                   </span>
                   {detectedInfo.is_live && (
-                    <span className="text-[10px] text-red-400">LIVE</span>
+                    <span className="text-[10px] text-glass-danger">LIVE</span>
                   )}
                 </div>
               </div>
@@ -183,21 +183,21 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
                     disabled={disabled}
                     className={`glass-panel p-3 flex flex-col items-center gap-1 transition-all cursor-pointer ${
                       selectedFormat === fmt.value
-                        ? "border-glass-accent/40 bg-glass-accent/10"
-                        : "hover:bg-white/[0.03]"
+                        ? "border-glass-accent/40 bg-glass-accent-dim"
+                        : "hover:bg-glass-surface-hover"
                     } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                   >
                     {fmt.value.includes("mp3") ? (
-                      <Music size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-white/30"} />
+                      <Music size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
                     ) : fmt.value.includes("mp4") ? (
-                      <Film size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-white/30"} />
+                      <Film size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
                     ) : (
-                      <Monitor size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-white/30"} />
+                      <Monitor size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
                     )}
-                    <span className={`text-[11px] font-medium ${selectedFormat === fmt.value ? "text-white/80" : "text-white/40"}`}>
+                    <span className={`text-[11px] font-medium ${selectedFormat === fmt.value ? "text-glass-text" : "text-glass-text-dim"}`}>
                       {fmt.label}
                     </span>
-                    <span className="text-[9px] text-white/20">{fmt.desc}</span>
+                    <span className="text-[9px] text-glass-text-muted">{fmt.desc}</span>
                   </button>
                 ))}
               </div>
@@ -218,7 +218,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
         )}
       </AnimatePresence>
 
-      <p className="text-[10px] text-white/15 text-center">
+      <p className="text-[10px] text-glass-text-muted text-center">
         Paste any URL, click Detect to see options, then add to queue.
       </p>
     </div>

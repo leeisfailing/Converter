@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "Converter by Lee",
-        "width": 720,
-        "height": 520,
-        "resizable": true,
+        "width": 1024,
+        "height": 768,
+        "resizable": false,
         "center": true,
         "decorations": true,
         "transparent": false

@@ -1,7 +1,17 @@
+mod blur;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
+
+use blur::settings::BlurSettings;
+use blur::weighting;
+use blur::presets;
+use blur::video_info;
+use blur::renderer;
+use blur::gpu;
+use blur::config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinishedEvent {
@@ -36,6 +46,76 @@ pub struct DetectUrlResponse {
     pub format_type: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoInfoResponse {
+    pub ok: bool,
+    pub has_video_stream: bool,
+    pub fps_num: i32,
+    pub fps_den: i32,
+    pub duration: f64,
+    pub color_range: Option<String>,
+    pub pix_fmt: Option<String>,
+    pub color_space: Option<String>,
+    pub color_transfer: Option<String>,
+    pub color_primaries: Option<String>,
+    pub sample_rate: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeightPreviewResponse {
+    pub ok: bool,
+    pub weights: Vec<f64>,
+    pub labels: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetInfo {
+    pub name: String,
+    pub codec: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetListResponse {
+    pub ok: bool,
+    pub presets: Vec<PresetInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityConfigResponse {
+    pub ok: bool,
+    pub min_quality: i32,
+    pub max_quality: i32,
+    pub quality_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuInfoResponse {
+    pub ok: bool,
+    pub gpu_type: String,
+    pub has_hardware_encoder: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigInfoResponse {
+    pub name: String,
+    pub description: String,
+    pub is_preset: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigListResponse {
+    pub ok: bool,
+    pub configs: Vec<ConfigInfoResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigLoadResponse {
+    pub ok: bool,
+    pub settings: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
 pub struct PythonEngine {
     pub child: tokio::sync::Mutex<Option<Child>>,
 }
@@ -55,8 +135,8 @@ fn get_engine_path() -> String {
         .unwrap()
         .parent()
         .unwrap()
-        .join("python-engine")
-        .join("engine.py");
+        .join("Engine")
+        .join("__main__.py");
     engine_path.to_string_lossy().to_string()
 }
 
@@ -274,6 +354,363 @@ async fn cancel_operation(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ===== BLUR COMMANDS =====
+
+#[tauri::command]
+async fn detect_video_info(path: String) -> Result<VideoInfoResponse, String> {
+    let info = video_info::get_video_info(&path)?;
+
+    Ok(VideoInfoResponse {
+        ok: true,
+        has_video_stream: info.has_video_stream,
+        fps_num: info.fps_num,
+        fps_den: info.fps_den,
+        duration: info.duration,
+        color_range: info.color_range,
+        pix_fmt: info.pix_fmt,
+        color_space: info.color_space,
+        color_transfer: info.color_transfer,
+        color_primaries: info.color_primaries,
+        sample_rate: info.sample_rate,
+    })
+}
+
+#[tauri::command]
+async fn start_blur(
+    app: AppHandle,
+    input: String,
+    output: String,
+    settings_json: serde_json::Value,
+) -> Result<(), String> {
+    let settings: BlurSettings = serde_json::from_value(settings_json)
+        .map_err(|e| format!("Invalid settings: {}", e))?;
+
+    let video_info = video_info::get_video_info(&input)?;
+
+    if !video_info.has_video_stream {
+        return Err("No video stream found in input file".to_string());
+    }
+
+    let app_handle = app.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let result = renderer::run_render(
+            &input,
+            &output,
+            &video_info,
+            &settings,
+            |current, total| {
+                let percent = if total > 0 {
+                    ((current as f64 / total as f64) * 100.0) as i32
+                } else {
+                    0
+                };
+                let _ = app_handle.emit("blur-progress", percent);
+            },
+        );
+
+        match result {
+            Ok(()) => {
+                let _ = app_handle.emit(
+                    "blur-finished",
+                    FinishedEvent {
+                        ok: true,
+                        message: String::new(),
+                        file_path: output,
+                    },
+                );
+            }
+            Err(e) => {
+                let _ = app_handle.emit(
+                    "blur-finished",
+                    FinishedEvent {
+                        ok: false,
+                        message: e,
+                        file_path: String::new(),
+                    },
+                );
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_weight_preview(
+    blur_weighting: String,
+    blur_amount: f64,
+    video_fps: f64,
+    output_fps: f64,
+    gaussian_std_dev: f64,
+    gaussian_mean: f64,
+    gaussian_bound: String,
+) -> Result<WeightPreviewResponse, String> {
+    match weighting::get_weight_preview(
+        &blur_weighting,
+        blur_amount,
+        video_fps,
+        output_fps,
+        gaussian_std_dev,
+        gaussian_mean,
+        &gaussian_bound,
+    ) {
+        Ok(preview) => Ok(WeightPreviewResponse {
+            ok: true,
+            weights: preview.weights,
+            labels: preview.labels,
+            error: None,
+        }),
+        Err(e) => Ok(WeightPreviewResponse {
+            ok: false,
+            weights: vec![],
+            labels: vec![],
+            error: Some(e),
+        }),
+    }
+}
+
+#[tauri::command]
+async fn get_encode_presets(gpu_type: String) -> Result<PresetListResponse, String> {
+    let preset_list = presets::get_available_presets(&gpu_type);
+
+    Ok(PresetListResponse {
+        ok: true,
+        presets: preset_list
+            .iter()
+            .map(|p| PresetInfo {
+                name: p.name.clone(),
+                codec: p.codec.clone(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+async fn get_quality_config(codec: String) -> Result<QualityConfigResponse, String> {
+    let config = presets::get_quality_config(&codec);
+
+    Ok(QualityConfigResponse {
+        ok: true,
+        min_quality: config.min_quality,
+        max_quality: config.max_quality,
+        quality_label: config.quality_label,
+    })
+}
+
+#[tauri::command]
+async fn detect_gpu() -> Result<GpuInfoResponse, String> {
+    let info = gpu::detect_gpu_type();
+
+    Ok(GpuInfoResponse {
+        ok: true,
+        gpu_type: info.gpu_type,
+        has_hardware_encoder: info.has_hardware_encoder,
+    })
+}
+
+// ===== CONFIG COMMANDS =====
+
+#[tauri::command]
+async fn save_blur_config(
+    name: String,
+    description: String,
+    settings_json: serde_json::Value,
+) -> Result<(), String> {
+    let settings: BlurSettings = serde_json::from_value(settings_json)
+        .map_err(|e| format!("Invalid settings: {}", e))?;
+
+    config::save_config(&name, &description, &settings)
+}
+
+#[tauri::command]
+async fn load_blur_config(name: String) -> Result<ConfigLoadResponse, String> {
+    match config::load_config(&name) {
+        Ok(blur_config) => {
+            let settings_val = serde_json::to_value(&blur_config.settings)
+                .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+            Ok(ConfigLoadResponse {
+                ok: true,
+                settings: Some(settings_val),
+                error: None,
+            })
+        }
+        Err(e) => Ok(ConfigLoadResponse {
+            ok: false,
+            settings: None,
+            error: Some(e),
+        }),
+    }
+}
+
+#[tauri::command]
+async fn list_blur_configs() -> Result<ConfigListResponse, String> {
+    let configs = config::list_configs()?;
+
+    Ok(ConfigListResponse {
+        ok: true,
+        configs: configs
+            .iter()
+            .map(|c| ConfigInfoResponse {
+                name: c.name.clone(),
+                description: c.description.clone(),
+                is_preset: c.is_preset,
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+async fn delete_blur_config(name: String) -> Result<(), String> {
+    config::delete_config(&name)
+}
+
+// ===== MEDIA INFO =====
+
+#[tauri::command]
+async fn get_media_duration(path: String) -> Result<f64, String> {
+    let info = video_info::get_video_info(&path)?;
+    Ok(info.duration)
+}
+
+// ===== COMPRESSION =====
+
+#[tauri::command]
+async fn compress_file(
+    app: AppHandle,
+    input: String,
+    output: String,
+    target_size_bytes: f64,
+) -> Result<(), String> {
+    // Get video duration
+    let info = video_info::get_video_info(&input)?;
+    if info.duration <= 0.0 {
+        return Err("Cannot determine video duration".to_string());
+    }
+
+    // Calculate target bitrate (bits per second)
+    let target_bits = target_size_bytes * 8.0;
+    let duration = info.duration;
+    // Leave 5% for audio and container overhead
+    let video_bitrate = (target_bits * 0.95) / duration;
+    let video_bitrate_kbps = video_bitrate / 1000.0;
+
+    let app_handle = app.clone();
+    let input_clone = input.clone();
+    let output_clone = output.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let _ = app_handle.emit("convert-progress", 0);
+
+        // Two-pass encoding
+        let pass1 = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-i",
+                &input_clone,
+                "-c:v",
+                "libx264",
+                "-b:v",
+                &format!("{}k", video_bitrate_kbps.round()),
+                "-pass",
+                "1",
+                "-an",
+                "-f",
+                "null",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            ])
+            .output()
+            .map_err(|e| format!("Failed to start ffmpeg pass 1: {}", e))?;
+
+        if !pass1.status.success() {
+            let stderr = String::from_utf8_lossy(&pass1.stderr);
+            // Check for existing 2-pass log file issue and retry without 2-pass
+            if stderr.contains("File already exists") || stderr.contains("Overwrite") {
+                // Fall back to single-pass CRF
+                let single = std::process::Command::new("ffmpeg")
+                    .args([
+                        "-y",
+                        "-i",
+                        &input_clone,
+                        "-c:v",
+                        "libx264",
+                        "-crf",
+                        "23",
+                        "-preset",
+                        "medium",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "128k",
+                        &output_clone,
+                    ])
+                    .output()
+                    .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+
+                if !single.status.success() {
+                    return Err(format!(
+                        "ffmpeg failed: {}",
+                        String::from_utf8_lossy(&single.stderr)
+                    ));
+                }
+
+                let _ = app_handle.emit("convert-progress", 100);
+                return Ok(());
+            }
+            return Err(format!("ffmpeg pass 1 failed: {}", stderr));
+        }
+
+        let _ = app_handle.emit("convert-progress", 50);
+
+        // Pass 2
+        let pass2 = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-i",
+                &input_clone,
+                "-c:v",
+                "libx264",
+                "-b:v",
+                &format!("{}k", video_bitrate_kbps.round()),
+                "-pass",
+                "2",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                &output_clone,
+            ])
+            .output()
+            .map_err(|e| format!("Failed to start ffmpeg pass 2: {}", e))?;
+
+        if !pass2.status.success() {
+            return Err(format!(
+                "ffmpeg pass 2 failed: {}",
+                String::from_utf8_lossy(&pass2.stderr)
+            ));
+        }
+
+        // Clean up 2-pass log files
+        let _ = std::process::Command::new("ffmpeg")
+            .args(["-y", "-i", &output_clone, "-f", "null", "-"])
+            .output();
+
+        let _ = app_handle.emit("convert-progress", 100);
+        let _ = app_handle.emit(
+            "convert-finished",
+            FinishedEvent {
+                ok: true,
+                message: String::new(),
+                file_path: output_clone,
+            },
+        );
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -288,6 +725,18 @@ pub fn run() {
             start_convert,
             start_download,
             cancel_operation,
+            detect_video_info,
+            start_blur,
+            get_weight_preview,
+            get_encode_presets,
+            get_quality_config,
+            detect_gpu,
+            save_blur_config,
+            load_blur_config,
+            list_blur_configs,
+            delete_blur_config,
+            get_media_duration,
+            compress_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-export type QueueItemType = "download" | "convert";
+export type QueueItemType = "download" | "convert" | "blur" | "compress";
 export type QueueItemStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 
 export interface QueueItem {
@@ -15,6 +15,10 @@ export interface QueueItem {
   outputPath?: string;
   outputFormat?: string;
   devMode?: boolean;
+  // Compress fields
+  targetSizeBytes?: number;
+  // Blur fields
+  blurSettings?: Record<string, unknown>;
   // Result
   resultPath?: string;
   error?: string;

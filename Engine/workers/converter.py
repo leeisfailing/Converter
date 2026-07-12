@@ -1,53 +1,13 @@
-"""
-Converter Worker - File format conversion using ffmpeg.
-Auto-detects video vs photo. DEV MODE allows cross-type conversion.
-"""
-
-import os
+"""File format conversion using ffmpeg."""
 import re
 import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional
 
 
-VIDEO_EXTENSIONS = {
-    '.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv',
-    '.m4v', '.mpg', '.mpeg', '.3gp', '.ts', '.mts', '.vob',
-}
-
-PHOTO_EXTENSIONS = {
-    '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif', '.tiff',
-    '.tif', '.svg', '.ico', '.heic', '.heif', '.avif',
-}
-
-VIDEO_OUTPUT_FORMATS = {
-    'mp4': {'ext': '.mp4', 'vcodec': 'libx264', 'acodec': 'aac'},
-    'mkv': {'ext': '.mkv', 'vcodec': 'libx264', 'acodec': 'aac'},
-    'avi': {'ext': '.avi', 'vcodec': 'libx264', 'acodec': 'mp3'},
-    'mov': {'ext': '.mov', 'vcodec': 'libx264', 'acodec': 'aac'},
-    'webm': {'ext': '.webm', 'vcodec': 'libvpx-vp9', 'acodec': 'libopus'},
-    'wmv': {'ext': '.wmv', 'vcodec': 'wmv2', 'acodec': 'wmav2'},
-    'flv': {'ext': '.flv', 'vcodec': 'libx264', 'acodec': 'aac'},
-    'gif': {'ext': '.gif', 'vcodec': 'gif', 'acodec': None},
-}
-
-PHOTO_OUTPUT_FORMATS = {
-    'jpg': {'ext': '.jpg', 'quality': '2'},
-    'jpeg': {'ext': '.jpeg', 'quality': '2'},
-    'png': {'ext': '.png', 'compression': '3'},
-    'webp': {'ext': '.webp', 'quality': '80'},
-    'bmp': {'ext': '.bmp'},
-    'gif': {'ext': '.gif'},
-    'tiff': {'ext': '.tiff'},
-    'heic': {'ext': '.heic'},
-    'avif': {'ext': '.avif', 'quality': '30'},
-}
-
-
-def _find_ffmpeg() -> str:
-    """Find ffmpeg binary."""
+def find_ffmpeg() -> str:
     if getattr(sys, 'frozen', False):
         base = Path(sys._MEIPASS)
         for name in ('ffmpeg.exe', 'ffmpeg'):
@@ -55,71 +15,13 @@ def _find_ffmpeg() -> str:
             if p.exists():
                 return str(p)
 
-    app_dir = Path(__file__).parent
+    app_dir = Path(__file__).parent.parent
     for name in ('ffmpeg.exe', 'ffmpeg'):
         p = app_dir / 'bin' / name
         if p.exists():
             return str(p)
 
     return 'ffmpeg'
-
-
-def detect_file_type(file_path: str) -> str:
-    """Detect if a file is 'video', 'photo', or 'unknown'."""
-    ext = Path(file_path).suffix.lower()
-    if ext in VIDEO_EXTENSIONS:
-        return 'video'
-    elif ext in PHOTO_EXTENSIONS:
-        return 'photo'
-    return 'unknown'
-
-
-def get_allowed_output_formats(file_type: str, dev_mode: bool = False) -> dict:
-    """Get allowed output formats based on file type and dev mode."""
-    if dev_mode:
-        all_formats = {}
-        all_formats.update(VIDEO_OUTPUT_FORMATS)
-        all_formats.update(PHOTO_OUTPUT_FORMATS)
-        return all_formats
-
-    if file_type == 'video':
-        return dict(VIDEO_OUTPUT_FORMATS)
-    elif file_type == 'photo':
-        return dict(PHOTO_OUTPUT_FORMATS)
-    return {}
-
-
-def build_convert_command(
-    input_path: str,
-    output_path: str,
-    output_format: str,
-    dev_mode: bool = False,
-) -> List[str]:
-    """Build ffmpeg command for conversion."""
-    input_file = Path(input_path)
-    output_file = Path(output_path)
-    file_type = detect_file_type(input_path)
-
-    cmd = [_find_ffmpeg(), '-y', '-hide_banner', '-i', str(input_file)]
-
-    if file_type == 'video' or (dev_mode and output_format in VIDEO_OUTPUT_FORMATS):
-        fmt = VIDEO_OUTPUT_FORMATS.get(output_format, VIDEO_OUTPUT_FORMATS['mp4'])
-        cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
-        if fmt.get('acodec'):
-            cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
-        else:
-            cmd += ['-an']
-    elif file_type == 'photo' or (dev_mode and output_format in PHOTO_OUTPUT_FORMATS):
-        fmt = PHOTO_OUTPUT_FORMATS.get(output_format, PHOTO_OUTPUT_FORMATS['jpg'])
-        if 'quality' in fmt:
-            cmd += ['-q:v', fmt['quality']]
-        if 'compression' in fmt:
-            cmd += ['-compression_level', fmt['compression']]
-    else:
-        cmd += ['-c:v', 'libx264', '-c:a', 'aac']
-
-    cmd.append(str(output_file))
-    return cmd
 
 
 class ConverterWorker:
@@ -145,13 +47,12 @@ class ConverterWorker:
         self._thread.start()
 
     def _run(self):
+        from Engine.formats.video import VIDEO_OUTPUT_FORMATS
+        from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
+        from Engine.formats.detection import detect_file_type, get_allowed_output_formats
+
         try:
-            cmd = build_convert_command(
-                self.input_path,
-                self.output_path,
-                self.output_format,
-                self.dev_mode,
-            )
+            cmd = self._build_command()
 
             if self.on_progress:
                 self.on_progress(10)
@@ -216,6 +117,36 @@ class ConverterWorker:
         except Exception as exc:
             if self.on_finished:
                 self.on_finished(False, f"Conversion error: {str(exc)}", "")
+
+    def _build_command(self) -> List[str]:
+        from Engine.formats.video import VIDEO_OUTPUT_FORMATS
+        from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
+        from Engine.formats.detection import detect_file_type
+
+        input_file = Path(self.input_path)
+        output_file = Path(self.output_path)
+        file_type = detect_file_type(self.input_path)
+
+        cmd = [find_ffmpeg(), '-y', '-hide_banner', '-i', str(input_file)]
+
+        if file_type == 'video' or (self.dev_mode and self.output_format in VIDEO_OUTPUT_FORMATS):
+            fmt = VIDEO_OUTPUT_FORMATS.get(self.output_format, VIDEO_OUTPUT_FORMATS['mp4'])
+            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
+            if fmt.get('acodec'):
+                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
+            else:
+                cmd += ['-an']
+        elif file_type == 'photo' or (self.dev_mode and self.output_format in PHOTO_OUTPUT_FORMATS):
+            fmt = PHOTO_OUTPUT_FORMATS.get(self.output_format, PHOTO_OUTPUT_FORMATS['jpg'])
+            if 'quality' in fmt:
+                cmd += ['-q:v', fmt['quality']]
+            if 'compression' in fmt:
+                cmd += ['-compression_level', fmt['compression']]
+        else:
+            cmd += ['-c:v', 'libx264', '-c:a', 'aac']
+
+        cmd.append(str(output_file))
+        return cmd
 
     def stop(self):
         self._is_running = False

@@ -1,6 +1,6 @@
 # Converter
 
-A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + React) and a **Python engine** powered by ffmpeg and yt-dlp.
+A desktop media converter, URL downloader, and motion blur tool built with **Tauri 2.0** (Rust + React) and a **Python engine** powered by ffmpeg and yt-dlp.
 
 ## Features
 
@@ -10,6 +10,12 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 - Auto-detect GPU hardware encoders (NVIDIA, AMD, Intel)
 - Scale video resolution (1080p, 4K, or keep original)
 - Queue system with real-time progress tracking
+- **Motion Blur** — apply cinematic motion blur with 8 weighting functions (equal, ascending, descending, pyramid, gaussian, vegas, etc.)
+- **Interpolation** — SVP and RIFE motion interpolation for smooth slow-motion or high frame rate
+- **Deduplication** — detect and drop duplicate/stalled frames
+- **Timescale** — time stretching and compression
+- **Video filters** — sharpness, denoise, brightness, contrast, gamma, saturation
+- **Encoding presets** — GPU-optimized for NVIDIA, AMD, Intel, Mac VideoToolbox, and CPU
 - Liquid glass dark UI
 
 ## Prerequisites
@@ -19,12 +25,14 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 - [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
 - Python 3.10+
 - [ffmpeg & ffprobe](https://ffmpeg.org/download.html) (in PATH)
+- [VapourSynth](https://www.vapoursynth.com/) + vspipe (for blur mode)
+- [SVP Flow](https://www.svp-team.com/) (optional, for SVP interpolation)
 
 ## Setup
 
 ```bash
 # Install Python dependencies
-pip install -r python-engine/requirements.txt
+pip install -r Engine/requirements.txt
 
 # Install frontend dependencies
 cd rust
@@ -41,13 +49,17 @@ npm run tauri build
 
 ```
 Converter/
-├── python-engine/        # Python backend (ffmpeg, yt-dlp)
-│   ├── engine.py         # JSON-RPC entry via stdin/stdout
-│   ├── converter_worker.py
-│   ├── download_worker.py
+├── Engine/               # Python backend (ffmpeg, yt-dlp)
+│   ├── __main__.py       # JSON-RPC entry via stdin/stdout
+│   ├── core/             # IPC & config utilities
+│   ├── workers/          # Converter & downloader workers
+│   ├── handlers/         # Command handlers
+│   ├── formats/          # Format definitions & detection
 │   └── requirements.txt
 └── rust/                 # Tauri 2.0 + React frontend
     ├── src-tauri/        # Rust backend
+    │   ├── src/          # Rust modules (blur, settings, weighting, etc.)
+    │   └── vapoursynth/  # VapourSynth scripts for blur pipeline
     ├── src/              # React + TypeScript UI
     └── package.json
 ```

@@ -4,22 +4,47 @@ import { listen } from "@tauri-apps/api/event";
 import { tempDir } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
+import BlurSettings from "./components/BlurSettings";
 import QueueManager from "./components/QueueManager";
-import { startDownload, startConvert, cancelOperation } from "./lib/tauri-commands";
+import {
+  startDownload,
+  startConvert,
+  startBlur,
+  compressFile,
+  cancelOperation,
+} from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
-import { Download, ArrowRightLeft, Zap } from "lucide-react";
+import type { BlurSettings as BlurSettingsType } from "./components/BlurSettings";
+import { Download, ArrowRightLeft, Zap, Film, Sun, Moon } from "lucide-react";
 
-type Mode = "download" | "convert";
+type Mode = "download" | "convert" | "blur";
 
 let nextId = 0;
 function genId() {
   return `q-${Date.now()}-${++nextId}`;
 }
 
+function getInitialTheme(): "dark" | "light" {
+  const saved = localStorage.getItem("app_theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("download");
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [theme, setTheme] = useState<"dark" | "light">(getInitialTheme);
   const processingRef = useRef(false);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("app_theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   // Listen for progress events
   useEffect(() => {
@@ -78,11 +103,42 @@ export default function App() {
       processingRef.current = false;
     });
 
+    // Blur events
+    const unlistenBlurProgress = listen<number>("blur-progress", (e) => {
+      setQueue((prev) =>
+        prev.map((item) =>
+          item.status === "active" ? { ...item, progress: e.payload } : item
+        )
+      );
+    });
+    const unlistenBlurFinished = listen<{
+      ok: boolean;
+      message: string;
+      file_path: string;
+    }>("blur-finished", (e) => {
+      setQueue((prev) =>
+        prev.map((item) =>
+          item.status === "active"
+            ? {
+                ...item,
+                status: e.payload.ok ? "completed" : "failed",
+                progress: e.payload.ok ? 100 : item.progress,
+                resultPath: e.payload.file_path || undefined,
+                error: e.payload.ok ? undefined : e.payload.message,
+              }
+            : item
+        )
+      );
+      processingRef.current = false;
+    });
+
     return () => {
       unlistenDlProgress.then((fn) => fn());
       unlistenDlFinished.then((fn) => fn());
       unlistenCvProgress.then((fn) => fn());
       unlistenCvFinished.then((fn) => fn());
+      unlistenBlurProgress.then((fn) => fn());
+      unlistenBlurFinished.then((fn) => fn());
     };
   }, []);
 
@@ -122,6 +178,18 @@ export default function App() {
           output: nextItem.outputPath!,
           format: nextItem.outputFormat!,
           dev_mode: nextItem.devMode || false,
+        });
+      } else if (nextItem.type === "compress") {
+        await compressFile({
+          input: nextItem.inputPath!,
+          output: nextItem.outputPath!,
+          target_size_bytes: nextItem.targetSizeBytes!,
+        });
+      } else if (nextItem.type === "blur") {
+        await startBlur({
+          input: nextItem.inputPath!,
+          output: nextItem.outputPath!,
+          settings: nextItem.blurSettings!,
         });
       }
     } catch (err) {
@@ -175,19 +243,56 @@ export default function App() {
     inputPath: string,
     outputPath: string,
     outputFormat: string,
-    devMode: boolean
+    devMode: boolean,
+    compressSize?: number,
+    compressUnit?: string
   ) => {
+    const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
+
+    if (outputFormat === "compress" && compressSize) {
+      const sizeLabel = compressSize >= 1073741824
+        ? `${(compressSize / 1073741824).toFixed(1)} GB`
+        : compressSize >= 1048576
+        ? `${(compressSize / 1048576).toFixed(1)} MB`
+        : `${(compressSize / 1024).toFixed(1)} KB`;
+      addToQueue({
+        id: genId(),
+        type: "compress",
+        status: "pending",
+        progress: 0,
+        inputPath,
+        outputPath,
+        targetSizeBytes: compressSize,
+        label: `${fileName} → ${sizeLabel}`,
+        createdAt: Date.now(),
+      });
+    } else {
+      addToQueue({
+        id: genId(),
+        type: "convert",
+        status: "pending",
+        progress: 0,
+        inputPath,
+        outputPath,
+        outputFormat,
+        devMode,
+        label: `${fileName} → ${outputFormat.toUpperCase()}`,
+        createdAt: Date.now(),
+      });
+    }
+  };
+
+  const handleBlurAdd = (inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
     const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
     addToQueue({
       id: genId(),
-      type: "convert",
+      type: "blur",
       status: "pending",
       progress: 0,
       inputPath,
       outputPath,
-      outputFormat,
-      devMode,
-      label: `${fileName} → ${outputFormat.toUpperCase()}`,
+      blurSettings: blurSettings as unknown as Record<string, unknown>,
+      label: `${fileName} → Blur`,
       createdAt: Date.now(),
     });
   };
@@ -209,72 +314,91 @@ export default function App() {
   const isProcessing = queue.some((i) => i.status === "active");
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="max-w-[700px] mx-auto space-y-5 pb-8">
-        {/* Header */}
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-glass-accent/10 border border-glass-accent/20 mb-3">
-            <Zap size={24} className="text-glass-accent" />
+    <>
+      <div className="grain-overlay" />
+      <div className="h-full overflow-y-auto p-6">
+        <div className="max-w-[700px] mx-auto space-y-5 pb-8">
+          {/* Theme Toggle */}
+          <button onClick={toggleTheme} className="theme-toggle">
+            {theme === "dark" ? (
+              <Sun size={18} className="text-glass-accent-text" />
+            ) : (
+              <Moon size={18} className="text-glass-accent" />
+            )}
+          </button>
+
+          {/* Header */}
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-glass-accent-dim border border-glass-accent/30 mb-3">
+              <Zap size={24} className="text-glass-accent" />
+            </div>
+            <h1 className="text-3xl font-display text-glass-text tracking-tight">Converter</h1>
+            <p className="text-xs text-glass-text-muted mt-1">Download, convert & blur media files</p>
+          </motion.div>
+
+          {/* Mode Tabs */}
+          <div className="glass-panel p-1.5 flex gap-1">
+            {([
+              { id: "download" as Mode, label: "Download", icon: Download },
+              { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
+              { id: "blur" as Mode, label: "Blur", icon: Film },
+            ]).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => !isProcessing && setMode(id)}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                  mode === id
+                    ? "bg-glass-accent text-white shadow-glow"
+                    : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
+                }`}
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
           </div>
-          <h1 className="text-2xl font-bold text-white/95 tracking-tight">Converter</h1>
-          <p className="text-xs text-white/30 mt-1">Download & convert media files</p>
-        </motion.div>
 
-        {/* Mode Tabs */}
-        <div className="glass-panel p-1.5 flex gap-1">
-          {([
-            { id: "download" as Mode, label: "Download", icon: Download },
-            { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
-          ]).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => !isProcessing && setMode(id)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                mode === id
-                  ? "bg-glass-accent/15 text-glass-accent border border-glass-accent/20"
-                  : "text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
-              }`}
+          {/* Input Area */}
+          <AnimatePresence mode="wait">
+            {mode === "download" && (
+              <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
+              </motion.div>
+            )}
+            {mode === "convert" && (
+              <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
+              </motion.div>
+            )}
+            {mode === "blur" && (
+              <motion.div key="blur" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Cancel Button */}
+          {isProcessing && (
+            <motion.button
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleCancel}
+              className="w-full glass-btn py-2.5 bg-glass-danger-dim border-glass-danger/30 text-glass-danger hover:bg-glass-danger/20 text-sm"
             >
-              <Icon size={15} />
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Input Area */}
-        <AnimatePresence mode="wait">
-          {mode === "download" ? (
-            <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-              <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
-            </motion.div>
-          ) : (
-            <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-              <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
-            </motion.div>
+              Cancel Current
+            </motion.button>
           )}
-        </AnimatePresence>
 
-        {/* Cancel Button */}
-        {isProcessing && (
-          <motion.button
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleCancel}
-            className="w-full glass-btn py-2.5 bg-red-500/15 border-red-500/30 text-red-300 hover:bg-red-500/25 text-sm"
-          >
-            Cancel Current
-          </motion.button>
-        )}
-
-        {/* Queue */}
-        <QueueManager
-          items={queue}
-          onRemove={removeFromQueue}
-          onClearCompleted={clearCompleted}
-        />
+          {/* Queue */}
+          <QueueManager
+            items={queue}
+            onRemove={removeFromQueue}
+            onClearCompleted={clearCompleted}
+          />
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -1,11 +1,9 @@
+"""URL download worker using yt-dlp with HTTP fallback."""
 import os
 import re
-import socket
-import sys
-import threading
-import urllib.request
 import urllib.parse
-import urllib.error
+import urllib.request
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -13,14 +11,6 @@ try:
     import yt_dlp
 except ImportError:
     yt_dlp = None
-
-
-def _resource_path(relative: str) -> Path:
-    if getattr(sys, 'frozen', False):
-        base = Path(sys._MEIPASS)
-    else:
-        base = Path(__file__).parent
-    return base / relative
 
 
 class DownloadWorker:
@@ -66,6 +56,8 @@ class DownloadWorker:
                     self.on_finished(False, f"Download failed: {str(e)}", "")
 
     def _download_with_ytdlp(self):
+        from Engine.core.config import resource_path
+
         def progress_hook(d: dict):
             if not self._is_running:
                 return
@@ -95,7 +87,7 @@ class DownloadWorker:
         }
 
         if is_youtube:
-            cookies_file = _resource_path('cookies.txt')
+            cookies_file = resource_path('cookies.txt')
             if cookies_file.exists():
                 ydl_opts['cookiefile'] = str(cookies_file)
             else:

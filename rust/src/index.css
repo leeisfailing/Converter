@@ -1,12 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --glass-bg: #0f1117;
-  --glass-panel: rgba(255, 255, 255, 0.04);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-accent: #5dadec;
+  --bg: #0c0f1a;
+  --bg-gradient: linear-gradient(135deg, #0c0f1a 0%, #111827 40%, #0d1525 100%);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
+  --accent: #d4a853;
+  --accent-dim: rgba(212, 168, 83, 0.15);
+  --accent-glow: rgba(212, 168, 83, 0.25);
+  --accent-text: #e8c878;
+  --text: rgba(255, 255, 255, 0.88);
+  --text-dim: rgba(255, 255, 255, 0.5);
+  --text-muted: rgba(255, 255, 255, 0.25);
+  --danger: #e57373;
+  --danger-dim: rgba(229, 115, 115, 0.15);
+  --success: #81c784;
+  --success-dim: rgba(129, 199, 132, 0.15);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-hover: rgba(255, 255, 255, 0.18);
+  --select-bg: #1a1e2e;
+  --select-text: #e8eaed;
+}
+
+[data-theme="light"] {
+  --bg: #f5f2eb;
+  --bg-gradient: linear-gradient(135deg, #f5f2eb 0%, #ede8df 40%, #f0ebe3 100%);
+  --surface: rgba(0, 0, 0, 0.03);
+  --surface-hover: rgba(0, 0, 0, 0.05);
+  --border: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(0, 0, 0, 0.15);
+  --accent: #1e3a5f;
+  --accent-dim: rgba(30, 58, 95, 0.1);
+  --accent-glow: rgba(30, 58, 95, 0.15);
+  --accent-text: #2c5282;
+  --text: rgba(15, 20, 30, 0.88);
+  --text-dim: rgba(15, 20, 30, 0.5);
+  --text-muted: rgba(15, 20, 30, 0.3);
+  --danger: #c62828;
+  --danger-dim: rgba(198, 40, 40, 0.08);
+  --success: #2e7d32;
+  --success-dim: rgba(46, 125, 50, 0.08);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-hover: rgba(0, 0, 0, 0.2);
+  --select-bg: #ffffff;
+  --select-text: #1a1a1a;
 }
 
 * {
@@ -25,8 +68,9 @@ body,
 
 body {
   font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-  background: linear-gradient(135deg, #0a0a1a 0%, #121228 40%, #0d1525 100%);
-  color: rgba(255, 255, 255, 0.88);
+  background: var(--bg-gradient);
+  color: var(--text);
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 /* Scrollbar */
@@ -37,29 +81,30 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--scrollbar-hover);
 }
 
 /* Glass panel base */
 .glass-panel {
-  background: var(--glass-panel);
-  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 14px;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 
 /* Glass input */
 .glass-input {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
   font-size: 14px;
   outline: none;
   transition: all 0.2s ease;
@@ -67,32 +112,32 @@ body {
 }
 
 .glass-input:focus {
-  border-color: rgba(93, 173, 236, 0.5);
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: 0 0 0 3px rgba(93, 173, 236, 0.1);
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .glass-input::placeholder {
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--text-muted);
 }
 
 .glass-input:read-only {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-dim);
   cursor: default;
 }
 
 /* Glass select / combo */
 .glass-select {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 14px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
   font-size: 14px;
   outline: none;
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 36px;
@@ -101,22 +146,22 @@ body {
 }
 
 .glass-select:focus {
-  border-color: rgba(93, 173, 236, 0.5);
-  box-shadow: 0 0 0 3px rgba(93, 173, 236, 0.1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .glass-select option {
-  background: #1a1e2e;
-  color: #e8eaed;
+  background: var(--select-bg);
+  color: var(--select-text);
 }
 
 /* Glass button */
 .glass-btn {
-  background: rgba(93, 173, 236, 0.15);
-  border: 1px solid rgba(93, 173, 236, 0.25);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
   border-radius: 10px;
   padding: 10px 24px;
-  color: #b0d4f1;
+  color: var(--accent-text);
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
@@ -128,34 +173,34 @@ body {
 }
 
 .glass-btn:hover {
-  background: rgba(93, 173, 236, 0.25);
-  border-color: rgba(93, 173, 236, 0.4);
-  color: #dceefb;
-  box-shadow: 0 0 20px rgba(93, 173, 236, 0.12);
+  background: var(--accent-glow);
+  box-shadow: 0 0 20px var(--accent-dim);
 }
 
 .glass-btn:active {
-  background: rgba(93, 173, 236, 0.12);
   transform: scale(0.98);
 }
 
 .glass-btn:disabled {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.2);
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-muted);
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .glass-btn-primary {
-  background: linear-gradient(135deg, rgba(93, 173, 236, 0.3), rgba(93, 173, 236, 0.15));
-  border-color: rgba(93, 173, 236, 0.35);
-  color: #dceefb;
+  background: linear-gradient(135deg, var(--accent), var(--accent-text));
+  border-color: var(--accent);
+  color: #fff;
+}
+
+[data-theme="light"] .glass-btn-primary {
+  color: #fff;
 }
 
 .glass-btn-primary:hover {
-  background: linear-gradient(135deg, rgba(93, 173, 236, 0.4), rgba(93, 173, 236, 0.25));
-  box-shadow: 0 0 30px rgba(93, 173, 236, 0.18);
+  box-shadow: 0 0 30px var(--accent-glow);
 }
 
 /* Glass radio */
@@ -171,7 +216,7 @@ body {
 }
 
 .glass-radio:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
 }
 
 .glass-radio input[type="radio"] {
@@ -179,8 +224,8 @@ body {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.03);
+  border: 2px solid var(--border);
+  background: var(--surface);
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
@@ -188,9 +233,9 @@ body {
 }
 
 .glass-radio input[type="radio"]:checked {
-  border-color: var(--glass-accent);
-  background: radial-gradient(circle at center, #7ec8e3, #5dadec 55%, #3a86c8);
-  box-shadow: 0 0 10px rgba(93, 173, 236, 0.3);
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-dim);
 }
 
 .glass-radio input[type="radio"]:checked::after {
@@ -207,8 +252,8 @@ body {
 
 /* Progress bar */
 .glass-progress-track {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   height: 10px;
   overflow: hidden;
@@ -217,33 +262,33 @@ body {
 .glass-progress-fill {
   height: 100%;
   border-radius: 7px;
-  background: linear-gradient(90deg, rgba(93, 173, 236, 0.6), rgba(126, 200, 227, 0.8), rgba(93, 173, 236, 0.6));
+  background: linear-gradient(90deg, var(--accent), var(--accent-text), var(--accent));
   transition: width 0.3s ease;
-  box-shadow: 0 0 12px rgba(93, 173, 236, 0.3);
+  box-shadow: 0 0 12px var(--accent-dim);
 }
 
 /* Drop area */
 .drop-area {
-  border: 2px dashed rgba(255, 255, 255, 0.12);
+  border: 2px dashed var(--border);
   border-radius: 14px;
   padding: 32px;
   text-align: center;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   transition: all 0.3s ease;
   cursor: pointer;
 }
 
 .drop-area:hover,
 .drop-area.active {
-  border-color: rgba(93, 173, 236, 0.4);
-  background: rgba(93, 173, 236, 0.04);
-  color: rgba(93, 173, 236, 0.7);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-text);
 }
 
 .drop-area.has-file {
-  border-color: rgba(93, 173, 236, 0.3);
-  background: rgba(93, 173, 236, 0.06);
-  color: rgba(255, 255, 255, 0.7);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
 }
 
 /* Section label */
@@ -252,6 +297,46 @@ body {
   font-weight: 600;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   margin-bottom: 8px;
+}
+
+/* Theme toggle */
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 100;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-hover);
+}
+
+/* Mono font for configs */
+.font-mono {
+  font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+}
+
+/* Grain texture overlay */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }

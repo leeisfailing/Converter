@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -68,6 +68,7 @@ export interface BlurSettings {
   gpu_interpolation: boolean;
   gpu_encoding: boolean;
   detailed_filenames: boolean;
+  copy_dates: boolean;
   override_advanced: boolean;
   advanced: {
     video_container: string;
@@ -117,6 +118,7 @@ const DEFAULT_SETTINGS: BlurSettings = {
   gpu_interpolation: true,
   gpu_encoding: false,
   detailed_filenames: false,
+  copy_dates: false,
   override_advanced: false,
   advanced: {
     video_container: "mp4",
@@ -292,6 +294,7 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
   const [pasteText, setPasteText] = useState("");
   const [pasteError, setPasteError] = useState("");
   const [showPostPasteSave, setShowPostPasteSave] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -326,19 +329,24 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
   // Detect GPU on mount
   useEffect(() => {
+    let cancelled = false;
     detectGpu()
       .then((res) => {
+        if (cancelled) return;
         if (res.ok) {
           setGpuType(res.gpu_type);
           const p = res.gpu_type === "cpu" ? "cpu" : res.gpu_type;
-          getEncodePresets(p).then((presets) => {
-            if (presets.ok) {
-              setAvailablePresets(presets.presets);
-            }
-          });
+          getEncodePresets(p)
+            .then((presets) => {
+              if (!cancelled && presets.ok) {
+                setAvailablePresets(presets.presets);
+              }
+            })
+            .catch(() => {});
         }
       })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   // Load configs on mount
@@ -354,36 +362,55 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
   }, []);
 
   useEffect(() => {
-    refreshConfigs();
-  }, [refreshConfigs]);
+    let cancelled = false;
+    listBlurConfigs()
+      .then((res) => {
+        if (!cancelled && res.ok) {
+          setConfigs(res.configs);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Auto-load last used config on mount
   useEffect(() => {
+    let cancelled = false;
     const lastConfig = localStorage.getItem("blur_last_config");
     if (lastConfig) {
       loadBlurConfig(lastConfig)
         .then((res) => {
-          if (res.ok && res.settings) {
-            setSettings(res.settings as unknown as BlurSettings);
+          if (!cancelled && res.ok && res.settings) {
+            const loaded = res.settings as unknown as BlurSettings;
+            setSettings((prev) => ({
+              ...prev,
+              ...loaded,
+              advanced: { ...prev.advanced, ...(loaded.advanced || {}) },
+            }));
             setSelectedConfig(lastConfig);
           }
         })
         .catch(() => {});
     }
+    return () => { cancelled = true; };
   }, []);
 
   // Update presets when gpu type changes
   useEffect(() => {
+    let cancelled = false;
     const p = settings.gpu_encoding ? gpuType : "cpu";
-    getEncodePresets(p).then((presets) => {
-      if (presets.ok) {
-        setAvailablePresets(presets.presets);
-      }
-    });
+    getEncodePresets(p)
+      .then((presets) => {
+        if (!cancelled && presets.ok) {
+          setAvailablePresets(presets.presets);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [settings.gpu_encoding, gpuType]);
 
   // Update weight preview
-  const updateWeightPreview = useCallback(async () => {
+  const updateWeightPreview = useCallback(async (signal?: AbortSignal) => {
     try {
       const res = await getWeightPreview({
         blur_weighting: settings.blur_weighting,
@@ -394,11 +421,13 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
         gaussian_mean: settings.advanced.blur_weighting_gaussian_mean,
         gaussian_bound: settings.advanced.blur_weighting_gaussian_bound,
       });
-      if (res.ok) {
+      if (!signal?.aborted && res.ok) {
         setWeightPreview(res.weights);
       }
     } catch {
-      setWeightPreview([]);
+      if (!signal?.aborted) {
+        setWeightPreview([]);
+      }
     }
   }, [
     settings.blur_weighting,
@@ -410,7 +439,9 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
   ]);
 
   useEffect(() => {
-    updateWeightPreview();
+    const controller = new AbortController();
+    updateWeightPreview(controller.signal);
+    return () => controller.abort();
   }, [updateWeightPreview]);
 
   // Handle loading a config
@@ -419,31 +450,44 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
     try {
       const res = await loadBlurConfig(name);
       if (res.ok && res.settings) {
-        setSettings(res.settings as unknown as BlurSettings);
+        const loaded = res.settings as unknown as BlurSettings;
+        setSettings((prev) => ({
+          ...prev,
+          ...loaded,
+          advanced: { ...prev.advanced, ...(loaded.advanced || {}) },
+        }));
         setSelectedConfig(name);
         localStorage.setItem("blur_last_config", name);
+      } else {
+        setConfigError(`Failed to load config: ${name}`);
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      setConfigError(`Failed to load config: ${String(e)}`);
     }
   };
 
   // Handle saving a config
   const handleSaveConfig = async () => {
+    if (isSaving) return;
     if (!configName.trim()) {
       setConfigError("Name is required");
       return;
     }
+    const savedName = configName.trim();
+    const savedDescription = configDescription.trim();
+    setIsSaving(true);
     try {
-      await saveBlurConfig(configName.trim(), configDescription.trim(), settings as any);
+      await saveBlurConfig(savedName, savedDescription, settings as any);
       setShowSaveModal(false);
       setConfigName("");
       setConfigDescription("");
       setConfigError("");
-      setSelectedConfig(configName.trim());
+      setSelectedConfig(savedName);
       await refreshConfigs();
     } catch (e) {
       setConfigError(String(e));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -453,8 +497,8 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
       await deleteBlurConfig(name);
       setSelectedConfig("");
       await refreshConfigs();
-    } catch {
-      // ignore
+    } catch (e) {
+      setConfigError(`Failed to delete config: ${String(e)}`);
     }
   };
 
@@ -476,10 +520,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
       // Blur section
       if (key === "blur") result.blur = val === "true";
-      else if (key === "blur amount") result.blur_amount = parseFloat(val) || 1.0;
-      else if (key === "blur output fps") result.blur_output_fps = parseInt(val) || 60;
+      else if (key === "blur amount") { const n = parseFloat(val); result.blur_amount = isNaN(n) ? 1.0 : n; }
+      else if (key === "blur output fps") { const n = parseInt(val, 10); result.blur_output_fps = isNaN(n) ? 60 : n; }
       else if (key === "blur weighting") result.blur_weighting = val;
-      else if (key === "blur gamma") result.blur_gamma = parseFloat(val) || 1.0;
+      else if (key === "blur gamma") { const n = parseFloat(val); result.blur_gamma = isNaN(n) ? 1.0 : n; }
 
       // Interpolation section
       else if (key === "interpolate") result.interpolate = val === "true";
@@ -487,19 +531,20 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
       else if (key === "interpolation method") result.interpolation_method = val;
 
       // Rendering section
-      else if (key === "quality") result.quality = parseInt(val) || 16;
+      else if (key === "quality") { const n = parseInt(val, 10); result.quality = isNaN(n) ? 16 : n; }
       else if (key === "detailed filenames") result.detailed_filenames = val === "true";
+      else if (key === "copy dates") result.copy_dates = val === "true";
 
       // Timescale section
-      else if (key === "input timescale") result.input_timescale = parseFloat(val) || 1.0;
-      else if (key === "output timescale") result.output_timescale = parseFloat(val) || 1.0;
+      else if (key === "input timescale") { const n = parseFloat(val); result.input_timescale = isNaN(n) ? 1.0 : n; }
+      else if (key === "output timescale") { const n = parseFloat(val); result.output_timescale = isNaN(n) ? 1.0 : n; }
       else if (key === "adjust timescaled audio pitch") result.output_timescale_audio_pitch = val === "true";
       else if (key === "timescale") result.timescale = val === "true";
 
       // Filters section
-      else if (key === "brightness") result.brightness = parseFloat(val) || 1.0;
-      else if (key === "saturation") result.saturation = parseFloat(val) || 1.0;
-      else if (key === "contrast") result.contrast = parseFloat(val) || 1.0;
+      else if (key === "brightness") { const n = parseFloat(val); result.brightness = isNaN(n) ? 1.0 : n; }
+      else if (key === "saturation") { const n = parseFloat(val); result.saturation = isNaN(n) ? 1.0 : n; }
+      else if (key === "contrast") { const n = parseFloat(val); result.contrast = isNaN(n) ? 1.0 : n; }
       else if (key === "filters") result.filters = val === "true";
 
       // Advanced rendering section
@@ -511,13 +556,12 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
       else if (key === "video container") adv.video_container = val;
 
       // Advanced blur section
-      else if (key === "blur weighting gaussian std dev") adv.blur_weighting_gaussian_std_dev = parseFloat(val) || 1.0;
-      else if (key === "blur weighting gaussian mean") adv.blur_weighting_gaussian_mean = parseFloat(val) || 2.0;
+      else if (key === "blur weighting gaussian std dev") { const n = parseFloat(val); adv.blur_weighting_gaussian_std_dev = isNaN(n) ? 1.0 : n; }
+      else if (key === "blur weighting gaussian mean") { const n = parseFloat(val); adv.blur_weighting_gaussian_mean = isNaN(n) ? 2.0 : n; }
       else if (key === "blur weighting bound") adv.blur_weighting_gaussian_bound = val;
 
       // Advanced interpolation section
-      else if (key === "interpolation program (svp/rife/rife-ncnn)" || key === "interpolation method") result.interpolation_method = val.toLowerCase().includes("rife") ? "rife" : "svp";
-      else if (key === "interpolation program") result.interpolation_method = val.toLowerCase().includes("rife") ? "rife" : "svp";
+      else if (key === "interpolation program (svp/rife/rife-ncnn)" || key === "interpolation program") result.interpolation_method = val.toLowerCase().includes("rife") ? "rife" : "svp";
       else if (key === "interpolation tuning" || key === "svp interpolation tuning" || key === "interpolation preset") adv.svp_interpolation_preset = val;
       else if (key === "interpolation algorithm" || key === "svp interpolation algorithm") adv.svp_interpolation_algorithm = val;
       else if (key === "interpolation speed") adv.svp_interpolation_preset = val;
@@ -528,11 +572,11 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
       else if (key === "deduplication threshold" || key === "dedup threshold") adv.deduplicate_threshold = val;
     }
 
-    // Enable features if settings were provided
-    if (result.brightness !== undefined || result.saturation !== undefined || result.contrast !== undefined) {
+    // Enable features if settings were provided, but only if not explicitly set
+    if (result.filters === undefined && (result.brightness !== undefined || result.saturation !== undefined || result.contrast !== undefined)) {
       result.filters = true;
     }
-    if (result.input_timescale !== undefined || result.output_timescale !== undefined) {
+    if (result.timescale === undefined && (result.input_timescale !== undefined || result.output_timescale !== undefined)) {
       result.timescale = true;
     }
 
@@ -560,24 +604,30 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
   // Handle saving after paste
   const handlePostPasteSave = async () => {
+    if (isSaving) return;
     if (!configName.trim()) {
       setConfigError("Name is required");
       return;
     }
+    const savedName = configName.trim();
+    const savedDescription = configDescription.trim();
+    setIsSaving(true);
     try {
-      await saveBlurConfig(configName.trim(), configDescription.trim(), settings as any);
+      await saveBlurConfig(savedName, savedDescription, settings as any);
       setShowPostPasteSave(false);
       setConfigName("");
       setConfigDescription("");
       setConfigError("");
-      setSelectedConfig(configName.trim());
+      setSelectedConfig(savedName);
       await refreshConfigs();
     } catch (e) {
       setConfigError(String(e));
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleBrowse = async () => {
+  const handleBrowse = useCallback(async () => {
     const selected = await open({
       multiple: false,
       filters: [
@@ -605,7 +655,7 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
     if (selected) {
       setFilePath(selected as string);
     }
-  };
+  }, []);
 
   const getOutputPath = useCallback(() => {
     if (!filePath) return "";
@@ -615,30 +665,34 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
     return `${base}_blur.${container}`;
   }, [filePath, settings.advanced.video_container]);
 
-  const handleAdd = () => {
+  const handleAdd = useCallback(() => {
     if (!filePath) return;
     onAdd(filePath, getOutputPath(), settings);
     setFilePath(null);
     setSettings({ ...DEFAULT_SETTINGS });
     setSelectedConfig("");
-  };
+  }, [filePath, getOutputPath, settings, onAdd]);
 
-  const update = (partial: Partial<BlurSettings>) => {
+  const update = useCallback((partial: Partial<BlurSettings>) => {
     setSettings((prev) => ({ ...prev, ...partial }));
-  };
+  }, []);
 
-  const updateAdvanced = (
-    partial: Partial<BlurSettings["advanced"]>
-  ) => {
-    setSettings((prev) => ({
-      ...prev,
-      advanced: { ...prev.advanced, ...partial },
-    }));
-  };
+  const updateAdvanced = useCallback(
+    (partial: Partial<BlurSettings["advanced"]>) => {
+      setSettings((prev) => ({
+        ...prev,
+        advanced: { ...prev.advanced, ...partial },
+      }));
+    },
+    []
+  );
 
-  const currentCodec =
-    availablePresets.find((p) => p.name === settings.encode_preset)?.codec ||
-    "libx264";
+  const currentCodec = useMemo(
+    () =>
+      availablePresets.find((p) => p.name === settings.encode_preset)?.codec ||
+      "libx264",
+    [availablePresets, settings.encode_preset]
+  );
 
   return (
     <div className="space-y-3">
@@ -650,7 +704,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
           </span>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setShowPasteModal(true)}
+              onClick={() => {
+                setPasteError("");
+                setShowPasteModal(true);
+              }}
               disabled={disabled}
               className="p-1.5 rounded hover:bg-white/10 transition-colors"
               title="Paste config"
@@ -658,7 +715,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               <ClipboardPaste size={14} className="text-glass-text-dim" />
             </button>
             <button
-              onClick={() => setShowSaveModal(true)}
+              onClick={() => {
+                setConfigError("");
+                setShowSaveModal(true);
+              }}
               disabled={disabled}
               className="p-1.5 rounded hover:bg-white/10 transition-colors"
               title="Save current settings"
@@ -1356,10 +1416,11 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
               <button
                 onClick={handleSaveConfig}
-                className="w-full glass-btn glass-btn-primary py-2"
+                disabled={isSaving || !configName.trim()}
+                className="w-full glass-btn glass-btn-primary py-2 disabled:opacity-30"
               >
                 <Save size={14} />
-                Save
+                {isSaving ? "Saving..." : "Save"}
               </button>
             </motion.div>
           </motion.div>
@@ -1441,7 +1502,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-            onClick={() => setShowPostPasteSave(false)}
+            onClick={() => {
+              setShowPostPasteSave(false);
+              setConfigError("");
+            }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
@@ -1455,7 +1519,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                   Config Applied
                 </span>
                 <button
-                  onClick={() => setShowPostPasteSave(false)}
+                  onClick={() => {
+                    setShowPostPasteSave(false);
+                    setConfigError("");
+                  }}
                   className="p-1 rounded hover:bg-white/10"
                 >
                   <X size={14} className="text-glass-text-dim" />
@@ -1492,18 +1559,21 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => setShowPostPasteSave(false)}
+                  onClick={() => {
+                    setShowPostPasteSave(false);
+                    setConfigError("");
+                  }}
                   className="flex-1 glass-btn py-2"
                 >
                   Skip
                 </button>
                 <button
                   onClick={handlePostPasteSave}
-                  disabled={!configName.trim()}
+                  disabled={isSaving || !configName.trim()}
                   className="flex-1 glass-btn glass-btn-primary py-2 disabled:opacity-30"
                 >
                   <Save size={14} />
-                  Save
+                  {isSaving ? "Saving..." : "Save"}
                 </button>
               </div>
             </motion.div>

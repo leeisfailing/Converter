@@ -12,7 +12,6 @@
     "fs:allow-read",
     "fs:allow-write",
     "shell:default",
-    "shell:allow-open",
-    "os:default"
+    "shell:allow-open"
   ]
 }

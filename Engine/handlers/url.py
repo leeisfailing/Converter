@@ -1,10 +1,16 @@
 """URL detection handler."""
 from Engine.core.ipc import send_response
 from Engine.core.config import resource_path
+from Engine.core.security import validate_url
 
 
 def handle_detect_url(cmd_args: dict):
     url = cmd_args["url"]
+    try:
+        validate_url(url)
+    except ValueError as e:
+        send_response({"ok": False, "error": str(e)})
+        return
     try:
         result = _detect_url_info(url)
         send_response(result)
@@ -29,14 +35,7 @@ def _detect_url_info(url: str) -> dict:
         if cookies_file.exists():
             ydl_opts['cookiefile'] = str(cookies_file)
         else:
-            for browser in ('chrome', 'edge', 'firefox', 'brave'):
-                try:
-                    ydl_opts['cookiesfrombrowser'] = (browser,)
-                    break
-                except Exception:
-                    continue
-            if 'cookiesfrombrowser' not in ydl_opts:
-                pass
+            ydl_opts['cookiesfrombrowser'] = ('chrome',)
 
     import yt_dlp as _yt_dlp
     try:

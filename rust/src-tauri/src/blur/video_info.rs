@@ -9,10 +9,10 @@ pub struct VideoInfo {
     pub color_space: Option<String>,
     pub color_transfer: Option<String>,
     pub color_primaries: Option<String>,
-    pub sample_rate: Option<i32>,
     pub fps_num: i32,
     pub fps_den: i32,
     pub duration: f64,
+    pub sample_rate: Option<i32>,
 }
 
 impl Default for VideoInfo {
@@ -24,23 +24,50 @@ impl Default for VideoInfo {
             color_space: None,
             color_transfer: None,
             color_primaries: None,
-            sample_rate: None,
             fps_num: 0,
             fps_den: 1,
             duration: 0.0,
+            sample_rate: None,
         }
     }
 }
 
 fn find_ffprobe() -> String {
+    // Check bundled binary relative to the exe (Tauri externalBin places in same dir on Windows)
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        // Tauri externalBin: same directory as exe
+        for name in &["ffprobe.exe", "ffprobe"] {
+            let p = exe_dir.join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        // Dev / Engine/bin layout
+        for name in &["ffprobe.exe", "ffprobe"] {
+            let p = exe_dir.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Fallback: check relative to CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        for name in &["ffprobe.exe", "ffprobe"] {
+            let p = cwd.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    // System PATH
     for name in &["ffprobe", "ffprobe.exe"] {
-        if Command::new(name)
+        if let Ok(mut child) = Command::new(name)
             .arg("-version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .is_ok()
         {
+            let _ = child.wait();
             return name.to_string();
         }
     }
@@ -53,9 +80,9 @@ pub fn get_video_info(path: &str) -> Result<VideoInfo, String> {
     let output = Command::new(&ffprobe)
         .args([
             "-v", "error",
-            "-select_streams", "v:0",
+            "-select_streams", "v:0,a:0",
             "-show_entries",
-            "stream=codec_type,codec_name,duration,color_range,sample_rate,r_frame_rate,pix_fmt,color_space,color_transfer,color_primaries",
+            "stream=codec_type,codec_name,duration,color_range,r_frame_rate,pix_fmt,color_space,color_transfer,color_primaries,sample_rate",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1",
             path,
@@ -64,6 +91,16 @@ pub fn get_video_info(path: &str) -> Result<VideoInfo, String> {
         .stderr(std::process::Stdio::piped())
         .output()
         .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = if stderr.trim().is_empty() {
+            format!("ffprobe exited with status: {}", output.status)
+        } else {
+            format!("ffprobe error: {}", stderr.trim())
+        };
+        return Err(msg);
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut info = VideoInfo::default();
@@ -88,18 +125,18 @@ pub fn get_video_info(path: &str) -> Result<VideoInfo, String> {
             info.color_transfer = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("color_primaries=") {
             info.color_primaries = Some(val.to_string());
-        } else if let Some(val) = line.strip_prefix("sample_rate=") {
-            if let Ok(sr) = val.parse::<i32>() {
-                info.sample_rate = Some(sr);
-            }
         } else if let Some(val) = line.strip_prefix("r_frame_rate=") {
             if let Some((num_str, den_str)) = val.split_once('/') {
                 if let (Ok(num), Ok(den)) = (num_str.parse::<i32>(), den_str.parse::<i32>()) {
-                    if den > 0 {
+                    if den > 0 && num >= 0 {
                         info.fps_num = num;
                         info.fps_den = den;
                     }
                 }
+            }
+        } else if let Some(val) = line.strip_prefix("sample_rate=") {
+            if let Ok(sr) = val.parse::<i32>() {
+                info.sample_rate = Some(sr);
             }
         }
     }

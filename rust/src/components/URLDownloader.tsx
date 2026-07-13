@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, Download, Music, Film, Plus, Monitor, Loader2, Globe, Clock } from "lucide-react";
 import { detectUrl } from "../lib/tauri-commands";
@@ -26,30 +26,56 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   } | null>(null);
   const [selectedFormat, setSelectedFormat] = useState("");
 
-  const handleDetect = async () => {
-    if (!url.trim()) return;
+  const requestIdRef = useRef(0);
+
+  const isValidUrl = (str: string): boolean => {
+    try {
+      const u = new URL(str);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const handleDetect = useCallback(async () => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+
+    if (!isValidUrl(trimmed)) {
+      setDetectError("Please enter a valid HTTP or HTTPS URL");
+      setDetectState("error");
+      return;
+    }
+
+    const thisRequest = ++requestIdRef.current;
     setDetectState("detecting");
     setDetectError("");
     setDetectedInfo(null);
     setSelectedFormat("");
 
     try {
-      const result = await detectUrl(url.trim());
+      const result = await detectUrl(trimmed);
+      if (thisRequest !== requestIdRef.current) return;
+
       if (result.ok) {
-        setDetectedInfo(result);
-        if (result.formats.length > 0) {
-          setSelectedFormat(result.formats[0].value);
+        if (!result.formats || result.formats.length === 0) {
+          setDetectError("No downloadable formats found for this URL");
+          setDetectState("error");
+          return;
         }
+        setDetectedInfo(result);
+        setSelectedFormat(result.formats[0].value);
         setDetectState("done");
       } else {
         setDetectError("Could not detect URL info");
         setDetectState("error");
       }
     } catch (err) {
-      setDetectError(String(err));
+      if (thisRequest !== requestIdRef.current) return;
+      setDetectError(err instanceof Error ? err.message : String(err));
       setDetectState("error");
     }
-  };
+  }, [url]);
 
   const handleAdd = () => {
     if (!detectedInfo || !selectedFormat) return;
@@ -83,8 +109,8 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             placeholder="Paste any URL — video, audio, file, etc."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && detectState === "idle" && handleDetect()}
-            disabled={disabled || detectState === "detecting"}
+            onKeyDown={(e) => e.key === "Enter" && (detectState === "idle" || detectState === "error") && handleDetect()}
+            disabled={disabled || detectState === "detecting" || detectState === "done"}
           />
           {detectState === "idle" || detectState === "error" ? (
             <motion.button

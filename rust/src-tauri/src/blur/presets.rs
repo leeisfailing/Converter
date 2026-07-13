@@ -143,24 +143,29 @@ pub fn get_quality_config(codec: &str) -> QualityConfig {
             quality_label: "(1: best, 23: balanced, 51: worst)".to_string(),
         },
         "h264_videotoolbox" | "hevc_videotoolbox" | "av1_videotoolbox" => QualityConfig {
-            min_quality: 0,
+            min_quality: 1,
             max_quality: 100,
-            quality_label: "(100: best, 0: worst)".to_string(),
+            quality_label: "(100: best, 1: worst)".to_string(),
         },
         "prores_videotoolbox" => QualityConfig {
             min_quality: 0,
-            max_quality: 4,
-            quality_label: "(0: proxy, 1: lt, 2: std, 3: hq, 4: 4444xq)".to_string(),
+            max_quality: 6,
+            quality_label: "(0: auto, 1: proxy, 2: lt, 3: std, 4: hq, 5: 4444, 6: 4444xq)".to_string(),
         },
         "libx264" | "libx265" => QualityConfig {
             min_quality: 0,
             max_quality: 51,
             quality_label: "(0: lossless, 23: balanced, 51: worst)".to_string(),
         },
-        "libaom-av1" | "libvpx-vp9" => QualityConfig {
-            min_quality: 15,
-            max_quality: 50,
-            quality_label: "(15: best, 30: balanced, 50: worst)".to_string(),
+        "libaom-av1" => QualityConfig {
+            min_quality: 0,
+            max_quality: 63,
+            quality_label: "(0: best, 25: balanced, 63: worst)".to_string(),
+        },
+        "libvpx-vp9" => QualityConfig {
+            min_quality: 0,
+            max_quality: 63,
+            quality_label: "(0: best, 30: balanced, 63: worst)".to_string(),
         },
         _ => QualityConfig {
             min_quality: 0,

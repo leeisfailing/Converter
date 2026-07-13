@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { detectFile, getMediaDuration } from "../lib/tauri-commands";
+import { detectFile } from "../lib/tauri-commands";
 import {
   FolderOpen,
   FileVideo,
@@ -62,8 +62,8 @@ export default function FileConverter({ onAdd, disabled }: Props) {
   const [compressUnit, setCompressUnit] = useState("MB");
   const [isDragOver, setIsDragOver] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
+  const detectGeneration = useRef(0);
 
-  // Drag-and-drop
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type === "enter") {
@@ -72,43 +72,50 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         setIsDragOver(false);
       } else if (event.payload.type === "drop") {
         setIsDragOver(false);
+        if (disabled) return;
         const paths = event.payload.paths;
         if (paths.length > 0) {
+          console.log(`[converter] File dropped: "${paths[0].split(/[\\/]/).pop()}"`);
           setFilePath(paths[0]);
           setSelectedFormat("");
+          setConvertMode("format");
         }
       }
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [disabled]);
 
-  const refreshFormats = useCallback(
-    async (path: string, dev: boolean) => {
-      try {
-        const res = await detectFile(path, dev);
+  const selectedFormatRef = useRef(selectedFormat);
+  selectedFormatRef.current = selectedFormat;
+  const usedOutputPaths = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!filePath) return;
+    let cancelled = false;
+    const generation = ++detectGeneration.current;
+    console.log(`[converter] Detecting file type...`);
+    detectFile(filePath, devMode)
+      .then((res) => {
+        if (cancelled || generation !== detectGeneration.current) return;
         if (res.ok) {
+          console.log(`[converter] Detected: type=${res.file_type}, formats=[${res.allowed_formats.join(", ")}]`);
           setFileType(res.file_type);
           setAllowedFormats(res.allowed_formats);
           if (
             res.allowed_formats.length > 0 &&
-            !res.allowed_formats.includes(selectedFormat)
+            !res.allowed_formats.includes(selectedFormatRef.current)
           ) {
             setSelectedFormat(res.allowed_formats[0]);
           }
         }
-      } catch (err) {
-        console.error(err);
-      }
-    },
-    [selectedFormat]
-  );
-
-  useEffect(() => {
-    if (filePath) {
-      refreshFormats(filePath, devMode);
-    }
+      })
+      .catch((err) => {
+        if (cancelled || generation !== detectGeneration.current) return;
+        console.error(`[converter] Detection failed:`, err);
+      });
+    return () => { cancelled = true; };
   }, [filePath, devMode]);
 
   const handleBrowse = async () => {
@@ -129,6 +136,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     if (selected) {
       setFilePath(selected as string);
       setSelectedFormat("");
+      setConvertMode("format");
     }
   };
 
@@ -137,11 +145,26 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     const lastDot = filePath.lastIndexOf(".");
     const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
 
+    let outputPath: string;
     if (convertMode === "compress") {
       const ext = filePath.split(".").pop() || "mp4";
-      return `${base}_compressed.${ext}`;
+      outputPath = `${base}_compressed.${ext}`;
+    } else {
+      outputPath = `${base}_converted.${selectedFormat}`;
     }
-    return `${base}_converted.${selectedFormat}`;
+
+    if (usedOutputPaths.current.has(outputPath)) {
+      let counter = 2;
+      while (usedOutputPaths.current.has(outputPath.replace(/(\.\w+)$/, `_${counter}$1`))) {
+        counter++;
+      }
+      const ext = outputPath.match(/(\.\w+)$/)?.[1] || "";
+      const stem = outputPath.slice(0, -ext.length);
+      outputPath = `${stem}_${counter}${ext}`;
+    }
+
+    usedOutputPaths.current.add(outputPath);
+    return outputPath;
   }, [filePath, selectedFormat, convertMode]);
 
   const handleAdd = () => {
@@ -161,10 +184,13 @@ export default function FileConverter({ onAdd, disabled }: Props) {
             : 1024)
         : undefined;
 
+    const format = convertMode === "format" ? selectedFormat : "compress";
+    console.log(`[converter] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${format.toUpperCase()}`);
+
     onAdd(
       filePath,
       getOutputPath(),
-      convertMode === "format" ? selectedFormat : "compress",
+      format,
       devMode,
       sizeBytes,
       convertMode === "compress" ? compressUnit : undefined
@@ -175,13 +201,16 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     setFileType(null);
     setAllowedFormats([]);
     setCompressSize("");
+    setDevMode(false);
   };
 
-  const videoFormats = ALL_FORMATS.filter(
-    (f) => allowedFormats.includes(f.value) && f.type === "video"
+  const videoFormats = useMemo(
+    () => ALL_FORMATS.filter((f) => allowedFormats.includes(f.value) && f.type === "video"),
+    [allowedFormats]
   );
-  const photoFormats = ALL_FORMATS.filter(
-    (f) => allowedFormats.includes(f.value) && f.type === "photo"
+  const photoFormats = useMemo(
+    () => ALL_FORMATS.filter((f) => allowedFormats.includes(f.value) && f.type === "photo"),
+    [allowedFormats]
   );
 
   return (
@@ -230,12 +259,12 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         >
           <button
             onClick={() => setConvertMode("format")}
-            disabled={disabled || fileType !== "video"}
+            disabled={disabled}
             className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
               convertMode === "format"
                 ? "bg-glass-accent text-white shadow-glow"
                 : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-            } ${disabled || fileType !== "video" ? "opacity-40 pointer-events-none" : ""}`}
+            } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
           >
             <ArrowRight size={14} />
             Convert Format

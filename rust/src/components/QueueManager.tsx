@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Download,
@@ -8,11 +8,10 @@ import {
   XCircle,
   Loader2,
   Trash2,
-  CircleDot,
   Clock,
   HardDrive,
 } from "lucide-react";
-import type { QueueItem } from "../lib/queue-types";
+import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
 
 interface Props {
   items: QueueItem[];
@@ -30,8 +29,6 @@ const statusConfig: Record<
   failed: { icon: XCircle, color: "text-glass-danger", bg: "bg-glass-danger-dim" },
   cancelled: { icon: XCircle, color: "text-glass-text-muted", bg: "bg-glass-surface" },
 };
-
-type QueueItemStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 
 const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void }>(
   ({ item, onRemove }, ref) => {
@@ -73,7 +70,7 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
               className={`${config.color} ${item.status === "active" ? "animate-spin" : ""}`}
             />
             <span className={`text-[10px] ${config.color}`}>
-              {item.status === "active" ? `${item.progress}%` : item.status}
+              {item.status === "active" ? `${Math.round(item.progress)}%` : item.status}
             </span>
             {item.error && (
               <span className="text-[10px] text-glass-danger truncate max-w-[150px]">
@@ -109,13 +106,15 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
 );
 QueueItemRow.displayName = "QueueItemRow";
 
-export default function QueueManager({ items, onRemove, onClearCompleted }: Props) {
+export default memo(function QueueManager({ items, onRemove, onClearCompleted }: Props) {
   const hasItems = items.length > 0;
-  const completedCount = items.filter(
-    (i) => i.status === "completed" || i.status === "failed" || i.status === "cancelled"
-  ).length;
-  const activeItem = items.find((i) => i.status === "active");
-  const pendingCount = items.filter((i) => i.status === "pending").length;
+
+  const completedCount = useMemo(
+    () => items.filter((i) => i.status === "completed" || i.status === "failed" || i.status === "cancelled").length,
+    [items]
+  );
+  const activeItem = useMemo(() => items.find((i) => i.status === "active"), [items]);
+  const pendingCount = useMemo(() => items.filter((i) => i.status === "pending").length, [items]);
 
   if (!hasItems) return null;
 
@@ -158,4 +157,4 @@ export default function QueueManager({ items, onRemove, onClearCompleted }: Prop
       </div>
     </div>
   );
-}
+});

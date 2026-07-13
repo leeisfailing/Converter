@@ -1,6 +1,12 @@
 export default {
   plugins: {
     tailwindcss: {},
-    autoprefixer: {},
+    autoprefixer: {
+      overrideBrowserslist: [
+        "last 2 Chrome versions",
+        "last 2 Safari versions",
+        "last 2 Edge versions",
+      ],
+    },
   },
 };

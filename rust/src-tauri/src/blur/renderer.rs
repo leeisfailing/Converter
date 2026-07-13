@@ -1,19 +1,20 @@
-use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 
-use super::settings::BlurSettings;
 use super::presets;
+use super::settings::BlurSettings;
 use super::video_info::VideoInfo;
 
 fn find_vspipe() -> String {
     for name in &["vspipe", "vspipe.exe"] {
-        if Command::new(name)
+        if let Ok(mut child) = Command::new(name)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .is_ok()
         {
+            let _ = child.wait();
             return name.to_string();
         }
     }
@@ -22,13 +23,13 @@ fn find_vspipe() -> String {
 
 fn find_ffmpeg() -> String {
     for name in &["ffmpeg", "ffmpeg.exe"] {
-        if Command::new(name)
+        if let Ok(mut child) = Command::new(name)
             .arg("-version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .is_ok()
         {
+            let _ = child.wait();
             return name.to_string();
         }
     }
@@ -142,7 +143,7 @@ pub fn build_render_commands(
     // Audio timescale filters
     let mut audio_filters = Vec::new();
     if settings.timescale {
-        let sample_rate = video_info.sample_rate.unwrap_or(48000);
+        let sample_rate: i32 = 48000;
         if (settings.input_timescale - 1.0).abs() > f64::EPSILON {
             audio_filters.push(format!(
                 "asetrate={}*{}",
@@ -208,29 +209,13 @@ pub fn build_render_commands(
 }
 
 fn detect_gpu_type_for_preset() -> &'static str {
-    let ffmpeg = find_ffmpeg();
-    let output = Command::new(&ffmpeg)
-        .args(["-encoders"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if stdout.contains("h264_nvenc") {
-                "nvidia"
-            } else if stdout.contains("h264_amf") {
-                "amd"
-            } else if stdout.contains("h264_qsv") {
-                "intel"
-            } else if stdout.contains("h264_videotoolbox") {
-                "mac"
-            } else {
-                "cpu"
-            }
-        }
-        Err(_) => "cpu",
+    let info = super::gpu::detect_gpu_type();
+    match info.gpu_type.as_str() {
+        "nvidia" => "nvidia",
+        "amd" => "amd",
+        "intel" => "intel",
+        "mac" => "mac",
+        _ => "cpu",
     }
 }
 
@@ -253,21 +238,45 @@ pub fn run_render<F: FnMut(i32, i32)>(
         .spawn()
         .map_err(|e| format!("Failed to spawn vspipe: {}", e))?;
 
-    let vspipe_stdout = vspipe_child.stdout.take().ok_or("Failed to capture vspipe stdout")?;
+    let vspipe_stdout = match vspipe_child.stdout.take() {
+        Some(s) => s,
+        None => {
+            let _ = vspipe_child.kill();
+            return Err("Failed to capture vspipe stdout".to_string());
+        }
+    };
 
-    let mut ffmpeg_child = Command::new(&ffmpeg)
+    let mut ffmpeg_child = match Command::new(&ffmpeg)
         .args(&commands.ffmpeg)
         .stdin(vspipe_stdout)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = vspipe_child.kill();
+            let _ = vspipe_child.wait();
+            return Err(format!("Failed to spawn ffmpeg: {}", e));
+        }
+    };
 
-    let ffmpeg_stderr = ffmpeg_child.stderr.take().ok_or("Failed to capture ffmpeg stderr")?;
+    let ffmpeg_stderr = match ffmpeg_child.stderr.take() {
+        Some(s) => s,
+        None => {
+            let _ = ffmpeg_child.kill();
+            let _ = ffmpeg_child.wait();
+            let _ = vspipe_child.kill();
+            let _ = vspipe_child.wait();
+            return Err("Failed to capture ffmpeg stderr".to_string());
+        }
+    };
+
+    let (progress_tx, progress_rx) = mpsc::channel::<(i32, i32)>();
 
     // Read vspipe stderr for progress
     let vspipe_stderr = vspipe_child.stderr.take();
-    let _progress_handle = std::thread::spawn(move || {
+    let progress_handle = std::thread::spawn(move || {
         if let Some(stderr) = vspipe_stderr {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
@@ -276,11 +285,9 @@ pub fn run_render<F: FnMut(i32, i32)>(
                     if parts.len() >= 2 {
                         let frame_info = parts[1];
                         if let Some((current, total)) = frame_info.split_once('/') {
-                            if let (Ok(_c), Ok(t)) = (current.parse::<i32>(), total.parse::<i32>()) {
+                            if let (Ok(c), Ok(t)) = (current.parse::<i32>(), total.parse::<i32>()) {
                                 if t > 0 {
-                                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        // Progress callback will be called below
-                                    }));
+                                    let _ = progress_tx.send((c, t));
                                 }
                             }
                         }
@@ -293,22 +300,57 @@ pub fn run_render<F: FnMut(i32, i32)>(
     // Read ffmpeg stderr for errors
     let ffmpeg_reader = BufReader::new(ffmpeg_stderr);
     let mut ffmpeg_errors = Vec::new();
+
+    // Poll both processes and progress channel
+    loop {
+        // Drain progress updates
+        while let Ok((current, total)) = progress_rx.try_recv() {
+            progress_callback(current, total);
+        }
+
+        match ffmpeg_child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(e) => {
+                let _ = ffmpeg_child.kill();
+                let _ = ffmpeg_child.wait();
+                let _ = vspipe_child.kill();
+                let _ = vspipe_child.wait();
+                let _ = progress_handle.join();
+                return Err(format!("Error checking ffmpeg status: {}", e));
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let _ = vspipe_child.kill();
+
+    // Drain remaining progress updates
+    while let Ok((current, total)) = progress_rx.try_recv() {
+        progress_callback(current, total);
+    }
+
+    // Collect any remaining ffmpeg stderr lines
     for line in ffmpeg_reader.lines().map_while(Result::ok) {
         if !line.is_empty() {
             ffmpeg_errors.push(line);
         }
     }
 
-    let vspipe_exit = vspipe_child
-        .wait()
-        .map_err(|e| format!("Failed to wait for vspipe: {}", e))?;
+    let vspipe_exit = match vspipe_child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(format!("Failed to wait for vspipe: {}", e));
+        }
+    };
     let ffmpeg_exit = ffmpeg_child
         .wait()
         .map_err(|e| format!("Failed to wait for ffmpeg: {}", e))?;
 
-    progress_callback(100, 100);
+    let _ = progress_handle.join();
 
-    if !vspipe_exit.success() || !ffmpeg_exit.success() {
+    if !ffmpeg_exit.success() {
         let mut error_msg = String::new();
         if !ffmpeg_errors.is_empty() {
             error_msg.push_str(&ffmpeg_errors.join("\n"));
@@ -322,6 +364,8 @@ pub fn run_render<F: FnMut(i32, i32)>(
         }
         return Err(error_msg);
     }
+
+    progress_callback(100, 100);
 
     Ok(())
 }

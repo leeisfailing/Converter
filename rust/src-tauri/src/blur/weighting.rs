@@ -63,6 +63,12 @@ pub fn gaussian(
     if bound.0 == bound.1 {
         return Err("Gaussian bound must have two distinct values".to_string());
     }
+    if stddev <= 0.0 || !stddev.is_finite() {
+        return Err("Gaussian standard deviation must be a positive number".to_string());
+    }
+    if !mean.is_finite() {
+        return Err("Gaussian mean must be a finite number".to_string());
+    }
 
     let x_vals = scale_range(frames, bound.0, bound.1);
     let denom = 2.0 * stddev * stddev;
@@ -114,10 +120,14 @@ pub fn divide(frames: usize, weights: &[f64]) -> Vec<f64> {
         return vec![0.0; frames];
     }
 
-    let indices = scale_range(frames, 0.0, weights.len() as f64 - 0.1);
+    let len = weights.len();
+    let indices = scale_range(frames, 0.0, (len - 1) as f64);
     let stretched: Vec<f64> = indices
         .iter()
-        .map(|idx| weights[*idx as usize])
+        .map(|idx| {
+            let i = (*idx as usize).min(len - 1);
+            weights[i]
+        })
         .collect();
     normalize(&stretched)
 }

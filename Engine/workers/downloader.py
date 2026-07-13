@@ -21,10 +21,11 @@ class DownloadWorker:
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
         self.on_progress: Optional[Callable[[int], None]] = None
+        self.on_download_status: Optional[Callable[[dict], None]] = None
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=False)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
@@ -61,13 +62,44 @@ class DownloadWorker:
         def progress_hook(d: dict):
             if not self._is_running:
                 return
-            if d['status'] == 'downloading':
-                total = d.get('total_bytes') or d.get('total_bytes_estimate')
-                if total and total > 0:
-                    downloaded = d.get('downloaded_bytes', 0)
-                    pct = int(downloaded / total * 100)
-                    if self.on_progress:
-                        self.on_progress(pct)
+
+            status = d.get('status', '')
+            if status == 'finished':
+                if self.on_progress:
+                    self.on_progress(100)
+                return
+
+            if status != 'downloading':
+                return
+
+            total = d.get('total_bytes') or d.get('total_bytes_estimate')
+            downloaded = d.get('downloaded_bytes') or 0
+            speed = d.get('speed')
+            eta = d.get('eta')
+            is_live = d.get('live') or d.get('is_live')
+
+            pct = None
+            if total and total > 0:
+                pct = min(round(downloaded / total * 100), 100)
+            else:
+                pct_str = d.get('_percent_str', '').strip().rstrip('%')
+                if pct_str:
+                    try:
+                        pct = min(round(float(pct_str)), 100)
+                    except (ValueError, TypeError):
+                        pct = None
+
+            if self.on_progress and pct is not None:
+                self.on_progress(pct)
+
+            if self.on_download_status:
+                self.on_download_status({
+                    'percent': pct,
+                    'speed': speed,
+                    'eta': eta,
+                    'is_live': bool(is_live),
+                    'status': status,
+                })
 
         is_youtube = "youtube.com" in self.url.lower() or "youtu.be" in self.url.lower()
 
@@ -82,21 +114,16 @@ class DownloadWorker:
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'http_headers': {
                 'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.youtube.com/',
             },
         }
 
         if is_youtube:
+            ydl_opts['http_headers']['Referer'] = 'https://www.youtube.com/'
             cookies_file = resource_path('cookies.txt')
             if cookies_file.exists():
                 ydl_opts['cookiefile'] = str(cookies_file)
             else:
-                for browser in ('chrome', 'edge', 'firefox', 'brave'):
-                    try:
-                        ydl_opts['cookiesfrombrowser'] = (browser,)
-                        break
-                    except Exception:
-                        continue
+                ydl_opts['cookiesfrombrowser'] = ('chrome',)
 
         if self.format_type == "mp4_4k":
             ydl_opts['format'] = 'bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
@@ -133,24 +160,25 @@ class DownloadWorker:
                     info = ydl.extract_info(self.url, download=True)
             else:
                 raise
-            if not self._is_running:
-                if self.on_finished:
-                    self.on_finished(False, "Download was cancelled", "")
-                return
 
-            final_path = ""
-            if 'requested_downloads' in info and len(info['requested_downloads']) > 0:
-                for req in info['requested_downloads']:
-                    if 'filepath' in req:
-                        final_path = req['filepath']
-                        break
-            if not final_path:
-                final_path = ydl.prepare_filename(info)
-
-            if self.on_progress:
-                self.on_progress(100)
+        if not self._is_running:
             if self.on_finished:
-                self.on_finished(True, "", final_path)
+                self.on_finished(False, "Download was cancelled", "")
+            return
+
+        final_path = ""
+        if info and 'requested_downloads' in info and len(info['requested_downloads']) > 0:
+            for req in info['requested_downloads']:
+                if 'filepath' in req:
+                    final_path = req['filepath']
+                    break
+        if not final_path and info:
+            final_path = ydl.prepare_filename(info)
+
+        if self.on_progress:
+            self.on_progress(100)
+        if self.on_finished:
+            self.on_finished(True, "", str(final_path))
 
     def _download_http_fallback(self):
         parsed = urllib.parse.urlparse(self.url)
@@ -159,49 +187,76 @@ class DownloadWorker:
             filename = "downloaded_file"
 
         final_path = self.output_dir / filename
+        if final_path.exists():
+            stem = final_path.stem
+            suffix = final_path.suffix
+            counter = 1
+            while final_path.exists():
+                final_path = self.output_dir / f"{stem} ({counter}){suffix}"
+                counter += 1
 
-        req = urllib.request.Request(self.url, headers={'User-Agent': 'Mozilla/5.0'})
+        temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
-        with urllib.request.urlopen(req, timeout=30) as response:
-            content_disp = response.headers.get('Content-Disposition', '')
-            if 'filename=' in content_disp:
-                match = re.search(r'filename="?([^";]+)"?', content_disp)
-                if match:
-                    filename = match.group(1)
-                    final_path = self.output_dir / filename
+        try:
+            req = urllib.request.Request(self.url, headers={'User-Agent': 'Mozilla/5.0'})
 
-            blocksize = 8192
-            blocknum = 0
+            with urllib.request.urlopen(req, timeout=30) as response:
+                content_disp = response.headers.get('Content-Disposition', '')
+                if 'filename=' in content_disp:
+                    match = re.search(r'filename="?([^";]+)"?', content_disp)
+                    if match:
+                        filename = os.path.basename(match.group(1))
+                        if filename:
+                            final_path = self.output_dir / filename
+                        if final_path.exists():
+                            stem = final_path.stem
+                            suffix = final_path.suffix
+                            counter = 1
+                            while final_path.exists():
+                                final_path = self.output_dir / f"{stem} ({counter}){suffix}"
+                                counter += 1
+                        temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
-            with open(final_path, 'wb') as out_file:
-                while self._is_running:
-                    buffer = response.read(blocksize)
-                    if not buffer:
-                        break
-                    out_file.write(buffer)
-                    blocknum += 1
-                    totalsize = int(response.headers.get("Content-Length", -1))
-                    if totalsize > 0:
-                        read_so_far = blocknum * blocksize
-                        if read_so_far > totalsize:
-                            read_so_far = totalsize
-                        pct = int((read_so_far / totalsize) * 100)
-                        if self.on_progress:
-                            self.on_progress(pct)
+                blocksize = 8192
+                read_so_far = 0
+                try:
+                    totalsize = int(response.headers.get('Content-Length', -1))
+                except (ValueError, TypeError):
+                    totalsize = -1
+
+                with open(temp_path, 'wb') as out_file:
+                    while self._is_running:
+                        buffer = response.read(blocksize)
+                        if not buffer:
+                            break
+                        out_file.write(buffer)
+                        read_so_far += len(buffer)
+                        if totalsize > 0:
+                            pct = min(int((read_so_far / totalsize) * 100), 100)
+                            if self.on_progress:
+                                self.on_progress(pct)
 
             if not self._is_running:
                 try:
-                    os.remove(final_path)
+                    os.remove(temp_path)
                 except OSError:
                     pass
                 if self.on_finished:
                     self.on_finished(False, "Download was cancelled", "")
                 return
 
+            temp_path.rename(final_path)
+
             if self.on_progress:
                 self.on_progress(100)
             if self.on_finished:
                 self.on_finished(True, "", str(final_path))
+        except Exception:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise
 
     def stop(self):
         self._is_running = False

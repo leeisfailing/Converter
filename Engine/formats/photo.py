@@ -12,6 +12,8 @@ PHOTO_OUTPUT_FORMATS = {
     'bmp': {'ext': '.bmp'},
     'gif': {'ext': '.gif'},
     'tiff': {'ext': '.tiff'},
+    'tif': {'ext': '.tif'},
     'heic': {'ext': '.heic'},
+    'heif': {'ext': '.heif'},
     'avif': {'ext': '.avif', 'quality': '30'},
 }

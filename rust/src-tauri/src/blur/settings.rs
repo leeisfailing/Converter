@@ -82,6 +82,7 @@ pub struct BlurSettings {
     pub gpu_encoding: bool,
 
     pub detailed_filenames: bool,
+    #[serde(default)]
     pub copy_dates: bool,
 
     pub override_advanced: bool,
@@ -170,6 +171,10 @@ impl BlurSettings {
             "gpu_encoding": self.gpu_encoding,
 
             "detailed_filenames": self.detailed_filenames,
+            "copy_dates": self.copy_dates,
+
+            "override_advanced": self.override_advanced,
+            "video_container": self.advanced.video_container,
 
             "deduplicate_range": self.advanced.deduplicate_range,
             "deduplicate_threshold": self.advanced.deduplicate_threshold,

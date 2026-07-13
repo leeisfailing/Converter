@@ -1,23 +1,80 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
-import { tempDir } from "@tauri-apps/api/path";
+import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
 import BlurSettings from "./components/BlurSettings";
 import QueueManager from "./components/QueueManager";
+import DebugConsole from "./components/DebugConsole";
+import SettingsPanel from "./components/Settings";
+import useDebugConsole from "./hooks/useDebugConsole";
 import {
   startDownload,
   startConvert,
   startBlur,
   compressFile,
   cancelOperation,
+  getSettings,
 } from "./lib/tauri-commands";
+import type { AppSettings } from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
 import type { BlurSettings as BlurSettingsType } from "./components/BlurSettings";
-import { Download, ArrowRightLeft, Zap, Film, Sun, Moon } from "lucide-react";
+import { Download, ArrowRightLeft, Zap, Film, Sun, Moon, Terminal, Settings } from "lucide-react";
 
 type Mode = "download" | "convert" | "blur";
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[ErrorBoundary] Caught error:", error);
+    console.error("[ErrorBoundary] Component stack:", errorInfo.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const err = this.state.error;
+      return (
+        <div className="glass-panel p-6 m-4 text-center">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 mb-3">
+            <Zap size={20} className="text-red-400" />
+          </div>
+          <h2 className="text-lg font-semibold text-glass-text mb-2">
+            Something went wrong
+          </h2>
+          <p className="text-sm text-glass-text-muted mb-4">
+            {err?.message || "An unexpected error occurred."}
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="glass-btn px-4 py-2 text-sm text-glass-text hover:bg-glass-surface-hover"
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 let nextId = 0;
 function genId() {
@@ -30,11 +87,53 @@ function getInitialTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+function applyAutoSave(outputPath: string, autoSave: boolean, outputDir: string): string {
+  if (!autoSave || !outputDir) return outputPath;
+  const baseName = outputPath.split(/[\\/]/).pop() || outputPath;
+  return outputDir.replace(/[\\/]+$/, "") + sep + baseName;
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("download");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">(getInitialTheme);
+  const [showConsole, setShowConsole] = useState(() => {
+    return localStorage.getItem("debug_console_open") === "true";
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    downloadDir: "",
+    outputDir: "",
+    autoSave: false,
+    overwriteExisting: false,
+  });
   const processingRef = useRef(false);
+  const queueRef = useRef<QueueItem[]>([]);
+  const debugConsole = useDebugConsole({ maxLogs: 500 });
+
+  // Load settings on mount
+  useEffect(() => {
+    getSettings()
+      .then(setAppSettings)
+      .catch(() => {});
+  }, []);
+
+  // Keyboard shortcut: Ctrl+, to toggle settings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === ",") {
+        e.preventDefault();
+        setShowSettings((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Keep queueRef in sync
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
 
   // Apply theme to document
   useEffect(() => {
@@ -49,6 +148,7 @@ export default function App() {
   // Listen for progress events
   useEffect(() => {
     const unlistenDlProgress = listen<number>("download-progress", (e) => {
+      console.log(`[event] download-progress: ${e.payload}%`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active" ? { ...item, progress: e.payload } : item
@@ -60,6 +160,7 @@ export default function App() {
       message: string;
       file_path: string;
     }>("download-finished", (e) => {
+      console.log(`[event] download-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active"
@@ -76,6 +177,7 @@ export default function App() {
       processingRef.current = false;
     });
     const unlistenCvProgress = listen<number>("convert-progress", (e) => {
+      console.log(`[event] convert-progress: ${e.payload}%`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active" ? { ...item, progress: e.payload } : item
@@ -87,6 +189,7 @@ export default function App() {
       message: string;
       file_path: string;
     }>("convert-finished", (e) => {
+      console.log(`[event] convert-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active"
@@ -105,6 +208,7 @@ export default function App() {
 
     // Blur events
     const unlistenBlurProgress = listen<number>("blur-progress", (e) => {
+      console.log(`[event] blur-progress: ${e.payload}%`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active" ? { ...item, progress: e.payload } : item
@@ -116,6 +220,7 @@ export default function App() {
       message: string;
       file_path: string;
     }>("blur-finished", (e) => {
+      console.log(`[event] blur-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
       setQueue((prev) =>
         prev.map((item) =>
           item.status === "active"
@@ -146,16 +251,10 @@ export default function App() {
   const processNext = useCallback(async () => {
     if (processingRef.current) return;
 
-    const currentQueue = await new Promise<QueueItem[]>((resolve) => {
-      setQueue((prev) => {
-        resolve(prev);
-        return prev;
-      });
-    });
-
-    const nextItem = currentQueue.find((i) => i.status === "pending");
+    const nextItem = queueRef.current.find((i) => i.status === "pending");
     if (!nextItem) return;
 
+    console.log(`[queue] Processing: "${nextItem.label}" (${nextItem.type})`);
     processingRef.current = true;
 
     // Mark as active
@@ -167,10 +266,11 @@ export default function App() {
 
     try {
       if (nextItem.type === "download") {
+        const outputDir = nextItem.outputDir || appSettings.downloadDir || (await tempDir());
         await startDownload({
           url: nextItem.url!,
           format_type: nextItem.formatType || "bestvideo+bestaudio/best",
-          output_dir: nextItem.outputDir || (await tempDir()),
+          output_dir: outputDir,
         });
       } else if (nextItem.type === "convert") {
         await startConvert({
@@ -185,6 +285,14 @@ export default function App() {
           output: nextItem.outputPath!,
           target_size_bytes: nextItem.targetSizeBytes!,
         });
+        processingRef.current = false;
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === nextItem.id
+              ? { ...item, status: "completed", progress: 100, resultPath: nextItem.outputPath }
+              : item
+          )
+        );
       } else if (nextItem.type === "blur") {
         await startBlur({
           input: nextItem.inputPath!,
@@ -193,6 +301,7 @@ export default function App() {
         });
       }
     } catch (err) {
+      console.error(`[queue] Failed: "${nextItem.label}"`, err);
       setQueue((prev) =>
         prev.map((item) =>
           item.id === nextItem.id
@@ -202,7 +311,7 @@ export default function App() {
       );
       processingRef.current = false;
     }
-  }, []);
+  }, [appSettings]);
 
   // Auto-process queue when items change
   useEffect(() => {
@@ -210,21 +319,22 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [queue, processNext]);
 
-  const addToQueue = (item: QueueItem) => {
+  const addToQueue = useCallback((item: QueueItem) => {
+    console.log(`[queue] Added: "${item.label}" (${item.type}, status=${item.status})`);
     setQueue((prev) => [...prev, item]);
-  };
+  }, []);
 
-  const removeFromQueue = (id: string) => {
+  const removeFromQueue = useCallback((id: string) => {
     setQueue((prev) => prev.filter((i) => i.id !== id));
-  };
+  }, []);
 
-  const clearCompleted = () => {
+  const clearCompleted = useCallback(() => {
     setQueue((prev) =>
       prev.filter((i) => i.status === "pending" || i.status === "active")
     );
-  };
+  }, []);
 
-  const handleDownloadAdd = (url: string, formatType: string) => {
+  const handleDownloadAdd = useCallback((url: string, formatType: string) => {
     const isYoutube = url.toLowerCase().includes("youtube.com") || url.toLowerCase().includes("youtu.be");
     const label = isYoutube ? url.replace(/https?:\/\/(www\.)?/, "").substring(0, 50) : url.split("/").pop()?.substring(0, 50) || url;
     addToQueue({
@@ -234,20 +344,23 @@ export default function App() {
       progress: 0,
       url,
       formatType,
+      outputDir: appSettings.downloadDir || undefined,
       label: `${label}${formatType === "mp3" ? " (MP3)" : formatType === "mp4" ? " (MP4)" : ""}`,
       createdAt: Date.now(),
     });
-  };
+  }, [addToQueue, appSettings]);
 
-  const handleConvertAdd = (
+  const handleConvertAdd = useCallback((
     inputPath: string,
     outputPath: string,
     outputFormat: string,
     devMode: boolean,
     compressSize?: number,
-    compressUnit?: string
+    _compressUnit?: string
   ) => {
     const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
+
+    const finalOutputPath = applyAutoSave(outputPath, appSettings.autoSave, appSettings.outputDir);
 
     if (outputFormat === "compress" && compressSize) {
       const sizeLabel = compressSize >= 1073741824
@@ -261,7 +374,7 @@ export default function App() {
         status: "pending",
         progress: 0,
         inputPath,
-        outputPath,
+        outputPath: finalOutputPath,
         targetSizeBytes: compressSize,
         label: `${fileName} → ${sizeLabel}`,
         createdAt: Date.now(),
@@ -273,31 +386,34 @@ export default function App() {
         status: "pending",
         progress: 0,
         inputPath,
-        outputPath,
+        outputPath: finalOutputPath,
         outputFormat,
         devMode,
         label: `${fileName} → ${outputFormat.toUpperCase()}`,
         createdAt: Date.now(),
       });
     }
-  };
+  }, [addToQueue, appSettings]);
 
-  const handleBlurAdd = (inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
+  const handleBlurAdd = useCallback((inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
     const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
+
+    const finalOutputPath = applyAutoSave(outputPath, appSettings.autoSave, appSettings.outputDir);
+
     addToQueue({
       id: genId(),
       type: "blur",
       status: "pending",
       progress: 0,
       inputPath,
-      outputPath,
-      blurSettings: blurSettings as unknown as Record<string, unknown>,
+      outputPath: finalOutputPath,
+      blurSettings: blurSettings,
       label: `${fileName} → Blur`,
       createdAt: Date.now(),
     });
-  };
+  }, [addToQueue, appSettings]);
 
-  const handleCancel = async () => {
+  const handleCancel = useCallback(async () => {
     try {
       await cancelOperation();
       setQueue((prev) =>
@@ -309,96 +425,158 @@ export default function App() {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, []);
 
   const isProcessing = queue.some((i) => i.status === "active");
 
   return (
     <>
       <div className="grain-overlay" />
-      <div className="h-full overflow-y-auto p-6">
-        <div className="max-w-[700px] mx-auto space-y-5 pb-8">
-          {/* Theme Toggle */}
-          <button onClick={toggleTheme} className="theme-toggle">
-            {theme === "dark" ? (
-              <Sun size={18} className="text-glass-accent-text" />
-            ) : (
-              <Moon size={18} className="text-glass-accent" />
-            )}
-          </button>
-
-          {/* Header */}
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-6">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-glass-accent-dim border border-glass-accent/30 mb-3">
-              <Zap size={24} className="text-glass-accent" />
-            </div>
-            <h1 className="text-3xl font-display text-glass-text tracking-tight">Converter</h1>
-            <p className="text-xs text-glass-text-muted mt-1">Download, convert & blur media files</p>
-          </motion.div>
-
-          {/* Mode Tabs */}
-          <div className="glass-panel p-1.5 flex gap-1">
-            {([
-              { id: "download" as Mode, label: "Download", icon: Download },
-              { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
-              { id: "blur" as Mode, label: "Blur", icon: Film },
-            ]).map(({ id, label, icon: Icon }) => (
+      <ErrorBoundary>
+        <div className="h-full overflow-y-auto p-6">
+          <div className="max-w-[700px] mx-auto space-y-5 pb-8">
+            {/* Top-right controls */}
+            <div className="top-right-controls">
               <button
-                key={id}
-                onClick={() => !isProcessing && setMode(id)}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                  mode === id
-                    ? "bg-glass-accent text-white shadow-glow"
-                    : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-                }`}
+                onClick={() => setShowSettings(!showSettings)}
+                className={`settings-toggle ${showSettings ? "active" : ""}`}
+                title={showSettings ? "Close settings (Ctrl+,)" : "Open settings (Ctrl+,)"}
               >
-                <Icon size={15} />
-                {label}
+                <Settings size={18} className={showSettings ? "text-glass-accent" : "text-glass-text-muted"} />
+                {appSettings.autoSave && (
+                  <span className="settings-badge" />
+                )}
               </button>
-            ))}
+              <button onClick={toggleTheme} className="theme-toggle">
+                {theme === "dark" ? (
+                  <Sun size={18} className="text-glass-accent-text" />
+                ) : (
+                  <Moon size={18} className="text-glass-accent" />
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  const next = !showConsole;
+                  setShowConsole(next);
+                  localStorage.setItem("debug_console_open", String(next));
+                }}
+                className={`console-toggle ${showConsole ? "active" : ""}`}
+                title={showConsole ? "Hide debug console" : "Show debug console"}
+              >
+                <Terminal size={18} className={showConsole ? "text-glass-accent" : "text-glass-text-muted"} />
+              </button>
+            </div>
+
+            {/* Header */}
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-glass-accent-dim border border-glass-accent/30 mb-3">
+                <Zap size={24} className="text-glass-accent" />
+              </div>
+              <h1 className="text-3xl font-display text-glass-text tracking-tight">Converter</h1>
+              <p className="text-xs text-glass-text-muted mt-1">Download, convert & blur media files</p>
+            </motion.div>
+
+            {/* Mode Tabs */}
+            {!showSettings && (
+            <div className="glass-panel p-1.5 flex gap-1">
+              {([
+                { id: "download" as Mode, label: "Download", icon: Download },
+                { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
+                { id: "blur" as Mode, label: "Blur", icon: Film },
+              ]).map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => !isProcessing && setMode(id)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                    mode === id
+                      ? "bg-glass-accent text-white shadow-glow"
+                      : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
+                  }`}
+                >
+                  <Icon size={15} />
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
+
+            {/* Input Area */}
+            <AnimatePresence mode="wait">
+              {showSettings ? (
+                <motion.div
+                  key="settings"
+                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 28 }}
+                >
+                  <div className="glass-panel p-4 mb-2">
+                    <h2 className="text-sm font-semibold text-glass-text flex items-center gap-2">
+                      <Settings size={14} className="text-glass-accent" />
+                      Application Settings
+                    </h2>
+                  </div>
+                  <SettingsPanel
+                    onSettingsChanged={setAppSettings}
+                    disabled={isProcessing}
+                  />
+                </motion.div>
+              ) : (
+                <>
+                  {mode === "download" && (
+                    <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                      <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
+                    </motion.div>
+                  )}
+                  {mode === "convert" && (
+                    <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                      <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
+                    </motion.div>
+                  )}
+                  {mode === "blur" && (
+                    <motion.div key="blur" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                      <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
+                    </motion.div>
+                  )}
+                </>
+              )}
+            </AnimatePresence>
+
+            {/* Cancel Button */}
+            {isProcessing && (
+              <motion.button
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleCancel}
+                className="w-full glass-btn py-2.5 bg-glass-danger-dim border-glass-danger/30 text-glass-danger hover:bg-glass-danger/20 text-sm"
+              >
+                Cancel Current
+              </motion.button>
+            )}
+
+            {/* Debug Console */}
+            <AnimatePresence>
+              {showConsole && (
+                <DebugConsole
+                  logs={debugConsole.logs}
+                  onClear={debugConsole.clearLogs}
+                  isCapturing={debugConsole.isCapturing}
+                  onToggleCapture={() => debugConsole.setIsCapturing(!debugConsole.isCapturing)}
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Queue */}
+            <QueueManager
+              items={queue}
+              onRemove={removeFromQueue}
+              onClearCompleted={clearCompleted}
+            />
           </div>
-
-          {/* Input Area */}
-          <AnimatePresence mode="wait">
-            {mode === "download" && (
-              <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
-              </motion.div>
-            )}
-            {mode === "convert" && (
-              <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
-              </motion.div>
-            )}
-            {mode === "blur" && (
-              <motion.div key="blur" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Cancel Button */}
-          {isProcessing && (
-            <motion.button
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleCancel}
-              className="w-full glass-btn py-2.5 bg-glass-danger-dim border-glass-danger/30 text-glass-danger hover:bg-glass-danger/20 text-sm"
-            >
-              Cancel Current
-            </motion.button>
-          )}
-
-          {/* Queue */}
-          <QueueManager
-            items={queue}
-            onRemove={removeFromQueue}
-            onClearCompleted={clearCompleted}
-          />
         </div>
-      </div>
+      </ErrorBoundary>
     </>
   );
 }

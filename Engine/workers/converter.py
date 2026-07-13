@@ -51,6 +51,7 @@ class ConverterWorker:
         from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
         from Engine.formats.detection import detect_file_type, get_allowed_output_formats
 
+        proc = None
         try:
             cmd = self._build_command()
 
@@ -59,13 +60,14 @@ class ConverterWorker:
 
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
             )
 
             duration: Optional[float] = None
+            last_pct: int = 0
             for line in proc.stderr:
                 if not self._is_running:
                     proc.terminate()
@@ -79,22 +81,29 @@ class ConverterWorker:
                     return
 
                 self._stderr_lines.append(line)
+                if len(self._stderr_lines) > 100:
+                    self._stderr_lines = self._stderr_lines[-50:]
 
                 if duration is None:
-                    dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+)", line)
+                    dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", line)
                     if dur_match:
-                        h, m, s = int(dur_match.group(1)), int(dur_match.group(2)), int(dur_match.group(3))
+                        h, m, s = round(float(dur_match.group(1))), round(float(dur_match.group(2))), float(dur_match.group(3))
                         duration = h * 3600 + m * 60 + s
 
-                time_match = re.search(r"time=(\d+):(\d+):(\d+)", line)
+                time_match = re.search(r"time=\s*(\d+):(\d+):(\d+\.?\d*)", line)
                 if time_match and duration and duration > 0:
-                    h, m, s = int(time_match.group(1)), int(time_match.group(2)), int(time_match.group(3))
+                    h, m, s = round(float(time_match.group(1))), round(float(time_match.group(2))), float(time_match.group(3))
                     current = h * 3600 + m * 60 + s
                     pct = int((current / duration) * 90) + 10
                     if pct > 100:
                         pct = 100
-                    if self.on_progress:
-                        self.on_progress(pct)
+                    if pct > last_pct:
+                        last_pct = pct
+                        if self.on_progress:
+                            self.on_progress(pct)
+                elif time_match and self.on_progress and last_pct < 95:
+                    last_pct = 95
+                    self.on_progress(95)
 
             proc.wait()
 
@@ -117,6 +126,10 @@ class ConverterWorker:
         except Exception as exc:
             if self.on_finished:
                 self.on_finished(False, f"Conversion error: {str(exc)}", "")
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     def _build_command(self) -> List[str]:
         from Engine.formats.video import VIDEO_OUTPUT_FORMATS

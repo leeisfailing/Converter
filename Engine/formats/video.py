@@ -13,4 +13,10 @@ VIDEO_OUTPUT_FORMATS = {
     'wmv': {'ext': '.wmv', 'vcodec': 'wmv2', 'acodec': 'wmav2'},
     'flv': {'ext': '.flv', 'vcodec': 'libx264', 'acodec': 'aac'},
     'gif': {'ext': '.gif', 'vcodec': 'gif', 'acodec': None},
+    'm4v': {'ext': '.m4v', 'vcodec': 'libx264', 'acodec': 'aac'},
+    'mpg': {'ext': '.mpg', 'vcodec': 'mpeg2video', 'acodec': 'mp2'},
+    'mpeg': {'ext': '.mpeg', 'vcodec': 'mpeg2video', 'acodec': 'mp2'},
+    '3gp': {'ext': '.3gp', 'vcodec': 'libx264', 'acodec': 'aac'},
+    'mts': {'ext': '.mts', 'vcodec': 'libx264', 'acodec': 'aac'},
+    'vob': {'ext': '.vob', 'vcodec': 'mpeg2video', 'acodec': 'mp2'},
 }

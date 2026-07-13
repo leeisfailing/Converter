@@ -1,4 +1,7 @@
+#![recursion_limit = "256"]
 mod blur;
+mod settings;
+mod validation;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -12,6 +15,37 @@ use blur::video_info;
 use blur::renderer;
 use blur::gpu;
 use blur::config;
+use settings::AppSettings;
+
+fn find_ffmpeg() -> String {
+    // Check bundled binary relative to the exe (Tauri externalBin places in same dir on Windows)
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        // Tauri externalBin: same directory as exe
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = exe_dir.join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        // Dev / Engine/bin layout
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = exe_dir.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Fallback: check relative to CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = cwd.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    "ffmpeg".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinishedEvent {
@@ -116,6 +150,28 @@ pub struct ConfigLoadResponse {
     pub error: Option<String>,
 }
 
+// ===== SETTINGS =====
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettingsResponse {
+    pub download_dir: String,
+    pub output_dir: String,
+    pub auto_save: bool,
+    pub overwrite_existing: bool,
+}
+
+impl From<&AppSettings> for AppSettingsResponse {
+    fn from(s: &AppSettings) -> Self {
+        Self {
+            download_dir: s.download_dir.clone(),
+            output_dir: s.output_dir.clone(),
+            auto_save: s.auto_save,
+            overwrite_existing: s.overwrite_existing,
+        }
+    }
+}
+
 pub struct PythonEngine {
     pub child: tokio::sync::Mutex<Option<Child>>,
 }
@@ -132,9 +188,9 @@ fn get_engine_path() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let engine_path = std::path::Path::new(manifest_dir)
         .parent()
-        .unwrap()
+        .expect("CARGO_MANIFEST_DIR has no parent")
         .parent()
-        .unwrap()
+        .expect("CARGO_MANIFEST_DIR grandparent missing")
         .join("Engine")
         .join("__main__.py");
     engine_path.to_string_lossy().to_string()
@@ -142,13 +198,13 @@ fn get_engine_path() -> String {
 
 fn find_python() -> String {
     for name in &["python", "python3", "py"] {
-        if std::process::Command::new(name)
+        if let Ok(mut child) = std::process::Command::new(name)
             .arg("--version")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .is_ok()
         {
+            let _ = child.wait();
             return name.to_string();
         }
     }
@@ -174,10 +230,15 @@ async fn run_interactive_command(
 
     let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
     {
         let state = app.state::<PythonEngine>();
-        *state.child.lock().await = Some(child);
+        let mut guard = state.child.lock().await;
+        if guard.is_some() {
+            return Err("An operation is already in progress".to_string());
+        }
+        *guard = Some(child);
     }
 
     let mut stdin = stdin;
@@ -194,30 +255,58 @@ async fn run_interactive_command(
     let app_handle = app.clone();
     let prefix = event_prefix.to_string();
 
+    tokio::task::spawn(async move {
+        let reader = BufReader::new(stderr);
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            eprintln!("[engine stderr] {}", line);
+        }
+    });
+
+    let app_handle2 = app_handle.clone();
+    let prefix2 = prefix.clone();
     tauri::async_runtime::spawn(async move {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
 
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
-                let event_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                match event_type {
-                    "progress" => {
-                        if let Some(percent) = parsed.get("percent").and_then(|v| v.as_i64()) {
-                            let _ = app_handle.emit(&format!("{}-progress", prefix), percent as i32);
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
+                        let event_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match event_type {
+                            "progress" => {
+                                if let Some(percent) = parsed.get("percent").and_then(|v| v.as_i64()) {
+                                    let _ = app_handle.emit(&format!("{}-progress", prefix), percent as i32);
+                                }
+                            }
+                            "finished" => {
+                                let ok = parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let file_path = parsed.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let _ = app_handle.emit(
+                                    &format!("{}-finished", prefix),
+                                    FinishedEvent { ok, message, file_path },
+                                );
+                                break;
+                            }
+                            _ => {}
                         }
                     }
-                    "finished" => {
-                        let ok = parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let file_path = parsed.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let _ = app_handle.emit(
-                            &format!("{}-finished", prefix),
-                            FinishedEvent { ok, message, file_path },
-                        );
-                        break;
-                    }
-                    _ => {}
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    let _ = app_handle2.emit(
+                        &format!("{}-finished", prefix2),
+                        FinishedEvent {
+                            ok: false,
+                            message: format!("Engine output read error: {}", e),
+                            file_path: String::new(),
+                        },
+                    );
+                    break;
                 }
             }
         }
@@ -228,6 +317,8 @@ async fn run_interactive_command(
 
 #[tauri::command]
 async fn detect_file(_app: AppHandle, path: String, dev_mode: bool) -> Result<DetectFileResponse, String> {
+    validation::validate_file_exists(&path, "path")?;
+
     let engine_path = get_engine_path();
     let python = find_python();
 
@@ -248,6 +339,7 @@ async fn detect_file(_app: AppHandle, path: String, dev_mode: bool) -> Result<De
 
     let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
     let mut stdin = stdin;
     let cmd_str = serde_json::to_string(&cmd_json).map_err(|e| e.to_string())?;
@@ -255,13 +347,58 @@ async fn detect_file(_app: AppHandle, path: String, dev_mode: bool) -> Result<De
     stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
     drop(stdin);
 
+    // Read stderr in a background task to prevent pipe deadlock
+    let stderr_handle = tokio::task::spawn(async move {
+        let reader = BufReader::new(stderr);
+        let mut lines = reader.lines();
+        let mut output = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        output
+    });
+
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        if let Ok(parsed) = serde_json::from_str::<DetectFileResponse>(&line) {
-            return Ok(parsed);
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(ok_val) = val.get("ok") {
+                        if ok_val.as_bool() == Some(false) {
+                            let error_msg = val.get("error")
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("Unknown engine error");
+                            let stderr_output = stderr_handle.await.unwrap_or_default();
+                            let full_error = if !stderr_output.trim().is_empty() {
+                                format!("{}\nstderr: {}", error_msg, stderr_output.trim())
+                            } else {
+                                error_msg.to_string()
+                            };
+                            return Err(full_error);
+                        }
+                    }
+                    if let Ok(parsed) = serde_json::from_value::<DetectFileResponse>(val) {
+                        return Ok(parsed);
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                let stderr_output = stderr_handle.await.unwrap_or_default();
+                if !stderr_output.trim().is_empty() {
+                    return Err(format!("Engine read error: {}\nstderr: {}", e, stderr_output.trim()));
+                }
+                return Err(format!("Engine output read error: {}", e));
+            }
         }
+    }
+
+    let stderr_output = stderr_handle.await.unwrap_or_default();
+    if !stderr_output.trim().is_empty() {
+        return Err(format!("Engine error: {}", stderr_output.trim()));
     }
 
     Err("No response from engine".to_string())
@@ -269,6 +406,8 @@ async fn detect_file(_app: AppHandle, path: String, dev_mode: bool) -> Result<De
 
 #[tauri::command]
 async fn detect_url(_app: AppHandle, url: String) -> Result<DetectUrlResponse, String> {
+    validation::validate_url(&url)?;
+
     let engine_path = get_engine_path();
     let python = find_python();
 
@@ -288,6 +427,7 @@ async fn detect_url(_app: AppHandle, url: String) -> Result<DetectUrlResponse, S
 
     let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
     let mut stdin = stdin;
     let cmd_str = serde_json::to_string(&cmd_json).map_err(|e| e.to_string())?;
@@ -295,13 +435,58 @@ async fn detect_url(_app: AppHandle, url: String) -> Result<DetectUrlResponse, S
     stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
     drop(stdin);
 
+    // Read stderr in a background task to prevent pipe deadlock
+    let stderr_handle = tokio::task::spawn(async move {
+        let reader = BufReader::new(stderr);
+        let mut lines = reader.lines();
+        let mut output = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        output
+    });
+
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        if let Ok(parsed) = serde_json::from_str::<DetectUrlResponse>(&line) {
-            return Ok(parsed);
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(ok_val) = val.get("ok") {
+                        if ok_val.as_bool() == Some(false) {
+                            let error_msg = val.get("error")
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("Unknown engine error");
+                            let stderr_output = stderr_handle.await.unwrap_or_default();
+                            let full_error = if !stderr_output.trim().is_empty() {
+                                format!("{}\nstderr: {}", error_msg, stderr_output.trim())
+                            } else {
+                                error_msg.to_string()
+                            };
+                            return Err(full_error);
+                        }
+                    }
+                    if let Ok(parsed) = serde_json::from_value::<DetectUrlResponse>(val) {
+                        return Ok(parsed);
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                let stderr_output = stderr_handle.await.unwrap_or_default();
+                if !stderr_output.trim().is_empty() {
+                    return Err(format!("Engine read error: {}\nstderr: {}", e, stderr_output.trim()));
+                }
+                return Err(format!("Engine output read error: {}", e));
+            }
         }
+    }
+
+    let stderr_output = stderr_handle.await.unwrap_or_default();
+    if !stderr_output.trim().is_empty() {
+        return Err(format!("Engine error: {}", stderr_output.trim()));
     }
 
     Err("No response from engine".to_string())
@@ -315,6 +500,10 @@ async fn start_convert(
     format: String,
     dev_mode: bool,
 ) -> Result<(), String> {
+    validation::validate_file_exists(&input, "input")?;
+    validation::validate_output_path(&output, "output")?;
+    validation::validate_string(&format, "format", 64)?;
+
     let cmd_json = serde_json::json!({
         "cmd": "start_convert",
         "input": input,
@@ -333,6 +522,10 @@ async fn start_download(
     format_type: String,
     output_dir: String,
 ) -> Result<(), String> {
+    validation::validate_url(&url)?;
+    validation::validate_string(&format_type, "format_type", 64)?;
+    validation::validate_output_dir(&output_dir)?;
+
     let cmd_json = serde_json::json!({
         "cmd": "start_download",
         "url": url,
@@ -348,7 +541,7 @@ async fn cancel_operation(app: AppHandle) -> Result<(), String> {
     let state = app.state::<PythonEngine>();
     let mut child_guard = state.child.lock().await;
     if let Some(ref mut child) = *child_guard {
-        child.kill().await.map_err(|e| e.to_string())?;
+        let _ = child.kill().await;
     }
     *child_guard = None;
     Ok(())
@@ -358,6 +551,7 @@ async fn cancel_operation(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn detect_video_info(path: String) -> Result<VideoInfoResponse, String> {
+    validation::validate_file_exists(&path, "path")?;
     let info = video_info::get_video_info(&path)?;
 
     Ok(VideoInfoResponse {
@@ -382,6 +576,9 @@ async fn start_blur(
     output: String,
     settings_json: serde_json::Value,
 ) -> Result<(), String> {
+    validation::validate_file_exists(&input, "input")?;
+    validation::validate_output_path(&output, "output")?;
+
     let settings: BlurSettings = serde_json::from_value(settings_json)
         .map_err(|e| format!("Invalid settings: {}", e))?;
 
@@ -431,7 +628,9 @@ async fn start_blur(
                 );
             }
         }
-    });
+    })
+    .await
+    .map_err(|e| format!("Render task failed: {}", e))?;
 
     Ok(())
 }
@@ -446,6 +645,9 @@ async fn get_weight_preview(
     gaussian_mean: f64,
     gaussian_bound: String,
 ) -> Result<WeightPreviewResponse, String> {
+    validation::validate_string(&blur_weighting, "blur_weighting", 64)?;
+    validation::validate_string(&gaussian_bound, "gaussian_bound", 16)?;
+
     match weighting::get_weight_preview(
         &blur_weighting,
         blur_amount,
@@ -472,6 +674,7 @@ async fn get_weight_preview(
 
 #[tauri::command]
 async fn get_encode_presets(gpu_type: String) -> Result<PresetListResponse, String> {
+    validation::validate_string(&gpu_type, "gpu_type", 32)?;
     let preset_list = presets::get_available_presets(&gpu_type);
 
     Ok(PresetListResponse {
@@ -488,6 +691,7 @@ async fn get_encode_presets(gpu_type: String) -> Result<PresetListResponse, Stri
 
 #[tauri::command]
 async fn get_quality_config(codec: String) -> Result<QualityConfigResponse, String> {
+    validation::validate_string(&codec, "codec", 32)?;
     let config = presets::get_quality_config(&codec);
 
     Ok(QualityConfigResponse {
@@ -517,6 +721,9 @@ async fn save_blur_config(
     description: String,
     settings_json: serde_json::Value,
 ) -> Result<(), String> {
+    validation::validate_string(&name, "name", 200)?;
+    validation::validate_string(&description, "description", 500)?;
+
     let settings: BlurSettings = serde_json::from_value(settings_json)
         .map_err(|e| format!("Invalid settings: {}", e))?;
 
@@ -525,6 +732,8 @@ async fn save_blur_config(
 
 #[tauri::command]
 async fn load_blur_config(name: String) -> Result<ConfigLoadResponse, String> {
+    validation::validate_string(&name, "name", 200)?;
+
     match config::load_config(&name) {
         Ok(blur_config) => {
             let settings_val = serde_json::to_value(&blur_config.settings)
@@ -562,6 +771,7 @@ async fn list_blur_configs() -> Result<ConfigListResponse, String> {
 
 #[tauri::command]
 async fn delete_blur_config(name: String) -> Result<(), String> {
+    validation::validate_string(&name, "name", 200)?;
     config::delete_config(&name)
 }
 
@@ -569,6 +779,7 @@ async fn delete_blur_config(name: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn get_media_duration(path: String) -> Result<f64, String> {
+    validation::validate_file_exists(&path, "path")?;
     let info = video_info::get_video_info(&path)?;
     Ok(info.duration)
 }
@@ -582,6 +793,9 @@ async fn compress_file(
     output: String,
     target_size_bytes: f64,
 ) -> Result<(), String> {
+    validation::validate_file_exists(&input, "input")?;
+    validation::validate_output_path(&output, "output")?;
+
     // Get video duration
     let info = video_info::get_video_info(&input)?;
     if info.duration <= 0.0 {
@@ -598,22 +812,35 @@ async fn compress_file(
     let app_handle = app.clone();
     let input_clone = input.clone();
     let output_clone = output.clone();
+    let ffmpeg = find_ffmpeg();
+    let pass_id = format!("converter_2pass_{}", std::process::id());
 
     tokio::task::spawn_blocking(move || {
         let _ = app_handle.emit("convert-progress", 0);
 
+        // Use a unique temp path per process to avoid races with concurrent compressions
+        let passlogfile = std::env::temp_dir().join(&pass_id);
+        let passlogfile_str = passlogfile.to_string_lossy().to_string();
+        // Clean up any stale log files
+        let _ = std::fs::remove_file(format!("{}.log", passlogfile_str));
+        let _ = std::fs::remove_file(format!("{}.log.mbtree", passlogfile_str));
+
         // Two-pass encoding
-        let pass1 = std::process::Command::new("ffmpeg")
+        let pass1 = std::process::Command::new(&ffmpeg)
             .args([
                 "-y",
                 "-i",
                 &input_clone,
                 "-c:v",
                 "libx264",
+                "-pix_fmt",
+                "yuv420p",
                 "-b:v",
                 &format!("{}k", video_bitrate_kbps.round()),
                 "-pass",
                 "1",
+                "-passlogfile",
+                &passlogfile_str,
                 "-an",
                 "-f",
                 "null",
@@ -623,57 +850,70 @@ async fn compress_file(
             .map_err(|e| format!("Failed to start ffmpeg pass 1: {}", e))?;
 
         if !pass1.status.success() {
-            let stderr = String::from_utf8_lossy(&pass1.stderr);
-            // Check for existing 2-pass log file issue and retry without 2-pass
-            if stderr.contains("File already exists") || stderr.contains("Overwrite") {
-                // Fall back to single-pass CRF
-                let single = std::process::Command::new("ffmpeg")
-                    .args([
-                        "-y",
-                        "-i",
-                        &input_clone,
-                        "-c:v",
-                        "libx264",
-                        "-crf",
-                        "23",
-                        "-preset",
-                        "medium",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "128k",
-                        &output_clone,
-                    ])
-                    .output()
-                    .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+            let pass1_stderr = String::from_utf8_lossy(&pass1.stderr);
+            eprintln!("[compress] ffmpeg pass 1 failed, falling back to single-pass: {}", pass1_stderr);
+            // Clean up stale pass log files before fallback
+            let _ = std::fs::remove_file(format!("{}.log", passlogfile_str));
+            let _ = std::fs::remove_file(format!("{}.log.mbtree", passlogfile_str));
+            let single = std::process::Command::new(&ffmpeg)
+                .args([
+                    "-y",
+                    "-i",
+                    &input_clone,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-crf",
+                    "23",
+                    "-preset",
+                    "medium",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    &output_clone,
+                ])
+                .output()
+                .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
 
-                if !single.status.success() {
-                    return Err(format!(
-                        "ffmpeg failed: {}",
-                        String::from_utf8_lossy(&single.stderr)
-                    ));
-                }
-
-                let _ = app_handle.emit("convert-progress", 100);
-                return Ok(());
+            if !single.status.success() {
+                return Err(format!(
+                    "ffmpeg failed: {}",
+                    String::from_utf8_lossy(&single.stderr)
+                ));
             }
-            return Err(format!("ffmpeg pass 1 failed: {}", stderr));
+
+            let _ = app_handle.emit("convert-progress", 100);
+            let _ = app_handle.emit(
+                "convert-finished",
+                FinishedEvent {
+                    ok: true,
+                    message: String::new(),
+                    file_path: output_clone,
+                },
+            );
+            return Ok(());
         }
 
         let _ = app_handle.emit("convert-progress", 50);
 
         // Pass 2
-        let pass2 = std::process::Command::new("ffmpeg")
+        let pass2 = std::process::Command::new(&ffmpeg)
             .args([
                 "-y",
                 "-i",
                 &input_clone,
                 "-c:v",
                 "libx264",
+                "-pix_fmt",
+                "yuv420p",
                 "-b:v",
                 &format!("{}k", video_bitrate_kbps.round()),
                 "-pass",
                 "2",
+                "-passlogfile",
+                &passlogfile_str,
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -691,9 +931,8 @@ async fn compress_file(
         }
 
         // Clean up 2-pass log files
-        let _ = std::process::Command::new("ffmpeg")
-            .args(["-y", "-i", &output_clone, "-f", "null", "-"])
-            .output();
+        let _ = std::fs::remove_file(format!("{}.log", passlogfile_str));
+        let _ = std::fs::remove_file(format!("{}.log.mbtree", passlogfile_str));
 
         let _ = app_handle.emit("convert-progress", 100);
         let _ = app_handle.emit(
@@ -709,6 +948,45 @@ async fn compress_file(
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ===== APP SETTINGS =====
+
+#[tauri::command]
+async fn get_settings() -> Result<AppSettingsResponse, String> {
+    let s = settings::load_settings()?;
+    Ok(AppSettingsResponse::from(&s))
+}
+
+#[tauri::command]
+async fn save_settings(
+    download_dir: String,
+    output_dir: String,
+    auto_save: bool,
+    overwrite_existing: bool,
+) -> Result<AppSettingsResponse, String> {
+    validation::validate_output_dir(&download_dir)?;
+    validation::validate_output_dir(&output_dir)?;
+
+    let s = AppSettings {
+        download_dir,
+        output_dir,
+        auto_save,
+        overwrite_existing,
+    };
+    settings::save_settings(&s)?;
+    Ok(AppSettingsResponse::from(&s))
+}
+
+#[tauri::command]
+async fn reset_settings() -> Result<AppSettingsResponse, String> {
+    let s = settings::reset_settings()?;
+    Ok(AppSettingsResponse::from(&s))
+}
+
+#[tauri::command]
+async fn get_default_download_dir() -> Result<String, String> {
+    Ok(settings::get_default_download_dir())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -737,6 +1015,10 @@ pub fn run() {
             delete_blur_config,
             get_media_duration,
             compress_file,
+            get_settings,
+            save_settings,
+            reset_settings,
+            get_default_download_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

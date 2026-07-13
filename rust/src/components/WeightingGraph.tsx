@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 
 interface Props {
   weights: number[];
   labels?: string[];
 }
 
-export default function WeightingGraph({ weights, labels }: Props) {
+export default memo(function WeightingGraph({ weights, labels }: Props) {
   const maxWeight = useMemo(() => {
     if (weights.length === 0) return 1;
     return Math.max(...weights, 0.01);
@@ -118,4 +118,4 @@ export default function WeightingGraph({ weights, labels }: Props) {
         ))}
     </svg>
   );
-}
+});

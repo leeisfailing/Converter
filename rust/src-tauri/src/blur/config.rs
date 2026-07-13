@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::settings::BlurSettings;
 
@@ -29,8 +30,16 @@ fn configs_dir() -> Result<PathBuf, String> {
 }
 
 fn config_path(name: &str) -> Result<PathBuf, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Config name cannot be empty".to_string());
+    }
+    if trimmed.len() > 200 {
+        return Err("Config name is too long (max 200 characters)".to_string());
+    }
+
     let dir = configs_dir()?;
-    let safe_name = name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let safe_name = trimmed.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
     Ok(dir.join(format!("{}.json", safe_name)))
 }
 
@@ -46,7 +55,20 @@ pub fn save_config(name: &str, description: &str, settings: &BlurSettings) -> Re
     let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    fs::write(&path, json).map_err(|e| format!("Failed to write config file: {}", e))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let tmp_path = path.with_extension(format!("json.tmp.{}", timestamp));
+
+    fs::write(&tmp_path, &json)
+        .map_err(|e| format!("Failed to write temp config file: {}", e))?;
+
+    fs::rename(&tmp_path, &path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!("Failed to move config into place: {}", e)
+    })?;
+
     Ok(())
 }
 
@@ -60,10 +82,13 @@ pub fn load_config(name: &str) -> Result<BlurConfig, String> {
 
 pub fn delete_config(name: &str) -> Result<(), String> {
     let path = config_path(name)?;
-    if !path.exists() {
-        return Err(format!("Config '{}' not found", name));
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("Config '{}' not found", name))
+        }
+        Err(e) => Err(format!("Failed to delete config file: {}", e)),
     }
-    fs::remove_file(&path).map_err(|e| format!("Failed to delete config file: {}", e))
 }
 
 pub fn list_configs() -> Result<Vec<ConfigInfo>, String> {
@@ -99,7 +124,7 @@ pub fn list_configs() -> Result<Vec<ConfigInfo>, String> {
         }
     }
 
-    configs.sort_by(|a, b| a.is_preset.cmp(&b.is_preset).then_with(|| a.name.cmp(&b.name)));
+    configs.sort_by(|a, b| b.is_preset.cmp(&a.is_preset).then_with(|| a.name.cmp(&b.name)));
     Ok(configs)
 }
 

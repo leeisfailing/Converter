@@ -1,3 +1,5 @@
+import type { BlurSettings } from "../components/BlurSettings";
+
 export type QueueItemType = "download" | "convert" | "blur" | "compress";
 export type QueueItemStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 
@@ -18,7 +20,7 @@ export interface QueueItem {
   // Compress fields
   targetSizeBytes?: number;
   // Blur fields
-  blurSettings?: Record<string, unknown>;
+  blurSettings?: BlurSettings;
   // Result
   resultPath?: string;
   error?: string;

@@ -2,6 +2,12 @@
 import json
 import sys
 import traceback
+from pathlib import Path
+
+# Ensure the project root (parent of Engine/) is in sys.path
+# so that "from Engine.xxx import yyy" resolves correctly
+# when invoked as: python Engine/__main__.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from Engine.core.ipc import send_response
 from Engine.handlers.file import handle_detect_file
@@ -23,10 +29,15 @@ def handle_cancel():
 HANDLERS = {
     "detect_file": handle_detect_file,
     "detect_url": handle_detect_url,
-    "start_convert": lambda args: _current_worker.update({"convert": handle_start_convert(args)}),
-    "start_download": lambda args: _current_worker.update({"download": handle_start_download(args)}),
+    "start_convert": lambda args: _store_worker("convert", handle_start_convert(args)),
+    "start_download": lambda args: _store_worker("download", handle_start_download(args)),
     "cancel": lambda _: handle_cancel(),
 }
+
+
+def _store_worker(key: str, worker):
+    if worker is not None:
+        _current_worker[key] = worker
 
 
 def run_interactive_mode():

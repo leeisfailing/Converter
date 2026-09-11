@@ -13,6 +13,19 @@ except ImportError:
     yt_dlp = None
 
 
+def _find_unique_path(directory: Path, filename: str) -> Path:
+    """Return a unique file path in directory, appending (N) if needed."""
+    final_path = directory / filename
+    if final_path.exists():
+        stem = final_path.stem
+        suffix = final_path.suffix
+        counter = 1
+        while final_path.exists():
+            final_path = directory / f"{stem} ({counter}){suffix}"
+            counter += 1
+    return final_path
+
+
 class DownloadWorker:
     def __init__(self, url: str, output_dir: Path, format_type: str = "bestvideo+bestaudio/best"):
         self.url = url
@@ -25,7 +38,7 @@ class DownloadWorker:
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
     def _run(self):
@@ -111,6 +124,7 @@ class DownloadWorker:
             'quiet': True,
             'no_warnings': True,
             'update': False,
+            'socket_timeout': 30,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'http_headers': {
                 'Accept-Language': 'en-US,en;q=0.9',
@@ -186,15 +200,7 @@ class DownloadWorker:
         if not filename:
             filename = "downloaded_file"
 
-        final_path = self.output_dir / filename
-        if final_path.exists():
-            stem = final_path.stem
-            suffix = final_path.suffix
-            counter = 1
-            while final_path.exists():
-                final_path = self.output_dir / f"{stem} ({counter}){suffix}"
-                counter += 1
-
+        final_path = _find_unique_path(self.output_dir, filename)
         temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
         try:
@@ -207,17 +213,10 @@ class DownloadWorker:
                     if match:
                         filename = os.path.basename(match.group(1))
                         if filename:
-                            final_path = self.output_dir / filename
-                        if final_path.exists():
-                            stem = final_path.stem
-                            suffix = final_path.suffix
-                            counter = 1
-                            while final_path.exists():
-                                final_path = self.output_dir / f"{stem} ({counter}){suffix}"
-                                counter += 1
+                            final_path = _find_unique_path(self.output_dir, filename)
                         temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
-                blocksize = 8192
+                blocksize = 65536
                 read_so_far = 0
                 try:
                     totalsize = int(response.headers.get('Content-Length', -1))

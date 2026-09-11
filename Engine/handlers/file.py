@@ -7,7 +7,7 @@ from Engine.formats.detection import detect_file_type, get_allowed_output_format
 def handle_detect_file(cmd_args: dict):
     try:
         file_path = cmd_args["path"]
-    except KeyError:
+    except (KeyError, TypeError):
         send_response({"ok": False, "error": "Missing required field: path"})
         return
     try:

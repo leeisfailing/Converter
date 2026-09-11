@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link, Download, Music, Film, Plus, Monitor, Loader2, Globe, Clock } from "lucide-react";
+import { Link, Music, Film, Plus, Monitor, Loader2, Globe, Clock } from "lucide-react";
 import { detectUrl } from "../lib/tauri-commands";
 import type { UrlFormat } from "../lib/tauri-commands";
 
@@ -95,9 +95,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   };
 
   return (
-    <div className="glass-panel p-6 space-y-4">
+    <div className="space-y-4">
       {/* URL Input */}
-      <div>
+      <div className="panel p-4">
         <div className="section-label flex items-center gap-1.5 mb-3">
           <Link size={12} />
           Paste URL
@@ -105,7 +105,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
         <div className="flex gap-2">
           <input
             type="url"
-            className={`glass-input flex-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+            className={`input flex-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}
             placeholder="Paste any URL — video, audio, file, etc."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -114,31 +114,28 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
           />
           {detectState === "idle" || detectState === "error" ? (
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleDetect}
               disabled={disabled || !url.trim()}
-              className="glass-btn glass-btn-primary px-5"
+              className="btn btn-primary px-5"
             >
               <Globe size={16} />
               Detect
             </motion.button>
           ) : detectState === "detecting" ? (
             <motion.button
-              whileHover={{ scale: 1.02 }}
               disabled
-              className="glass-btn glass-btn-primary px-5 opacity-60"
+              className="btn btn-primary px-5 opacity-60"
             >
               <Loader2 size={16} className="animate-spin" />
               Detecting...
             </motion.button>
           ) : (
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleReset}
               disabled={disabled}
-              className="glass-btn px-5"
+              className="btn px-5"
             >
               Reset
             </motion.button>
@@ -153,7 +150,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="text-xs text-glass-danger bg-glass-danger-dim border border-glass-danger/20 rounded-lg px-3 py-2"
+            className="text-xs text-app-danger bg-app-danger-dim border border-app-danger/20 rounded-lg px-3 py-2"
           >
             {detectError || "Failed to detect URL. Try a different link."}
           </motion.div>
@@ -170,60 +167,56 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             className="space-y-4"
           >
             {/* Title bar */}
-            <div className="flex items-center gap-3 bg-glass-surface rounded-lg px-3 py-2.5">
+            <div className="panel p-3 flex items-center gap-3">
               {detectedInfo.thumbnail && (
                 <img
                   src={detectedInfo.thumbnail}
                   alt=""
-                  className="w-16 h-10 object-cover rounded"
+                  className="w-16 h-10 object-cover rounded-lg"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-glass-text font-medium truncate">{detectedInfo.title}</p>
+                <p className="text-sm font-medium text-app-text truncate">{detectedInfo.title}</p>
                 <div className="flex items-center gap-2 mt-0.5">
                   {detectedInfo.duration && (
-                    <span className="text-[10px] text-glass-text-muted flex items-center gap-1">
-                      <Clock size={9} />
+                    <span className="text-[11px] text-app-text-muted flex items-center gap-1">
+                      <Clock size={10} />
                       {detectedInfo.duration}
                     </span>
                   )}
-                  <span className="text-[10px] text-glass-text-muted">
+                  <span className="text-[11px] text-app-text-muted">
                     {detectedInfo.format_type === "video" ? "Video" : "Audio"}
                   </span>
                   {detectedInfo.is_live && (
-                    <span className="text-[10px] text-glass-danger">LIVE</span>
+                    <span className="text-[11px] font-medium text-app-danger">LIVE</span>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Format picker */}
-            <div>
-              <div className="section-label mb-2">Pick quality</div>
+            <div className="panel p-4">
+              <div className="section-label mb-3">Pick quality</div>
               <div className="grid grid-cols-3 gap-2">
                 {detectedInfo.formats.map((fmt) => (
                   <button
                     key={fmt.value}
                     onClick={() => setSelectedFormat(fmt.value)}
                     disabled={disabled}
-                    className={`glass-panel p-3 flex flex-col items-center gap-1 transition-all cursor-pointer ${
-                      selectedFormat === fmt.value
-                        ? "border-glass-accent/40 bg-glass-accent-dim"
-                        : "hover:bg-glass-surface-hover"
-                    } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+                    className={`format-chip ${selectedFormat === fmt.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                   >
                     {fmt.value.includes("mp3") ? (
-                      <Music size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
+                      <Music size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
                     ) : fmt.value.includes("mp4") ? (
-                      <Film size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
+                      <Film size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
                     ) : (
-                      <Monitor size={14} className={selectedFormat === fmt.value ? "text-glass-accent" : "text-glass-text-muted"} />
+                      <Monitor size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
                     )}
-                    <span className={`text-[11px] font-medium ${selectedFormat === fmt.value ? "text-glass-text" : "text-glass-text-dim"}`}>
+                    <span className={`text-[11px] font-medium ${selectedFormat === fmt.value ? "text-app-text" : "text-app-text-secondary"}`}>
                       {fmt.label}
                     </span>
-                    <span className="text-[9px] text-glass-text-muted">{fmt.desc}</span>
+                    <span className="text-[10px] text-app-text-muted">{fmt.desc}</span>
                   </button>
                 ))}
               </div>
@@ -231,11 +224,10 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
 
             {/* Add button */}
             <motion.button
-              whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleAdd}
               disabled={disabled || !selectedFormat}
-              className="w-full glass-btn glass-btn-primary py-2.5"
+              className="w-full btn btn-primary py-2.5"
             >
               <Plus size={16} />
               Add to queue
@@ -244,7 +236,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
         )}
       </AnimatePresence>
 
-      <p className="text-[10px] text-glass-text-muted text-center">
+      <p className="text-[11px] text-app-text-muted text-center">
         Paste any URL, click Detect to see options, then add to queue.
       </p>
     </div>

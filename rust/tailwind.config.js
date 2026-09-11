@@ -5,41 +5,44 @@ export default {
   theme: {
     extend: {
       colors: {
-        glass: {
+        app: {
           bg: "var(--bg)",
+          "bg-secondary": "var(--bg-secondary)",
           surface: "var(--surface)",
+          "surface-elevated": "var(--surface-elevated)",
           "surface-hover": "var(--surface-hover)",
           border: "var(--border)",
           "border-hover": "var(--border-hover)",
           accent: "var(--accent)",
+          "accent-hover": "var(--accent-hover)",
           "accent-dim": "var(--accent-dim)",
           "accent-glow": "var(--accent-glow)",
-          "accent-text": "var(--accent-text)",
           text: "var(--text)",
-          "text-dim": "var(--text-dim)",
+          "text-secondary": "var(--text-secondary)",
           "text-muted": "var(--text-muted)",
           danger: "var(--danger)",
           "danger-dim": "var(--danger-dim)",
           success: "var(--success)",
           "success-dim": "var(--success-dim)",
+          warning: "var(--warning)",
+          "warning-dim": "var(--warning-dim)",
         },
       },
-      backdropBlur: {
-        glass: "20px",
-      },
       borderRadius: {
-        glass: "14px",
-        "glass-sm": "10px",
+        panel: "12px",
+        "panel-sm": "8px",
       },
       boxShadow: {
-        glass: "0 8px 32px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
-        "glass-hover": "0 8px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
-        glow: "0 0 20px var(--accent-dim)",
+        panel: "0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)",
+        "panel-lg": "0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1)",
+        glow: "0 0 20px var(--accent-glow)",
       },
       fontFamily: {
-        sans: ['"Inter"', '"SF Pro Display"', '"Segoe UI"', 'system-ui', 'sans-serif'],
-        display: ['"DM Serif Display"', 'Georgia', 'serif'],
+        sans: ['"Inter"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', '"SF Mono"', '"Fira Code"', 'monospace'],
+      },
+      animation: {
+        "spin-slow": "spin 2s linear infinite",
       },
     },
   },

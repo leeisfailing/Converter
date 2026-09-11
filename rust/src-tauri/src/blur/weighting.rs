@@ -101,12 +101,10 @@ pub fn gaussian_sym(
 }
 
 pub fn vegas(frames: usize) -> Vec<f64> {
-    let weights: Vec<f64> = if frames % 2 == 0 {
+    let weights: Vec<f64> = if frames.is_multiple_of(2) {
         let mut w = Vec::with_capacity(frames);
         w.push(1.0);
-        for _ in 1..frames - 1 {
-            w.push(2.0);
-        }
+        w.extend(std::iter::repeat_n(2.0, frames - 2));
         w.push(1.0);
         w
     } else {

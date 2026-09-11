@@ -1,5 +1,41 @@
 __pycache__/
 *.pyc
+*.pyo
 node_modules/
 rust/src-tauri/gen/
 rust/target/
+rust/dist/
+rust/src-tauri/target/
+
+# Backup files
+*.backup.*
+
+# FFmpeg log files
+ffmpeg2pass-0.log*
+*.mbtree
+
+# VapourSynth source/build
+vapoursynth-R78RC1/
+vapoursynth-temp/
+
+# Binaries are tracked (ffmpeg, ffprobe, vspipe, VS DLLs)
+
+# Build artifacts (except bundled binaries)
+*.exe
+!Engine/bin/*.exe
+!rust/src-tauri/bin/*.exe
+*.dll
+!Engine/bin/*.dll
+!rust/src-tauri/bin/*.dll
+*.so
+*.dylib
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

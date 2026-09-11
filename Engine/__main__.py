@@ -23,6 +23,8 @@ def handle_cancel():
         worker = _current_worker.pop(key, None)
         if worker is not None:
             worker.stop()
+            if hasattr(worker, '_thread') and worker._thread is not None:
+                worker._thread.join(timeout=5)
     send_response({"ok": True})
 
 

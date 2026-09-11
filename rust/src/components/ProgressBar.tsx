@@ -9,7 +9,7 @@ export default memo(function ProgressBar({ progress }: Props) {
   const clamped = Math.min(100, Math.max(0, progress));
 
   return (
-    <div className="glass-panel p-4">
+    <div className="panel p-4">
       <div
         role="progressbar"
         aria-valuenow={Math.round(clamped)}
@@ -18,16 +18,16 @@ export default memo(function ProgressBar({ progress }: Props) {
         aria-label="Conversion progress"
       >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-white/40">
+        <span className="text-xs font-medium text-app-text-muted">
           Processing...
         </span>
-        <span className="text-xs font-semibold text-glass-accent">
+        <span className="text-xs font-semibold text-app-accent">
           {Math.round(clamped)}%
         </span>
       </div>
-      <div className="glass-progress-track">
+      <div className="progress-track">
         <motion.div
-          className="glass-progress-fill"
+          className="progress-fill"
           initial={{ width: 0 }}
           animate={{ width: `${clamped}%` }}
           transition={{ duration: 0.3, ease: "easeOut" }}

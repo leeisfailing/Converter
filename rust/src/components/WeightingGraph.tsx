@@ -55,7 +55,7 @@ export default memo(function WeightingGraph({ weights, labels }: Props) {
 
   if (weights.length === 0) {
     return (
-      <div className="text-center py-4 text-[10px] text-glass-text-muted">
+      <div className="text-center py-4 text-[10px] text-app-text-muted">
         No weights to display
       </div>
     );

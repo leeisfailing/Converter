@@ -17,6 +17,9 @@ use blur::gpu;
 use blur::config;
 use settings::AppSettings;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+static COMPRESS_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 fn find_ffmpeg() -> String {
     // Check bundled binary relative to the exe (Tauri externalBin places in same dir on Windows)
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
@@ -176,6 +179,12 @@ pub struct PythonEngine {
     pub child: tokio::sync::Mutex<Option<Child>>,
 }
 
+impl Default for PythonEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PythonEngine {
     pub fn new() -> Self {
         Self {
@@ -185,19 +194,27 @@ impl PythonEngine {
 }
 
 fn get_engine_path() -> String {
+    // First try runtime path relative to the executable
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        let engine_path = exe_dir.parent().unwrap_or(&exe_dir).join("Engine").join("__main__.py");
+        if engine_path.exists() {
+            return engine_path.to_string_lossy().to_string();
+        }
+    }
+    // Fallback to compile-time path (development)
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let engine_path = std::path::Path::new(manifest_dir)
         .parent()
-        .expect("CARGO_MANIFEST_DIR has no parent")
+        .unwrap_or_else(|| std::path::Path::new(manifest_dir))
         .parent()
-        .expect("CARGO_MANIFEST_DIR grandparent missing")
+        .unwrap_or_else(|| std::path::Path::new(manifest_dir))
         .join("Engine")
         .join("__main__.py");
     engine_path.to_string_lossy().to_string()
 }
 
 fn find_python() -> String {
-    for name in &["python", "python3", "py"] {
+    for name in &["py", "python3", "python"] {
         if let Ok(mut child) = std::process::Command::new(name)
             .arg("--version")
             .stdout(std::process::Stdio::piped())
@@ -232,25 +249,30 @@ async fn run_interactive_command(
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
+    let mut stdin = stdin;
+    let cmd_str = serde_json::to_string(&cmd_json).map_err(|e| e.to_string())?;
+    if let Err(e) = stdin.write_all(cmd_str.as_bytes()).await {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(e.to_string());
+    }
+    if let Err(e) = stdin.write_all(b"\n").await {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(e.to_string());
+    }
+    drop(stdin);
+
     {
         let state = app.state::<PythonEngine>();
         let mut guard = state.child.lock().await;
         if guard.is_some() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
             return Err("An operation is already in progress".to_string());
         }
         *guard = Some(child);
     }
-
-    let mut stdin = stdin;
-    let cmd_str = serde_json::to_string(&cmd_json).map_err(|e| e.to_string())?;
-    stdin
-        .write_all(cmd_str.as_bytes())
-        .await
-        .map_err(|e| e.to_string())?;
-    stdin
-        .write_all(b"\n")
-        .await
-        .map_err(|e| e.to_string())?;
 
     let app_handle = app.clone();
     let prefix = event_prefix.to_string();
@@ -278,6 +300,11 @@ async fn run_interactive_command(
                             "progress" => {
                                 if let Some(percent) = parsed.get("percent").and_then(|v| v.as_i64()) {
                                     let _ = app_handle.emit(&format!("{}-progress", prefix), percent as i32);
+                                }
+                            }
+                            "download_status" => {
+                                if let Some(status) = parsed.get("status") {
+                                    let _ = app_handle.emit(&format!("{}-status", prefix), status.clone());
                                 }
                             }
                             "finished" => {
@@ -813,7 +840,7 @@ async fn compress_file(
     let input_clone = input.clone();
     let output_clone = output.clone();
     let ffmpeg = find_ffmpeg();
-    let pass_id = format!("converter_2pass_{}", std::process::id());
+    let pass_id = format!("converter_2pass_{}", COMPRESS_COUNTER.fetch_add(1, Ordering::Relaxed));
 
     tokio::task::spawn_blocking(move || {
         let _ = app_handle.emit("convert-progress", 0);

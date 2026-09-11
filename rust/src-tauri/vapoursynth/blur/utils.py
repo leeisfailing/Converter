@@ -11,15 +11,22 @@ core = vs.core
 def load_plugins():
     ext = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    plugin_dir = os.path.join(script_dir, "..", "vapoursynth-plugins")
+    
+    # Search multiple plugin directories
+    plugin_dirs = [
+        os.path.join(script_dir, "..", "vapoursynth-plugins"),
+        os.path.join(script_dir, "..", "plugins"),
+        os.path.join(script_dir, "..", "..", "Engine", "bin", "plugins"),
+    ]
 
-    if os.path.exists(plugin_dir):
-        for f in sorted(os.listdir(plugin_dir)):
-            if f.endswith(ext):
-                try:
-                    core.std.LoadPlugin(os.path.join(plugin_dir, f))
-                except Exception:
-                    pass
+    for plugin_dir in plugin_dirs:
+        if os.path.exists(plugin_dir):
+            for f in sorted(os.listdir(plugin_dir)):
+                if f.endswith(ext):
+                    try:
+                        core.std.LoadPlugin(os.path.join(plugin_dir, f))
+                    except Exception:
+                        pass
 
     if sys.platform == "win32":
         try:

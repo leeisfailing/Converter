@@ -203,15 +203,6 @@ impl BlurSettings {
 
         j
     }
-
-    pub fn parse_fps_string(s: &str) -> Option<f64> {
-        let s = s.trim();
-        if let Some(multiplier) = s.strip_suffix('x') {
-            multiplier.parse::<f64>().ok()
-        } else {
-            s.parse::<f64>().ok()
-        }
-    }
 }
 
 pub const SVP_INTERPOLATION_PRESETS: &[&str] = &[

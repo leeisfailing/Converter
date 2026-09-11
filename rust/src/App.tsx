@@ -1,7 +1,5 @@
-import React from "react";
-import { useState, useEffect, useCallback, useRef, Component } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { listen } from "@tauri-apps/api/event";
 import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
@@ -9,7 +7,11 @@ import BlurSettings from "./components/BlurSettings";
 import QueueManager from "./components/QueueManager";
 import DebugConsole from "./components/DebugConsole";
 import SettingsPanel from "./components/Settings";
+import ToastContainer from "./components/Toast";
 import useDebugConsole from "./hooks/useDebugConsole";
+import useToast from "./lib/useToast";
+import { useQueue } from "./lib/useQueue";
+import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import {
   startDownload,
   startConvert,
@@ -30,7 +32,7 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-class ErrorBoundary extends Component<
+class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   ErrorBoundaryState
 > {
@@ -52,19 +54,19 @@ class ErrorBoundary extends Component<
     if (this.state.hasError) {
       const err = this.state.error;
       return (
-        <div className="glass-panel p-6 m-4 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 mb-3">
-            <Zap size={20} className="text-red-400" />
+        <div className="panel p-6 m-4 text-center">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-app-danger-dim mb-3">
+            <Zap size={20} className="text-app-danger" />
           </div>
-          <h2 className="text-lg font-semibold text-glass-text mb-2">
+          <h2 className="text-lg font-semibold text-app-text mb-2">
             Something went wrong
           </h2>
-          <p className="text-sm text-glass-text-muted mb-4">
+          <p className="text-sm text-app-text-muted mb-4">
             {err?.message || "An unexpected error occurred."}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
-            className="glass-btn px-4 py-2 text-sm text-glass-text hover:bg-glass-surface-hover"
+            className="btn px-4 py-2 text-sm"
           >
             Try Again
           </button>
@@ -74,11 +76,6 @@ class ErrorBoundary extends Component<
 
     return this.props.children;
   }
-}
-
-let nextId = 0;
-function genId() {
-  return `q-${Date.now()}-${++nextId}`;
 }
 
 function getInitialTheme(): "dark" | "light" {
@@ -93,13 +90,21 @@ function applyAutoSave(outputPath: string, autoSave: boolean, outputDir: string)
   return outputDir.replace(/[\\/]+$/, "") + sep + baseName;
 }
 
+let nextId = 0;
+function genId(): string {
+  return `q-${Date.now()}-${++nextId}`;
+}
+
+const MODE_CONFIG = [
+  { id: "download" as Mode, label: "Download", icon: Download },
+  { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
+  { id: "blur" as Mode, label: "Blur", icon: Film },
+];
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("download");
-  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [theme, setTheme] = useState<"dark" | "light">(getInitialTheme);
-  const [showConsole, setShowConsole] = useState(() => {
-    return localStorage.getItem("debug_console_open") === "true";
-  });
+  const [showConsole, setShowConsole] = useState(() => localStorage.getItem("debug_console_open") === "true");
   const [showSettings, setShowSettings] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     downloadDir: "",
@@ -107,232 +112,90 @@ export default function App() {
     autoSave: false,
     overwriteExisting: false,
   });
-  const processingRef = useRef(false);
-  const queueRef = useRef<QueueItem[]>([]);
+
   const debugConsole = useDebugConsole({ maxLogs: 500 });
+  const toast = useToast();
+  const queue = useQueue();
 
-  // Load settings on mount
-  useEffect(() => {
-    getSettings()
-      .then(setAppSettings)
-      .catch(() => {});
-  }, []);
-
-  // Keyboard shortcut: Ctrl+, to toggle settings
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === ",") {
-        e.preventDefault();
-        setShowSettings((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // Keep queueRef in sync
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
-
-  // Apply theme to document
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("app_theme", theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  };
-
-  // Listen for progress events
-  useEffect(() => {
-    const unlistenDlProgress = listen<number>("download-progress", (e) => {
-      console.log(`[event] download-progress: ${e.payload}%`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active" ? { ...item, progress: e.payload } : item
-        )
-      );
-    });
-    const unlistenDlFinished = listen<{
-      ok: boolean;
-      message: string;
-      file_path: string;
-    }>("download-finished", (e) => {
-      console.log(`[event] download-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active"
-            ? {
-                ...item,
-                status: e.payload.ok ? "completed" : "failed",
-                progress: e.payload.ok ? 100 : item.progress,
-                resultPath: e.payload.file_path || undefined,
-                error: e.payload.ok ? undefined : e.payload.message,
-              }
-            : item
-        )
-      );
-      processingRef.current = false;
-    });
-    const unlistenCvProgress = listen<number>("convert-progress", (e) => {
-      console.log(`[event] convert-progress: ${e.payload}%`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active" ? { ...item, progress: e.payload } : item
-        )
-      );
-    });
-    const unlistenCvFinished = listen<{
-      ok: boolean;
-      message: string;
-      file_path: string;
-    }>("convert-finished", (e) => {
-      console.log(`[event] convert-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active"
-            ? {
-                ...item,
-                status: e.payload.ok ? "completed" : "failed",
-                progress: e.payload.ok ? 100 : item.progress,
-                resultPath: e.payload.file_path || undefined,
-                error: e.payload.ok ? undefined : e.payload.message,
-              }
-            : item
-        )
-      );
-      processingRef.current = false;
-    });
-
-    // Blur events
-    const unlistenBlurProgress = listen<number>("blur-progress", (e) => {
-      console.log(`[event] blur-progress: ${e.payload}%`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active" ? { ...item, progress: e.payload } : item
-        )
-      );
-    });
-    const unlistenBlurFinished = listen<{
-      ok: boolean;
-      message: string;
-      file_path: string;
-    }>("blur-finished", (e) => {
-      console.log(`[event] blur-finished: ok=${e.payload.ok}, msg="${e.payload.message}", path="${e.payload.file_path}"`);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active"
-            ? {
-                ...item,
-                status: e.payload.ok ? "completed" : "failed",
-                progress: e.payload.ok ? 100 : item.progress,
-                resultPath: e.payload.file_path || undefined,
-                error: e.payload.ok ? undefined : e.payload.message,
-              }
-            : item
-        )
-      );
-      processingRef.current = false;
-    });
-
-    return () => {
-      unlistenDlProgress.then((fn) => fn());
-      unlistenDlFinished.then((fn) => fn());
-      unlistenCvProgress.then((fn) => fn());
-      unlistenCvFinished.then((fn) => fn());
-      unlistenBlurProgress.then((fn) => fn());
-      unlistenBlurFinished.then((fn) => fn());
-    };
-  }, []);
-
-  // Process next item in queue
-  const processNext = useCallback(async () => {
-    if (processingRef.current) return;
-
-    const nextItem = queueRef.current.find((i) => i.status === "pending");
-    if (!nextItem) return;
-
-    console.log(`[queue] Processing: "${nextItem.label}" (${nextItem.type})`);
-    processingRef.current = true;
-
-    // Mark as active
-    setQueue((prev) =>
-      prev.map((item) =>
-        item.id === nextItem.id ? { ...item, status: "active", progress: 0 } : item
-      )
-    );
-
+  const processNextCallback = useCallback(async (item: QueueItem) => {
     try {
-      if (nextItem.type === "download") {
-        const outputDir = nextItem.outputDir || appSettings.downloadDir || (await tempDir());
-        await startDownload({
-          url: nextItem.url!,
-          format_type: nextItem.formatType || "bestvideo+bestaudio/best",
-          output_dir: outputDir,
-        });
-      } else if (nextItem.type === "convert") {
-        await startConvert({
-          input: nextItem.inputPath!,
-          output: nextItem.outputPath!,
-          format: nextItem.outputFormat!,
-          dev_mode: nextItem.devMode || false,
-        });
-      } else if (nextItem.type === "compress") {
-        await compressFile({
-          input: nextItem.inputPath!,
-          output: nextItem.outputPath!,
-          target_size_bytes: nextItem.targetSizeBytes!,
-        });
-        processingRef.current = false;
-        setQueue((prev) =>
-          prev.map((item) =>
-            item.id === nextItem.id
-              ? { ...item, status: "completed", progress: 100, resultPath: nextItem.outputPath }
-              : item
-          )
-        );
-      } else if (nextItem.type === "blur") {
-        await startBlur({
-          input: nextItem.inputPath!,
-          output: nextItem.outputPath!,
-          settings: nextItem.blurSettings!,
-        });
+      const currentSettings = appSettings;
+      if (item.type === "download") {
+        const outputDir = item.outputDir || currentSettings.downloadDir || (await tempDir());
+        await startDownload({ url: item.url!, format_type: item.formatType || "bestvideo+bestaudio/best", output_dir: outputDir });
+      } else if (item.type === "compress") {
+        await compressFile({ input: item.inputPath!, output: item.outputPath!, target_size_bytes: item.targetSizeBytes! });
+      } else if (item.type === "convert") {
+        await startConvert({ input: item.inputPath!, output: item.outputPath!, format: item.outputFormat!, dev_mode: item.devMode || false });
+      } else if (item.type === "blur") {
+        await startBlur({ input: item.inputPath!, output: item.outputPath!, settings: item.blurSettings! });
       }
     } catch (err) {
-      console.error(`[queue] Failed: "${nextItem.label}"`, err);
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.id === nextItem.id
-            ? { ...item, status: "failed", error: String(err) }
-            : item
-        )
-      );
-      processingRef.current = false;
+      console.error(`[queue] Failed: "${item.label}"`, err);
     }
   }, [appSettings]);
 
-  // Auto-process queue when items change
   useEffect(() => {
-    const timer = setTimeout(() => processNext(), 100);
+    getSettings()
+      .then(setAppSettings)
+      .catch((err) => console.warn("[app] Failed to load settings:", err));
+  }, []);
+
+  useKeyboardShortcuts([
+    { key: ",", ctrl: true, action: () => setShowSettings((prev) => !prev) },
+    { key: "d", ctrl: true, shift: true, action: () => setShowConsole((prev) => !prev) },
+    { key: "q", ctrl: true, action: () => {
+      const active = queue.queueRef.current.find((i) => i.status === "active");
+      if (active) cancelOperation().then(() => queue.cancelActive());
+    }},
+    { key: "Escape", action: () => {
+      if (showSettings) setShowSettings(false);
+      else if (showConsole) setShowConsole(false);
+    }, enabled: showSettings || showConsole },
+  ]);
+
+  useEffect(() => {
+    queue.registerListeners("download", {
+      onProgress: (id, progress) => queue.updateItemStatus(id, "active", { progress }),
+      onFinished: (id, ok, message, filePath) => {
+        queue.updateItemStatus(id, ok ? "completed" : "failed", { progress: ok ? 100 : undefined, resultPath: filePath || undefined, error: ok ? undefined : message });
+        toast.addToast(ok ? "success" : "error", ok ? "Download complete" : "Download failed", message);
+      },
+    });
+
+    queue.registerListeners("convert", {
+      onProgress: (id, progress) => queue.updateItemStatus(id, "active", { progress }),
+      onFinished: (id, ok, message, filePath) => {
+        queue.updateItemStatus(id, ok ? "completed" : "failed", { progress: ok ? 100 : undefined, resultPath: filePath || undefined, error: ok ? undefined : message });
+        toast.addToast(ok ? "success" : "error", ok ? "Conversion complete" : "Conversion failed", message);
+      },
+    });
+
+    queue.registerListeners("blur", {
+      onProgress: (id, progress) => queue.updateItemStatus(id, "active", { progress }),
+      onFinished: (id, ok, message, filePath) => {
+        queue.updateItemStatus(id, ok ? "completed" : "failed", { progress: ok ? 100 : undefined, resultPath: filePath || undefined, error: ok ? undefined : message });
+        toast.addToast(ok ? "success" : "error", ok ? "Blur complete" : "Blur failed", message);
+      },
+    });
+  }, [queue, toast]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => queue.processNext(processNextCallback), 100);
     return () => clearTimeout(timer);
-  }, [queue, processNext]);
+  }, [queue.queue, processNextCallback, queue.processNext]);
 
   const addToQueue = useCallback((item: QueueItem) => {
-    console.log(`[queue] Added: "${item.label}" (${item.type}, status=${item.status})`);
-    setQueue((prev) => [...prev, item]);
-  }, []);
+    queue.enqueue(item);
+  }, [queue.enqueue]);
 
   const removeFromQueue = useCallback((id: string) => {
-    setQueue((prev) => prev.filter((i) => i.id !== id));
-  }, []);
+    queue.removeItem(id);
+  }, [queue.removeItem]);
 
   const clearCompleted = useCallback(() => {
-    setQueue((prev) =>
-      prev.filter((i) => i.status === "pending" || i.status === "active")
-    );
-  }, []);
+    queue.clearCompleted();
+  }, [queue.clearCompleted]);
 
   const handleDownloadAdd = useCallback((url: string, formatType: string) => {
     const isYoutube = url.toLowerCase().includes("youtube.com") || url.toLowerCase().includes("youtu.be");
@@ -348,34 +211,27 @@ export default function App() {
       label: `${label}${formatType === "mp3" ? " (MP3)" : formatType === "mp4" ? " (MP4)" : ""}`,
       createdAt: Date.now(),
     });
+    toast.addToast("info", "Added to queue", `${label} (${formatType.toUpperCase()})`);
   }, [addToQueue, appSettings]);
 
   const handleConvertAdd = useCallback((
-    inputPath: string,
-    outputPath: string,
-    outputFormat: string,
-    devMode: boolean,
-    compressSize?: number,
-    _compressUnit?: string
+    inputPath: string, outputPath: string, outputFormat: string,
+    devMode: boolean, compressSize?: number
   ) => {
     const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
-
     const finalOutputPath = applyAutoSave(outputPath, appSettings.autoSave, appSettings.outputDir);
 
     if (outputFormat === "compress" && compressSize) {
       const sizeLabel = compressSize >= 1073741824
         ? `${(compressSize / 1073741824).toFixed(1)} GB`
-        : compressSize >= 1048576
-        ? `${(compressSize / 1048576).toFixed(1)} MB`
+        : compressSize >= 1048576 ? `${(compressSize / 1048576).toFixed(1)} MB`
         : `${(compressSize / 1024).toFixed(1)} KB`;
       addToQueue({
         id: genId(),
         type: "compress",
         status: "pending",
         progress: 0,
-        inputPath,
-        outputPath: finalOutputPath,
-        targetSizeBytes: compressSize,
+        inputPath, outputPath: finalOutputPath, targetSizeBytes: compressSize,
         label: `${fileName} → ${sizeLabel}`,
         createdAt: Date.now(),
       });
@@ -385,198 +241,167 @@ export default function App() {
         type: "convert",
         status: "pending",
         progress: 0,
-        inputPath,
-        outputPath: finalOutputPath,
-        outputFormat,
-        devMode,
+        inputPath, outputPath: finalOutputPath, outputFormat, devMode,
         label: `${fileName} → ${outputFormat.toUpperCase()}`,
         createdAt: Date.now(),
       });
     }
+    toast.addToast("info", "Added to queue", `${fileName} → ${outputFormat.toUpperCase()}`);
   }, [addToQueue, appSettings]);
 
   const handleBlurAdd = useCallback((inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
     const fileName = inputPath.split(/[\\/]/).pop() || inputPath;
-
     const finalOutputPath = applyAutoSave(outputPath, appSettings.autoSave, appSettings.outputDir);
-
     addToQueue({
       id: genId(),
       type: "blur",
       status: "pending",
       progress: 0,
-      inputPath,
-      outputPath: finalOutputPath,
-      blurSettings: blurSettings,
+      inputPath, outputPath: finalOutputPath, blurSettings,
       label: `${fileName} → Blur`,
       createdAt: Date.now(),
     });
+    toast.addToast("info", "Added to queue", `${fileName} → Blur`);
   }, [addToQueue, appSettings]);
 
   const handleCancel = useCallback(async () => {
     try {
       await cancelOperation();
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.status === "active" ? { ...item, status: "cancelled" } : item
-        )
-      );
-      processingRef.current = false;
+      queue.cancelActive();
+      toast.addToast("warning", "Cancelled", "Current operation stopped");
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [queue]);
 
-  const isProcessing = queue.some((i) => i.status === "active");
+  const isProcessing = queue.isProcessing;
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   return (
-    <>
-      <div className="grain-overlay" />
-      <ErrorBoundary>
-        <div className="h-full overflow-y-auto p-6">
-          <div className="max-w-[700px] mx-auto space-y-5 pb-8">
-            {/* Top-right controls */}
-            <div className="top-right-controls">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className={`settings-toggle ${showSettings ? "active" : ""}`}
-                title={showSettings ? "Close settings (Ctrl+,)" : "Open settings (Ctrl+,)"}
-              >
-                <Settings size={18} className={showSettings ? "text-glass-accent" : "text-glass-text-muted"} />
-                {appSettings.autoSave && (
-                  <span className="settings-badge" />
-                )}
-              </button>
-              <button onClick={toggleTheme} className="theme-toggle">
-                {theme === "dark" ? (
-                  <Sun size={18} className="text-glass-accent-text" />
-                ) : (
-                  <Moon size={18} className="text-glass-accent" />
-                )}
-              </button>
-              <button
-                onClick={() => {
-                  const next = !showConsole;
-                  setShowConsole(next);
-                  localStorage.setItem("debug_console_open", String(next));
-                }}
-                className={`console-toggle ${showConsole ? "active" : ""}`}
-                title={showConsole ? "Hide debug console" : "Show debug console"}
-              >
-                <Terminal size={18} className={showConsole ? "text-glass-accent" : "text-glass-text-muted"} />
-              </button>
+    <ErrorBoundary>
+      <div className="h-full flex flex-col bg-app-bg">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-app-border bg-app-surface">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-app-accent-dim">
+              <Zap size={16} className="text-app-accent" />
             </div>
-
-            {/* Header */}
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-6">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-glass-accent-dim border border-glass-accent/30 mb-3">
-                <Zap size={24} className="text-glass-accent" />
-              </div>
-              <h1 className="text-3xl font-display text-glass-text tracking-tight">Converter</h1>
-              <p className="text-xs text-glass-text-muted mt-1">Download, convert & blur media files</p>
-            </motion.div>
-
-            {/* Mode Tabs */}
-            {!showSettings && (
-            <div className="glass-panel p-1.5 flex gap-1">
-              {([
-                { id: "download" as Mode, label: "Download", icon: Download },
-                { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
-                { id: "blur" as Mode, label: "Blur", icon: Film },
-              ]).map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  onClick={() => !isProcessing && setMode(id)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
-                    mode === id
-                      ? "bg-glass-accent text-white shadow-glow"
-                      : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-                  }`}
-                >
-                  <Icon size={15} />
-                  {label}
-                </button>
-              ))}
-            </div>
-            )}
-
-            {/* Input Area */}
-            <AnimatePresence mode="wait">
-              {showSettings ? (
-                <motion.div
-                  key="settings"
-                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -12, scale: 0.98 }}
-                  transition={{ type: "spring", stiffness: 300, damping: 28 }}
-                >
-                  <div className="glass-panel p-4 mb-2">
-                    <h2 className="text-sm font-semibold text-glass-text flex items-center gap-2">
-                      <Settings size={14} className="text-glass-accent" />
-                      Application Settings
-                    </h2>
-                  </div>
-                  <SettingsPanel
-                    onSettingsChanged={setAppSettings}
-                    disabled={isProcessing}
-                  />
-                </motion.div>
-              ) : (
-                <>
-                  {mode === "download" && (
-                    <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                      <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
-                    </motion.div>
-                  )}
-                  {mode === "convert" && (
-                    <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                      <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
-                    </motion.div>
-                  )}
-                  {mode === "blur" && (
-                    <motion.div key="blur" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-                      <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
-                    </motion.div>
-                  )}
-                </>
-              )}
-            </AnimatePresence>
-
-            {/* Cancel Button */}
-            {isProcessing && (
-              <motion.button
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleCancel}
-                className="w-full glass-btn py-2.5 bg-glass-danger-dim border-glass-danger/30 text-glass-danger hover:bg-glass-danger/20 text-sm"
-              >
-                Cancel Current
-              </motion.button>
-            )}
-
-            {/* Debug Console */}
-            <AnimatePresence>
-              {showConsole && (
-                <DebugConsole
-                  logs={debugConsole.logs}
-                  onClear={debugConsole.clearLogs}
-                  isCapturing={debugConsole.isCapturing}
-                  onToggleCapture={() => debugConsole.setIsCapturing(!debugConsole.isCapturing)}
-                />
-              )}
-            </AnimatePresence>
-
-            {/* Queue */}
-            <QueueManager
-              items={queue}
-              onRemove={removeFromQueue}
-              onClearCompleted={clearCompleted}
-            />
+            <h1 className="text-base font-semibold text-app-text tracking-tight">Converter</h1>
+            <span className="text-[10px] text-app-text-muted bg-app-surface-hover px-1.5 py-0.5 rounded">v3.0</span>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const next = !showConsole;
+                setShowConsole(next);
+                localStorage.setItem("debug_console_open", String(next));
+              }}
+              className={`btn-icon ${showConsole ? "active" : ""}`}
+              title={showConsole ? "Hide console (Ctrl+Shift+D)" : "Show console"}
+            >
+              <Terminal size={16} />
+            </button>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`btn-icon ${showSettings ? "active" : ""}`}
+              title={showSettings ? "Close settings" : "Settings (Ctrl+,)"}
+            >
+              <Settings size={16} />
+              {appSettings.autoSave && <span className="settings-badge" />}
+            </button>
+            <button onClick={toggleTheme} className="btn-icon" title="Toggle theme">
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="max-w-[600px] mx-auto space-y-4">
+              {!showSettings && (
+                <div className="radio-group">
+                  {MODE_CONFIG.map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      onClick={() => !isProcessing && setMode(id)}
+                      className={`radio-pill ${mode === id ? "active" : ""}`}
+                      disabled={isProcessing}
+                    >
+                      <Icon size={15} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <AnimatePresence mode="wait">
+                {showSettings ? (
+                  <motion.div key="settings" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Settings size={14} className="text-app-accent" />
+                      <h2 className="text-sm font-semibold text-app-text">Application Settings</h2>
+                    </div>
+                    <SettingsPanel onSettingsChanged={setAppSettings} disabled={isProcessing} />
+                  </motion.div>
+                ) : (
+                  <>
+                    {mode === "download" && (
+                      <motion.div key="download" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                        <URLDownloader onAdd={handleDownloadAdd} disabled={isProcessing} />
+                      </motion.div>
+                    )}
+                    {mode === "convert" && (
+                      <motion.div key="convert" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                        <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
+                      </motion.div>
+                    )}
+                    {mode === "blur" && (
+                      <motion.div key="blur" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                        <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
+                      </motion.div>
+                    )}
+                  </>
+                )}
+              </AnimatePresence>
+
+              {isProcessing && (
+                <motion.button
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleCancel}
+                  className="w-full btn btn-danger py-2.5 text-sm"
+                >
+                  Cancel Current
+                </motion.button>
+              )}
+
+              <AnimatePresence>
+                {showConsole && (
+                  <DebugConsole
+                    logs={debugConsole.logs}
+                    onClear={debugConsole.clearLogs}
+                    isCapturing={debugConsole.isCapturing}
+                    onToggleCapture={() => debugConsole.setIsCapturing(!debugConsole.isCapturing)}
+                  />
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {queue.hasQueue && (
+            <div className="w-[300px] border-l border-app-border bg-app-surface overflow-hidden flex flex-col">
+              <QueueManager
+                items={queue.queue}
+                onRemove={removeFromQueue}
+                onClearCompleted={clearCompleted}
+              />
+            </div>
+          )}
         </div>
-      </ErrorBoundary>
-    </>
+
+        <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+      </div>
+    </ErrorBoundary>
   );
 }

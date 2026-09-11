@@ -6,6 +6,9 @@ import threading
 from pathlib import Path
 from typing import Callable, List, Optional
 
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
+_TIME_RE = re.compile(r"time=\s*(\d+):(\d+):(\d+\.?\d*)")
+
 
 def find_ffmpeg() -> str:
     if getattr(sys, 'frozen', False):
@@ -47,10 +50,6 @@ class ConverterWorker:
         self._thread.start()
 
     def _run(self):
-        from Engine.formats.video import VIDEO_OUTPUT_FORMATS
-        from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
-        from Engine.formats.detection import detect_file_type, get_allowed_output_formats
-
         proc = None
         try:
             cmd = self._build_command()
@@ -85,12 +84,12 @@ class ConverterWorker:
                     self._stderr_lines = self._stderr_lines[-50:]
 
                 if duration is None:
-                    dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", line)
+                    dur_match = _DURATION_RE.search(line)
                     if dur_match:
                         h, m, s = round(float(dur_match.group(1))), round(float(dur_match.group(2))), float(dur_match.group(3))
                         duration = h * 3600 + m * 60 + s
 
-                time_match = re.search(r"time=\s*(\d+):(\d+):(\d+\.?\d*)", line)
+                time_match = _TIME_RE.search(line)
                 if time_match and duration and duration > 0:
                     h, m, s = round(float(time_match.group(1))), round(float(time_match.group(2))), float(time_match.group(3))
                     current = h * 3600 + m * 60 + s
@@ -134,6 +133,7 @@ class ConverterWorker:
     def _build_command(self) -> List[str]:
         from Engine.formats.video import VIDEO_OUTPUT_FORMATS
         from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
+        from Engine.formats.audio import AUDIO_OUTPUT_FORMATS
         from Engine.formats.detection import detect_file_type
 
         input_file = Path(self.input_path)
@@ -149,6 +149,13 @@ class ConverterWorker:
                 cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
             else:
                 cmd += ['-an']
+        elif file_type == 'audio' or (self.dev_mode and self.output_format in AUDIO_OUTPUT_FORMATS):
+            fmt = AUDIO_OUTPUT_FORMATS.get(self.output_format, AUDIO_OUTPUT_FORMATS['mp3'])
+            cmd += ['-vn']
+            if fmt.get('acodec'):
+                cmd += ['-c:a', fmt['acodec']]
+            if fmt.get('bitrate'):
+                cmd += ['-b:a', fmt['bitrate']]
         elif file_type == 'photo' or (self.dev_mode and self.output_format in PHOTO_OUTPUT_FORMATS):
             fmt = PHOTO_OUTPUT_FORMATS.get(self.output_format, PHOTO_OUTPUT_FORMATS['jpg'])
             if 'quality' in fmt:
@@ -156,7 +163,10 @@ class ConverterWorker:
             if 'compression' in fmt:
                 cmd += ['-compression_level', fmt['compression']]
         else:
-            cmd += ['-c:v', 'libx264', '-c:a', 'aac']
+            raise ValueError(
+                f"Unsupported file type '{file_type}' for conversion. "
+                f"Please select a supported output format."
+            )
 
         cmd.append(str(output_file))
         return cmd

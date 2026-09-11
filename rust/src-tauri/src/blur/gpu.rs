@@ -2,13 +2,31 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GpuInfo {
-    pub gpu_type: String,
-    pub has_hardware_encoder: bool,
-}
-
 fn find_ffmpeg() -> String {
+    // Check bundled binary relative to the exe
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = exe_dir.join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = exe_dir.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for name in &["ffmpeg.exe", "ffmpeg"] {
+            let p = cwd.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Fallback: try bare name via PATH
     for name in &["ffmpeg", "ffmpeg.exe"] {
         if let Ok(mut child) = Command::new(name)
             .arg("-version")
@@ -21,6 +39,12 @@ fn find_ffmpeg() -> String {
         }
     }
     "ffmpeg".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuInfo {
+    pub gpu_type: String,
+    pub has_hardware_encoder: bool,
 }
 
 fn check_encoder(encoder_name: &str) -> bool {
@@ -92,33 +116,5 @@ pub fn detect_gpu_type() -> GpuInfo {
     GpuInfo {
         gpu_type: "cpu".to_string(),
         has_hardware_encoder: false,
-    }
-}
-
-pub fn get_available_encoders() -> Vec<String> {
-    let ffmpeg = find_ffmpeg();
-    let output = Command::new(&ffmpeg)
-        .args(["-encoders"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let encoders = [
-                "h264_nvenc", "hevc_nvenc", "av1_nvenc",
-                "h264_amf", "hevc_amf", "av1_amf",
-                "h264_qsv", "hevc_qsv", "av1_qsv",
-                "h264_videotoolbox", "hevc_videotoolbox", "av1_videotoolbox",
-                "libx264", "libx265", "libaom-av1", "libvpx-vp9",
-            ];
-            encoders
-                .iter()
-                .filter(|e| stdout.contains(*e))
-                .map(|e| e.to_string())
-                .collect()
-        }
-        Err(_) => vec![],
     }
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-tauri/refs/heads/main/crates/tauri-utils/schema.json",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
   "productName": "Converter",
   "version": "3.0.0",
   "identifier": "com.converter.app",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://*; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' file: https://*"
     }
   },
   "bundle": {
@@ -37,8 +37,14 @@
     ],
     "externalBin": [
       "bin/ffmpeg",
-      "bin/ffprobe"
-    ]
+      "bin/ffprobe",
+      "bin/vspipe"
+    ],
+    "resources": {
+      "bin/libvapoursynth.dll": "libvapoursynth.dll",
+      "bin/vsscript.dll": "vsscript.dll",
+      "bin/plugins/*": "plugins/"
+    }
   },
   "plugins": {
     "shell": {

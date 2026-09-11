@@ -80,7 +80,6 @@ pub fn get_video_info(path: &str) -> Result<VideoInfo, String> {
     let output = Command::new(&ffprobe)
         .args([
             "-v", "error",
-            "-select_streams", "v:0,a:0",
             "-show_entries",
             "stream=codec_type,codec_name,duration,color_range,r_frame_rate,pix_fmt,color_space,color_transfer,color_primaries,sample_rate",
             "-show_entries", "format=duration",

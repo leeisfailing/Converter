@@ -10,6 +10,7 @@ import {
   Trash2,
   Clock,
   HardDrive,
+  List,
 } from "lucide-react";
 import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
 
@@ -23,17 +24,26 @@ const statusConfig: Record<
   QueueItemStatus,
   { icon: typeof Download; color: string; bg: string }
 > = {
-  pending: { icon: Clock, color: "text-glass-text-muted", bg: "bg-glass-surface" },
-  active: { icon: Loader2, color: "text-glass-accent", bg: "bg-glass-accent-dim" },
-  completed: { icon: CheckCircle2, color: "text-glass-success", bg: "bg-glass-success-dim" },
-  failed: { icon: XCircle, color: "text-glass-danger", bg: "bg-glass-danger-dim" },
-  cancelled: { icon: XCircle, color: "text-glass-text-muted", bg: "bg-glass-surface" },
+  pending: { icon: Clock, color: "text-app-text-muted", bg: "bg-app-surface" },
+  active: { icon: Loader2, color: "text-app-accent", bg: "bg-app-accent-dim" },
+  completed: { icon: CheckCircle2, color: "text-app-success", bg: "bg-app-success-dim" },
+  failed: { icon: XCircle, color: "text-app-danger", bg: "bg-app-danger-dim" },
+  cancelled: { icon: XCircle, color: "text-app-text-muted", bg: "bg-app-surface" },
+};
+
+const typeConfig: Record<string, { icon: typeof Download; color: string; bg: string }> = {
+  download: { icon: Download, color: "text-app-accent", bg: "bg-app-accent-dim" },
+  convert: { icon: ArrowRightLeft, color: "text-purple-400", bg: "bg-purple-500/10" },
+  blur: { icon: Film, color: "text-amber-400", bg: "bg-amber-500/10" },
+  compress: { icon: HardDrive, color: "text-emerald-400", bg: "bg-emerald-500/10" },
 };
 
 const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void }>(
   ({ item, onRemove }, ref) => {
-    const config = statusConfig[item.status];
-    const Icon = config.icon;
+    const sConfig = statusConfig[item.status];
+    const tConfig = typeConfig[item.type] || typeConfig.convert;
+    const SIcon = sConfig.icon;
+    const TIcon = tConfig.icon;
 
     return (
       <motion.div
@@ -42,47 +52,37 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
         initial={{ opacity: 0, x: -10 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 10, height: 0 }}
-        className={`glass-panel p-3 flex items-center gap-3 ${config.bg} ${
-          item.status === "active" ? "border-glass-accent/30" : ""
+        className={`panel p-3 flex items-center gap-3 ${sConfig.bg} ${
+          item.status === "active" ? "border-app-accent/30" : ""
         }`}
       >
         {/* Type icon */}
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-          item.type === "download" ? "bg-blue-500/10" : item.type === "blur" ? "bg-amber-500/10" : item.type === "compress" ? "bg-emerald-500/10" : "bg-purple-500/10"
-        }`}>
-          {item.type === "download" ? (
-            <Download size={14} className="text-blue-400" />
-          ) : item.type === "blur" ? (
-            <Film size={14} className="text-amber-400" />
-          ) : item.type === "compress" ? (
-            <HardDrive size={14} className="text-emerald-400" />
-          ) : (
-            <ArrowRightLeft size={14} className="text-purple-400" />
-          )}
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${tConfig.bg}`}>
+          <TIcon size={14} className={tConfig.color} />
         </div>
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-glass-text truncate">{item.label}</p>
+          <p className="text-xs font-medium text-app-text truncate">{item.label}</p>
           <div className="flex items-center gap-2 mt-0.5">
-            <Icon
+            <SIcon
               size={11}
-              className={`${config.color} ${item.status === "active" ? "animate-spin" : ""}`}
+              className={`${sConfig.color} ${item.status === "active" ? "animate-spin" : ""}`}
             />
-            <span className={`text-[10px] ${config.color}`}>
+            <span className={`text-[10px] ${sConfig.color}`}>
               {item.status === "active" ? `${Math.round(item.progress)}%` : item.status}
             </span>
             {item.error && (
-              <span className="text-[10px] text-glass-danger truncate max-w-[150px]">
+              <span className="text-[10px] text-app-danger truncate max-w-[120px]">
                 {item.error}
               </span>
             )}
           </div>
           {/* Progress bar for active item */}
           {item.status === "active" && (
-            <div className="mt-1.5 h-1 rounded-full bg-glass-surface overflow-hidden">
+            <div className="mt-2 progress-track">
               <motion.div
-                className="h-full rounded-full bg-glass-accent"
+                className="progress-fill"
                 initial={{ width: 0 }}
                 animate={{ width: `${item.progress}%` }}
                 transition={{ duration: 0.3 }}
@@ -95,7 +95,7 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
         {(item.status === "completed" || item.status === "failed" || item.status === "cancelled") && (
           <button
             onClick={() => onRemove(item.id)}
-            className="w-6 h-6 rounded flex items-center justify-center text-glass-text-muted hover:text-glass-danger hover:bg-glass-danger-dim transition-colors cursor-pointer"
+            className="w-6 h-6 rounded flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
           >
             <Trash2 size={12} />
           </button>
@@ -119,20 +119,21 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
   if (!hasItems) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="h-full flex flex-col">
       {/* Queue header */}
-      <div className="flex items-center justify-between px-1">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-app-border">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-glass-text-muted uppercase tracking-wider">
+          <List size={14} className="text-app-accent" />
+          <span className="text-xs font-semibold text-app-text uppercase tracking-wider">
             Queue
           </span>
           {activeItem && (
-            <span className="text-[10px] text-glass-accent">
+            <span className="text-[10px] text-app-accent bg-app-accent-dim px-1.5 py-0.5 rounded">
               Processing 1 of {items.length}
             </span>
           )}
           {!activeItem && pendingCount > 0 && (
-            <span className="text-[10px] text-glass-text-muted">
+            <span className="text-[10px] text-app-text-muted">
               {pendingCount} pending
             </span>
           )}
@@ -140,7 +141,7 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
         {completedCount > 0 && (
           <button
             onClick={onClearCompleted}
-            className="text-[10px] text-glass-text-muted hover:text-glass-text transition-colors cursor-pointer"
+            className="text-[10px] text-app-text-muted hover:text-app-text transition-colors cursor-pointer"
           >
             Clear done
           </button>
@@ -148,7 +149,7 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
       </div>
 
       {/* Queue items */}
-      <div className="space-y-1.5 max-h-[250px] overflow-y-auto pr-1">
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
             <QueueItemRow key={item.id} item={item} onRemove={onRemove} />

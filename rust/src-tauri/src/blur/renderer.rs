@@ -6,10 +6,32 @@ use super::presets;
 use super::settings::BlurSettings;
 use super::video_info::VideoInfo;
 
-fn find_vspipe() -> String {
-    for name in &["vspipe", "vspipe.exe"] {
+fn find_binary(exe_names: &[&str], check_arg: &str) -> String {
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        for name in exe_names {
+            let p = exe_dir.join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        for name in exe_names {
+            let p = exe_dir.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for name in exe_names {
+            let p = cwd.join("Engine").join("bin").join(name);
+            if p.exists() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+    for name in exe_names {
         if let Ok(mut child) = Command::new(name)
-            .arg("--version")
+            .arg(check_arg)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -18,29 +40,35 @@ fn find_vspipe() -> String {
             return name.to_string();
         }
     }
-    "vspipe".to_string()
+    exe_names[0].to_string()
+}
+
+fn find_vspipe() -> String {
+    find_binary(&["vspipe.exe", "vspipe"], "--version")
 }
 
 fn find_ffmpeg() -> String {
-    for name in &["ffmpeg", "ffmpeg.exe"] {
-        if let Ok(mut child) = Command::new(name)
-            .arg("-version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            let _ = child.wait();
-            return name.to_string();
-        }
-    }
-    "ffmpeg".to_string()
+    find_binary(&["ffmpeg.exe", "ffmpeg"], "-version")
 }
 
 pub fn get_vapoursynth_script_path() -> Result<String, String> {
+    // First try runtime path relative to the executable
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        let script_path = exe_dir.join("vapoursynth").join("vapoursynth_render.py");
+        if script_path.exists() {
+            return Ok(script_path.to_string_lossy().to_string());
+        }
+        // Also check Engine directory for dev layout
+        let script_path = exe_dir.parent().unwrap_or(&exe_dir).join("Engine").join("vapoursynth").join("vapoursynth_render.py");
+        if script_path.exists() {
+            return Ok(script_path.to_string_lossy().to_string());
+        }
+    }
+    // Fallback to compile-time path (development)
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let script_path = std::path::Path::new(manifest_dir)
         .join("vapoursynth")
-        .join("blur.py");
+        .join("vapoursynth_render.py");
 
     if !script_path.exists() {
         return Err(format!(
@@ -143,7 +171,7 @@ pub fn build_render_commands(
     // Audio timescale filters
     let mut audio_filters = Vec::new();
     if settings.timescale {
-        let sample_rate: i32 = 48000;
+        let sample_rate: i32 = video_info.sample_rate.unwrap_or(48000);
         if (settings.input_timescale - 1.0).abs() > f64::EPSILON {
             audio_filters.push(format!(
                 "asetrate={}*{}",
@@ -231,8 +259,32 @@ pub fn run_render<F: FnMut(i32, i32)>(
     let vspipe = find_vspipe();
     let ffmpeg = find_ffmpeg();
 
-    let mut vspipe_child = Command::new(&vspipe)
-        .args(&commands.vspipe)
+    // Set up plugin paths so vspipe can find bundled VS plugins
+    let plugin_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .map(|p| p.join("plugins"))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.join("Engine").join("bin").join("plugins"))
+        });
+
+    let mut vspipe_cmd = Command::new(&vspipe);
+    vspipe_cmd.args(&commands.vspipe);
+    if let Some(ref pp) = plugin_path {
+        if pp.exists() {
+            let current = std::env::var("VAPOURSYNTH_EXTRA_PLUGIN_PATH").unwrap_or_default();
+            let new_path = if current.is_empty() {
+                pp.to_string_lossy().to_string()
+            } else {
+                format!("{};{}", current, pp.to_string_lossy())
+            };
+            vspipe_cmd.env("VAPOURSYNTH_EXTRA_PLUGIN_PATH", &new_path);
+        }
+    }
+
+    let mut vspipe_child = vspipe_cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

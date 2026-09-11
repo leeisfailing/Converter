@@ -5,7 +5,11 @@ from Engine.core.security import validate_url
 
 
 def handle_detect_url(cmd_args: dict):
-    url = cmd_args["url"]
+    try:
+        url = cmd_args["url"]
+    except (KeyError, TypeError):
+        send_response({"ok": False, "error": "Missing required field: url"})
+        return
     try:
         validate_url(url)
     except ValueError as e:
@@ -27,6 +31,7 @@ def _detect_url_info(url: str) -> dict:
         'skip_download': True,
         'noplaylist': True,
         'format': 'best',
+        'socket_timeout': 30,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     }
 
@@ -73,6 +78,7 @@ def _detect_url_info(url: str) -> dict:
             {"label": "MP4 4K", "value": "mp4_4k", "desc": "Up to 2160p, MP4"},
             {"label": "MP4 1080p", "value": "mp4_1080", "desc": "Up to 1080p, MP4"},
             {"label": "MP4 720p", "value": "mp4", "desc": "Up to 720p, MP4"},
+            {"label": "MP3", "value": "mp3", "desc": "Extract audio as MP3"},
         ]
     else:
         formats = [

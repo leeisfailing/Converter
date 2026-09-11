@@ -1,4 +1,5 @@
 """Input sanitization utilities for handlers."""
+import ipaddress
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,9 +20,9 @@ def validate_path(path_str: str, field_name: str = "path") -> str:
         raise ValueError(f"{field_name} exceeds maximum length of {MAX_PATH_LENGTH}")
     if not path_str.strip():
         raise ValueError(f"{field_name} cannot be empty")
+    if ".." in path_str:
+        raise ValueError(f"{field_name} contains invalid path traversal")
     resolved = Path(path_str).resolve()
-    if "\\.." in str(resolved) or "/.." in str(resolved):
-        pass
     return str(resolved)
 
 
@@ -49,9 +50,18 @@ def validate_url(url: str) -> str:
         raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme or 'none'}")
     if not parsed.hostname:
         raise ValueError("URL must have a valid hostname")
-    blocked_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254")
-    if parsed.hostname.lower() in blocked_hosts:
+    hostname = parsed.hostname.lower()
+    blocked_hosts = ("localhost", "0.0.0.0", "::1", "169.254.169.254")
+    if hostname in blocked_hosts:
         raise ValueError(f"URL hostname is not allowed: {parsed.hostname}")
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
+            raise ValueError(f"URL hostname resolves to a private/reserved IP: {hostname}")
+    except ValueError as e:
+        if "resolves to a private" in str(e):
+            raise
+        pass
     return url
 
 

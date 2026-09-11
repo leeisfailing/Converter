@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, memo } from "react";
+import { useEffect, useRef, useState, useCallback, memo, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Terminal,
@@ -29,7 +29,7 @@ const levelConfig: Record<
   info: { icon: Info, color: "text-blue-400", bg: "bg-blue-500/10", label: "INFO" },
   warn: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-500/10", label: "WARN" },
   error: { icon: AlertCircle, color: "text-red-400", bg: "bg-red-500/10", label: "ERROR" },
-  system: { icon: Zap, color: "text-glass-accent", bg: "bg-glass-accent-dim", label: "SYS" },
+  system: { icon: Zap, color: "text-app-accent", bg: "bg-app-accent-dim", label: "SYS" },
 };
 
 type FilterLevel = "all" | LogLevel;
@@ -65,11 +65,19 @@ export default memo(function DebugConsole({
   const copiedIdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedAllTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filteredLogs =
-    filter === "all" ? logs : logs.filter((l) => l.level === filter);
+  const filteredLogs = useMemo(
+    () => filter === "all" ? logs : logs.filter((l) => l.level === filter),
+    [logs, filter]
+  );
 
-  const errorCount = logs.filter((l) => l.level === "error").length;
-  const warnCount = logs.filter((l) => l.level === "warn").length;
+  const errorCount = useMemo(
+    () => logs.filter((l) => l.level === "error").length,
+    [logs]
+  );
+  const warnCount = useMemo(
+    () => logs.filter((l) => l.level === "warn").length,
+    [logs]
+  );
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -95,7 +103,6 @@ export default memo(function DebugConsole({
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // Fallback for older browsers
       const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
@@ -130,65 +137,57 @@ export default memo(function DebugConsole({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 20 }}
-      className="glass-panel overflow-hidden"
+      exit={{ opacity: 0, y: 10 }}
+      className="panel overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-app-border">
         <div className="flex items-center gap-2">
-          <Terminal size={13} className="text-glass-accent" />
-          <span className="text-[11px] font-semibold text-glass-text-muted uppercase tracking-wider">
+          <Terminal size={13} className="text-app-accent" />
+          <span className="text-[11px] font-semibold text-app-text-muted uppercase tracking-wider">
             Console
           </span>
           <div className="flex items-center gap-1 ml-2">
             {errorCount > 0 && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-app-danger-dim text-app-danger">
                 {errorCount} error{errorCount !== 1 ? "s" : ""}
               </span>
             )}
             {warnCount > 0 && (
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-app-warning-dim text-app-warning">
                 {warnCount} warn{warnCount !== 1 ? "s" : ""}
               </span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* Copy All */}
           <button
             onClick={handleCopyAll}
             disabled={filteredLogs.length === 0}
-            className="w-6 h-6 rounded flex items-center justify-center text-glass-text-muted hover:text-glass-accent hover:bg-glass-accent-dim transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            className="btn-icon !w-6 !h-6 disabled:opacity-30 disabled:cursor-not-allowed"
             title="Copy all logs"
           >
-            {copiedAll ? <Check size={12} className="text-glass-success" /> : <Copy size={12} />}
+            {copiedAll ? <Check size={12} className="text-app-success" /> : <Copy size={12} />}
           </button>
-          {/* Capture toggle */}
           <button
             onClick={onToggleCapture}
-            className={`w-6 h-6 rounded flex items-center justify-center transition-colors cursor-pointer ${
-              isCapturing
-                ? "text-glass-accent hover:bg-glass-accent-dim"
-                : "text-glass-text-muted hover:bg-glass-surface-hover"
-            }`}
+            className={`btn-icon !w-6 !h-6 ${isCapturing ? "active" : ""}`}
             title={isCapturing ? "Pause capture" : "Resume capture"}
           >
             {isCapturing ? <Pause size={12} /> : <Play size={12} />}
           </button>
-          {/* Clear */}
           <button
             onClick={onClear}
-            className="w-6 h-6 rounded flex items-center justify-center text-glass-text-muted hover:text-glass-danger hover:bg-glass-danger-dim transition-colors cursor-pointer"
+            className="btn-icon !w-6 !h-6 hover:!text-app-danger hover:!bg-app-danger-dim"
             title="Clear logs"
           >
             <Trash2 size={12} />
           </button>
-          {/* Collapse */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="w-6 h-6 rounded flex items-center justify-center text-glass-text-muted hover:text-glass-text hover:bg-glass-surface-hover transition-colors cursor-pointer"
+            className="btn-icon !w-6 !h-6"
           >
             <ChevronDown
               size={12}
@@ -207,7 +206,7 @@ export default memo(function DebugConsole({
             className="overflow-hidden"
           >
             {/* Filters */}
-            <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[var(--border)]">
+            <div className="flex items-center gap-1 px-3 py-1.5 border-b border-app-border">
               {(["all", "error", "warn", "info", "system"] as FilterLevel[]).map(
                 (f) => (
                   <button
@@ -216,13 +215,13 @@ export default memo(function DebugConsole({
                     className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
                       filter === f
                         ? f === "error"
-                          ? "bg-red-500/20 text-red-400"
+                          ? "bg-app-danger-dim text-app-danger"
                           : f === "warn"
-                          ? "bg-amber-500/20 text-amber-400"
+                          ? "bg-app-warning-dim text-app-warning"
                           : f === "system"
-                          ? "bg-glass-accent-dim text-glass-accent"
-                          : "bg-glass-surface text-glass-text"
-                        : "text-glass-text-muted hover:text-glass-text hover:bg-glass-surface-hover"
+                          ? "bg-app-accent-dim text-app-accent"
+                          : "bg-app-surface-elevated text-app-text"
+                        : "text-app-text-muted hover:text-app-text-secondary hover:bg-app-surface-hover"
                     }`}
                   >
                     {f === "all" ? "All" : levelConfig[f].label}
@@ -230,7 +229,7 @@ export default memo(function DebugConsole({
                 )
               )}
               <div className="flex-1" />
-              <span className="text-[9px] text-glass-text-muted font-mono">
+              <span className="text-[9px] text-app-text-muted font-mono">
                 {filteredLogs.length} log{filteredLogs.length !== 1 ? "s" : ""}
               </span>
             </div>
@@ -242,7 +241,7 @@ export default memo(function DebugConsole({
               className="h-[180px] overflow-y-auto px-3 py-1 font-mono text-[11px] leading-relaxed"
             >
               {filteredLogs.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-glass-text-muted text-[10px]">
+                <div className="flex items-center justify-center h-full text-app-text-muted text-[10px]">
                   No logs yet
                 </div>
               ) : (
@@ -252,15 +251,15 @@ export default memo(function DebugConsole({
                   return (
                     <div
                       key={log.id}
-                      className="group flex items-start gap-2 py-0.5 rounded px-1 -mx-1 hover:bg-[var(--surface-hover)]"
+                      className="group flex items-start gap-2 py-0.5 rounded px-1 -mx-1 hover:bg-app-surface-hover"
                     >
-                      <span className="text-glass-text-muted select-none shrink-0">
+                      <span className="text-app-text-muted select-none shrink-0">
                         {formatTime(log.timestamp)}
                       </span>
                       <Icon size={10} className={`${config.color} shrink-0 mt-0.5`} />
                       <div className="min-w-0 flex-1">
                         {log.source && (
-                          <span className="text-glass-text-muted mr-1">
+                          <span className="text-app-text-muted mr-1">
                             [{log.source}]
                           </span>
                         )}
@@ -271,21 +270,20 @@ export default memo(function DebugConsole({
                               : log.level === "warn"
                               ? "text-amber-400"
                               : log.level === "system"
-                              ? "text-glass-accent"
-                              : "text-glass-text-dim"
+                              ? "text-app-accent"
+                              : "text-app-text-secondary"
                           }`}
                         >
                           {log.message}
                         </span>
                       </div>
-                      {/* Copy button - visible on hover */}
                       <button
                         onClick={() => handleCopyLog(log)}
-                        className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-glass-text-muted hover:text-glass-accent opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-app-text-muted hover:text-app-accent opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         title="Copy log"
                       >
                         {copiedId === log.id ? (
-                          <Check size={10} className="text-glass-success" />
+                          <Check size={10} className="text-app-success" />
                         ) : (
                           <Copy size={10} />
                         )}

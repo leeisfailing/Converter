@@ -7,9 +7,8 @@ import {
   FolderOpen,
   FileVideo,
   Image,
+  Music,
   ArrowRight,
-  ToggleLeft,
-  ToggleRight,
   Plus,
   HardDrive,
   FileUp,
@@ -43,6 +42,14 @@ const ALL_FORMATS = [
   { value: "bmp", label: "BMP", type: "photo" },
   { value: "tiff", label: "TIFF", type: "photo" },
   { value: "avif", label: "AVIF", type: "photo" },
+  { value: "mp3", label: "MP3", type: "audio" },
+  { value: "wav", label: "WAV", type: "audio" },
+  { value: "flac", label: "FLAC", type: "audio" },
+  { value: "aac", label: "AAC", type: "audio" },
+  { value: "ogg", label: "OGG", type: "audio" },
+  { value: "wma", label: "WMA", type: "audio" },
+  { value: "m4a", label: "M4A", type: "audio" },
+  { value: "opus", label: "Opus", type: "audio" },
 ];
 
 const SIZE_UNITS = [
@@ -129,6 +136,8 @@ export default function FileConverter({ onAdd, disabled }: Props) {
             "mpg", "mpeg", "3gp", "ts",
             "jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "tif",
             "heic", "heif", "avif",
+            "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus",
+            "aiff", "alac",
           ],
         },
       ],
@@ -202,6 +211,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     setAllowedFormats([]);
     setCompressSize("");
     setDevMode(false);
+    usedOutputPaths.current.clear();
   };
 
   const videoFormats = useMemo(
@@ -212,6 +222,10 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     () => ALL_FORMATS.filter((f) => allowedFormats.includes(f.value) && f.type === "photo"),
     [allowedFormats]
   );
+  const audioFormats = useMemo(
+    () => ALL_FORMATS.filter((f) => allowedFormats.includes(f.value) && f.type === "audio"),
+    [allowedFormats]
+  );
 
   return (
     <div className="space-y-4">
@@ -220,30 +234,31 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         ref={dropRef}
         onClick={!disabled ? handleBrowse : undefined}
         className={`drop-area ${filePath ? "has-file" : ""} ${
-          isDragOver ? "border-glass-accent bg-glass-accent-dim" : ""
+          isDragOver ? "active" : ""
         } ${disabled ? "opacity-40 pointer-events-none" : "cursor-pointer"}`}
-        whileHover={!disabled ? { scale: 1.005 } : undefined}
         whileTap={!disabled ? { scale: 0.995 } : undefined}
       >
         {filePath ? (
           <div className="flex items-center justify-center gap-3">
             {fileType === "video" ? (
-              <FileVideo size={18} className="text-glass-accent" />
+              <FileVideo size={18} className="text-app-accent" />
+            ) : fileType === "audio" ? (
+              <Music size={18} className="text-app-accent" />
             ) : (
-              <Image size={18} className="text-glass-accent" />
+              <Image size={18} className="text-app-accent" />
             )}
-            <span className="text-sm font-medium text-glass-text truncate max-w-[400px]">
+            <span className="text-sm font-medium text-app-text truncate max-w-[400px]">
               {filePath.split(/[\\/]/).pop()}
             </span>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
             {isDragOver ? (
-              <FileUp size={24} className="text-glass-accent" />
+              <FileUp size={24} className="text-app-accent" />
             ) : (
-              <FolderOpen size={24} className="text-glass-text-muted" />
+              <FolderOpen size={24} className="text-app-text-muted" />
             )}
-            <p className="text-sm text-glass-text-muted">
+            <p className="text-sm text-app-text-muted">
               {isDragOver ? "Drop file here" : "Click or drag a file here"}
             </p>
           </div>
@@ -255,32 +270,25 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         <motion.div
           initial={{ opacity: 0, y: 5 }}
           animate={{ opacity: 1, y: 0 }}
-          className="glass-panel p-1.5 flex gap-1"
         >
-          <button
-            onClick={() => setConvertMode("format")}
-            disabled={disabled}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
-              convertMode === "format"
-                ? "bg-glass-accent text-white shadow-glow"
-                : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-            } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
-          >
-            <ArrowRight size={14} />
-            Convert Format
-          </button>
-          <button
-            onClick={() => setConvertMode("compress")}
-            disabled={disabled || fileType !== "video"}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
-              convertMode === "compress"
-                ? "bg-glass-accent text-white shadow-glow"
-                : "text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-            } ${disabled || fileType !== "video" ? "opacity-40 pointer-events-none" : ""}`}
-          >
-            <HardDrive size={14} />
-            Compress Size
-          </button>
+          <div className="radio-group">
+            <button
+              onClick={() => setConvertMode("format")}
+              disabled={disabled}
+              className={`radio-pill ${convertMode === "format" ? "active" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+            >
+              <ArrowRight size={14} />
+              Convert Format
+            </button>
+            <button
+              onClick={() => setConvertMode("compress")}
+              disabled={disabled || fileType !== "video"}
+              className={`radio-pill ${convertMode === "compress" ? "active" : ""} ${disabled || fileType !== "video" ? "opacity-40 pointer-events-none" : ""}`}
+            >
+              <HardDrive size={14} />
+              Compress Size
+            </button>
+          </div>
         </motion.div>
       )}
 
@@ -289,25 +297,19 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="glass-panel p-3 flex items-center justify-between"
+          className="panel p-3 flex items-center justify-between"
         >
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-glass-text-muted uppercase tracking-wider">
+            <span className="text-[11px] font-medium text-app-text-muted uppercase tracking-wider">
               Dev Mode
             </span>
-            <span className="text-[10px] text-glass-text-muted">(cross-type)</span>
+            <span className="text-[10px] text-app-text-muted">(cross-type)</span>
           </div>
           <button
             onClick={() => setDevMode(!devMode)}
             disabled={disabled}
-            className="cursor-pointer"
-          >
-            {devMode ? (
-              <ToggleRight size={28} className="text-glass-accent" />
-            ) : (
-              <ToggleLeft size={28} className="text-glass-text-muted" />
-            )}
-          </button>
+            className={`toggle ${devMode ? "active" : ""}`}
+          />
         </motion.div>
       )}
 
@@ -319,33 +321,31 @@ export default function FileConverter({ onAdd, disabled }: Props) {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
           >
-            <div className="glass-panel p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-glass-text-muted">
-                <span className="font-medium text-glass-text-dim">
-                  {fileType === "video" ? "Video" : fileType === "photo" ? "Photo" : "File"}
+            <div className="panel p-4 space-y-3">
+              <div className="flex items-center gap-2 text-xs text-app-text-muted">
+                <span className="font-medium text-app-text-secondary">
+                  {fileType === "video" ? "Video" : fileType === "audio" ? "Audio" : fileType === "photo" ? "Photo" : "File"}
                 </span>
                 <ArrowRight size={12} />
-                <span className="font-medium text-glass-text-dim">Output format</span>
+                <span className="font-medium text-app-text-secondary">Output format</span>
               </div>
 
               {videoFormats.length > 0 && (
                 <div>
-                  <p className="text-[10px] text-glass-text-muted uppercase tracking-wider mb-1.5">
+                  <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
                     Video
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-2">
                     {videoFormats.map((f) => (
                       <button
                         key={f.value}
                         onClick={() => setSelectedFormat(f.value)}
                         disabled={disabled}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                          selectedFormat === f.value
-                            ? "bg-glass-accent-dim border border-glass-accent/30 text-glass-accent"
-                            : "bg-glass-surface border border-glass-border text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-                        } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+                        className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                       >
-                        {f.label}
+                        <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
+                          {f.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -354,22 +354,42 @@ export default function FileConverter({ onAdd, disabled }: Props) {
 
               {photoFormats.length > 0 && (
                 <div>
-                  <p className="text-[10px] text-glass-text-muted uppercase tracking-wider mb-1.5">
+                  <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
                     Photo
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-2">
                     {photoFormats.map((f) => (
                       <button
                         key={f.value}
                         onClick={() => setSelectedFormat(f.value)}
                         disabled={disabled}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                          selectedFormat === f.value
-                            ? "bg-glass-accent-dim border border-glass-accent/30 text-glass-accent"
-                            : "bg-glass-surface border border-glass-border text-glass-text-dim hover:text-glass-text hover:bg-glass-surface-hover"
-                        } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+                        className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                       >
-                        {f.label}
+                        <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
+                          {f.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {audioFormats.length > 0 && (
+                <div>
+                  <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
+                    Audio
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {audioFormats.map((f) => (
+                      <button
+                        key={f.value}
+                        onClick={() => setSelectedFormat(f.value)}
+                        disabled={disabled}
+                        className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+                      >
+                        <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
+                          {f.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -381,11 +401,10 @@ export default function FileConverter({ onAdd, disabled }: Props) {
               <motion.button
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
-                whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleAdd}
                 disabled={disabled}
-                className="w-full glass-btn glass-btn-primary py-3 mt-3"
+                className="w-full btn btn-primary py-3 mt-3"
               >
                 <Plus size={16} />
                 Add to Queue — {selectedFormat.toUpperCase()}
@@ -401,15 +420,15 @@ export default function FileConverter({ onAdd, disabled }: Props) {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
           >
-            <div className="glass-panel p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-glass-text-muted">
-                <span className="font-medium text-glass-text-dim">Original</span>
+            <div className="panel p-4 space-y-3">
+              <div className="flex items-center gap-2 text-xs text-app-text-muted">
+                <span className="font-medium text-app-text-secondary">Original</span>
                 <ArrowRight size={12} />
-                <span className="font-medium text-glass-text-dim">Target size</span>
+                <span className="font-medium text-app-text-secondary">Target size</span>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-glass-text-dim min-w-[80px]">
+                <span className="text-[11px] text-app-text-secondary min-w-[80px]">
                   Target size
                 </span>
                 <input
@@ -417,7 +436,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                   value={compressSize}
                   onChange={(e) => setCompressSize(e.target.value)}
                   disabled={disabled}
-                  className="glass-input w-24 py-1.5 px-2 text-xs"
+                  className="input w-24 py-1.5 px-2 text-xs"
                   placeholder="100"
                   min="0"
                   step="any"
@@ -426,7 +445,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                   value={compressUnit}
                   onChange={(e) => setCompressUnit(e.target.value)}
                   disabled={disabled}
-                  className="glass-select py-1.5 px-2 text-xs"
+                  className="select py-1.5 px-2 text-xs"
                 >
                   {SIZE_UNITS.map((u) => (
                     <option key={u.value} value={u.value}>
@@ -436,7 +455,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                 </select>
               </div>
 
-              <p className="text-[10px] text-glass-text-muted">
+              <p className="text-[10px] text-app-text-muted">
                 ffmpeg will calculate the optimal bitrate to achieve your target file size.
               </p>
             </div>
@@ -445,11 +464,10 @@ export default function FileConverter({ onAdd, disabled }: Props) {
               <motion.button
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
-                whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleAdd}
                 disabled={disabled}
-                className="w-full glass-btn glass-btn-primary py-3 mt-3"
+                className="w-full btn btn-primary py-3 mt-3"
               >
                 <Plus size={16} />
                 Add to Queue — {compressSize}{compressUnit}
@@ -460,7 +478,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
       </AnimatePresence>
 
       {!filePath && (
-        <p className="text-[10px] text-glass-text-muted text-center">
+        <p className="text-[11px] text-app-text-muted text-center">
           Select or drag a file to convert. You can add multiple conversions to the queue.
         </p>
       )}

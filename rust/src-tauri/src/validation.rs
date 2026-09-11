@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 pub const MAX_PATH_LENGTH: usize = 2048;
 pub const MAX_URL_LENGTH: usize = 2048;
-pub const MAX_STRING_LENGTH: usize = 4096;
 
 pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String> {
     validate_no_null_bytes(path_str, field_name)?;
@@ -11,6 +10,9 @@ pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String>
     }
     if path_str.trim().is_empty() {
         return Err(format!("{} cannot be empty", field_name));
+    }
+    if path_str.contains("..") {
+        return Err(format!("{} contains invalid path traversal", field_name));
     }
     Ok(path_str.to_string())
 }
@@ -51,9 +53,24 @@ pub fn validate_url(url: &str) -> Result<String, String> {
         .host_str()
         .ok_or_else(|| "URL must have a valid hostname".to_string())?;
 
-    let blocked_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"];
+    let blocked_hosts = ["localhost", "0.0.0.0", "::1", "169.254.169.254"];
     if blocked_hosts.contains(&host_str) {
         return Err(format!("URL hostname is not allowed: {}", host_str));
+    }
+
+    if let Ok(ip) = host_str.parse::<std::net::Ipv4Addr>() {
+        if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
+            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+        }
+        // Also block "this network" (0.0.0.0/8)
+        if ip.octets()[0] == 0 {
+            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+        }
+    }
+    if let Ok(ip) = host_str.parse::<std::net::Ipv6Addr>() {
+        if ip.is_loopback() || ip.is_multicast() {
+            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+        }
     }
 
     Ok(url.to_string())
@@ -61,8 +78,8 @@ pub fn validate_url(url: &str) -> Result<String, String> {
 
 pub fn validate_output_dir(dir_str: &str) -> Result<String, String> {
     validate_no_null_bytes(dir_str, "output_dir")?;
-    if dir_str.is_empty() {
-        return Ok(dir_str.to_string());
+    if dir_str.trim().is_empty() {
+        return Err("output_dir cannot be empty".to_string());
     }
     if dir_str.len() > MAX_PATH_LENGTH {
         return Err(format!("output_dir exceeds maximum length of {}", MAX_PATH_LENGTH));

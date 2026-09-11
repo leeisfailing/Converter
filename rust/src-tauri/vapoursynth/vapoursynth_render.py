@@ -5,6 +5,9 @@ import os
 import math
 from fractions import Fraction
 
+# Add the script's parent directory to sys.path so local packages (blur) can be found
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 core = vs.core
 
 from blur.utils import load_plugins, assume_scaled_fps
@@ -13,23 +16,36 @@ from blur.interpolate import interpolate_svp, interpolate_rife, change_fps
 from blur.deduplicate import fill_drops_rife, fill_drops_multiple
 from blur.weighting import get_weights
 
-# Read settings from vspipe argument
-settings_json = json.loads(vs.get_frame_metadata(0, {}).get("settings", "{}"))
-if not settings_json:
-    # Fallback: try reading from environment
-    settings_str = os.environ.get("settings", "{}")
-    settings_json = json.loads(settings_str)
+# Read settings from vspipe -a arguments (passed as global variables)
+try:
+    settings_json = json.loads(settings)
+except (NameError, json.JSONDecodeError):
+    settings_json = {}
 
-# Get video path from vspipe argument
-video_path = vs.get_frame_metadata(0, {}).get("video_path", "")
-if not video_path:
-    video_path = os.environ.get("video_path", "")
+try:
+    video_path
+except NameError:
+    video_path = ""
 
-fps_num = int(vs.get_frame_metadata(0, {}).get("fps_num", "0"))
-fps_den = int(vs.get_frame_metadata(0, {}).get("fps_den", "1"))
-color_range = vs.get_frame_metadata(0, {}).get("color_range", "undefined")
+try:
+    fps_num = int(fps_num)
+except (NameError, ValueError):
+    fps_num = 0
 
-enable_lsmash = vs.get_frame_metadata(0, {}).get("enable_lsmash", "false") == "true"
+try:
+    fps_den = int(fps_den)
+except (NameError, ValueError):
+    fps_den = 1
+
+try:
+    color_range
+except NameError:
+    color_range = "undefined"
+
+try:
+    enable_lsmash = str(enable_lsmash).lower() == "true"
+except NameError:
+    enable_lsmash = False
 
 
 def load_video_source(path):
@@ -41,11 +57,6 @@ def load_video_source(path):
 
     try:
         return core.bs.VideoSource(path)
-    except Exception:
-        pass
-
-    try:
-        return core.lsmas.LWLibavSource(path)
     except Exception:
         pass
 
@@ -99,6 +110,11 @@ def main():
     blocksize = settings_json.get("interpolation_blocksize", "8")
     mask_area = settings_json.get("interpolation_mask_area", 0)
 
+    # Determine RIFE model path - check models directory relative to script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    models_dir = os.path.join(script_dir, "..", "models")
+    rife_model_path = os.path.join(models_dir, rife_model) if os.path.isdir(models_dir) else ""
+
     # Parse interpolated FPS (supports "5x" multiplier or absolute value)
     def parse_fps(s, source_fps):
         s = str(s).strip()
@@ -145,8 +161,10 @@ def main():
         if pre_fps > clip.fps:
             try:
                 if interpolation_method == "rife":
-                    model_path = os.path.join(os.path.dirname(__file__), "..", "models", rife_model)
-                    clip = interpolate_rife(clip, pre_fps, model_path, -1)
+                    if rife_model_path and os.path.exists(rife_model_path):
+                        clip = interpolate_rife(clip, pre_fps, rife_model_path, -1)
+                    else:
+                        clip = interpolate_svp(clip, pre_fps, svp_preset, svp_algorithm, blocksize, mask_area)
                 else:
                     clip = interpolate_svp(clip, pre_fps, svp_preset, svp_algorithm, blocksize, mask_area)
             except Exception:
@@ -158,8 +176,10 @@ def main():
         if target_fps > clip.fps:
             try:
                 if interpolation_method == "rife":
-                    model_path = os.path.join(os.path.dirname(__file__), "..", "models", rife_model)
-                    clip = interpolate_rife(clip, target_fps, model_path, -1)
+                    if rife_model_path and os.path.exists(rife_model_path):
+                        clip = interpolate_rife(clip, target_fps, rife_model_path, -1)
+                    else:
+                        clip = interpolate_svp(clip, target_fps, svp_preset, svp_algorithm, blocksize, mask_area)
                 else:
                     clip = interpolate_svp(clip, target_fps, svp_preset, svp_algorithm, blocksize, mask_area)
             except Exception:
@@ -212,3 +232,4 @@ def main():
 
 
 output = main()
+output.set_output()

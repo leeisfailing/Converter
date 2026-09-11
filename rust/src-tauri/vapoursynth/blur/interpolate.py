@@ -13,7 +13,7 @@ def change_fps(clip, target_fps):
 
     factor = clip.fps / target_fps
 
-    def(n):
+    def func(n):
         new_n = math.floor(n / factor)
         new_n = max(0, min(new_n, clip.num_frames - 1))
         return clip[new_n]

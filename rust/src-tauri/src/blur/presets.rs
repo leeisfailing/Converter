@@ -2,15 +2,15 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Preset {
-    pub name: String,
-    pub args: String,
+struct Preset {
+    name: String,
+    args: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GpuPresets {
-    pub gpu_type: String,
-    pub presets: Vec<Preset>,
+struct GpuPresets {
+    gpu_type: String,
+    presets: Vec<Preset>,
 }
 
 fn default_all_presets() -> Vec<GpuPresets> {
@@ -58,10 +58,6 @@ fn default_all_presets() -> Vec<GpuPresets> {
             ],
         },
     ]
-}
-
-pub fn get_all_presets() -> Vec<GpuPresets> {
-    default_all_presets()
 }
 
 pub fn find_preset_params(gpu_type: &str, preset_name: &str, quality: i32) -> Vec<String> {
@@ -173,25 +169,4 @@ pub fn get_quality_config(codec: &str) -> QualityConfig {
             quality_label: String::new(),
         },
     }
-}
-
-pub fn get_preset_codec(gpu_type: &str, preset_name: &str) -> String {
-    let all_presets = default_all_presets();
-
-    for group in &all_presets {
-        if group.gpu_type == gpu_type {
-            for preset in &group.presets {
-                if preset.name == preset_name {
-                    let args: Vec<&str> = preset.args.split_whitespace().collect();
-                    for i in 0..args.len().saturating_sub(1) {
-                        if args[i] == "-c:v" || args[i] == "-codec:v" {
-                            return args[i + 1].to_string();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    "libx264".to_string()
 }

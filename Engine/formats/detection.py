@@ -2,6 +2,7 @@
 from pathlib import Path
 from Engine.formats.video import VIDEO_EXTENSIONS, VIDEO_OUTPUT_FORMATS
 from Engine.formats.photo import PHOTO_EXTENSIONS, PHOTO_OUTPUT_FORMATS
+from Engine.formats.audio import AUDIO_EXTENSIONS, AUDIO_OUTPUT_FORMATS
 
 
 _PHOTO_MAGICS = [
@@ -42,12 +43,12 @@ def _detect_from_content(file_path: str) -> str:
         riff_subtype = header[8:12]
         if riff_subtype in (b'WEBP ',):
             return 'photo'
-        if riff_subtype in (b'AVI ', b'AVI\x1a'):
+        if riff_subtype == b'AVI ':
             return 'video'
 
     if header[4:8] == b'ftyp' and len(header) >= 12:
         brand = header[8:12]
-        heif_brands = {b'heic', b'heix', b'mif1', b'heim', b'heis', b'hevc'}
+        heif_brands = {b'heic', b'heix', b'mif1', b'heim', b'heis'}
         if brand in heif_brands:
             return 'photo'
         if brand in (b'avif', b'avis'):
@@ -67,6 +68,8 @@ def detect_file_type(file_path: str) -> str:
         ext_type = 'video'
     elif ext in PHOTO_EXTENSIONS:
         ext_type = 'photo'
+    elif ext in AUDIO_EXTENSIONS:
+        ext_type = 'audio'
 
     content_type = _detect_from_content(file_path)
     if content_type is not None:
@@ -80,10 +83,13 @@ def get_allowed_output_formats(file_type: str, dev_mode: bool = False) -> dict:
         all_formats = {}
         all_formats.update(VIDEO_OUTPUT_FORMATS)
         all_formats.update(PHOTO_OUTPUT_FORMATS)
+        all_formats.update(AUDIO_OUTPUT_FORMATS)
         return all_formats
 
     if file_type == 'video':
         return dict(VIDEO_OUTPUT_FORMATS)
     elif file_type == 'photo':
         return dict(PHOTO_OUTPUT_FORMATS)
+    elif file_type == 'audio':
+        return dict(AUDIO_OUTPUT_FORMATS)
     return {}

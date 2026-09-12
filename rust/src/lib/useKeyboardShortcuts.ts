@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface ShortcutConfig {
   key: string;
@@ -10,9 +10,12 @@ interface ShortcutConfig {
 }
 
 export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]) {
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      for (const shortcut of shortcuts) {
+      if (e.defaultPrevented) return;
+      for (const shortcut of shortcutsRef.current) {
         const ctrlMatch = shortcut.ctrl ? e.ctrlKey : !e.ctrlKey;
         const shiftMatch = shortcut.shift ? e.shiftKey : !e.shiftKey;
         const altMatch = shortcut.alt ? e.altKey : !e.altKey;
@@ -28,5 +31,5 @@ export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [shortcuts]);
+  }, []);
 }

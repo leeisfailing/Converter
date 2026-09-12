@@ -20,13 +20,13 @@ vapoursynth-temp/
 
 # Binaries are tracked (ffmpeg, ffprobe, vspipe, VS DLLs)
 
-# Build artifacts (except bundled binaries)
+# Build artifacts
 *.exe
-!Engine/bin/*.exe
-!rust/src-tauri/bin/*.exe
 *.dll
 !Engine/bin/*.dll
 !rust/src-tauri/bin/*.dll
+!rust/src-tauri/bin/plugins/*.dll
+!Engine/bin/plugins/*.dll
 *.so
 *.dylib
 
@@ -35,7 +35,20 @@ vapoursynth-temp/
 *.tar.gz
 *.rar
 
+# Reproducible private Python runtime (generated before CI/release builds)
+.runtime-downloads/
+rust/src-tauri/bin/python/
+
 # OS files
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Updater signing keys (NEVER commit private key)
+rust/src-tauri/private_key.pem
+rust/src-tauri/private_key_hex.txt
+**/updater.key
+**/updater.key.password
+
+# Updater artifacts
+rust/src-tauri/target/release/bundle/

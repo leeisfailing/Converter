@@ -1,6 +1,69 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { BlurSettings } from "../components/BlurSettings";
 
+const DANGEROUS_PATH_CHARS = /[<>"'`;|&$(){}\\]/;
+const DANGEROUS_URL_CHARS = /[<>"';|&$\\]/;
+const NULL_BYTE = /\x00/;
+const CONTROL_CHARS = /[\x01-\x1f]/;
+
+export function sanitizePath(p: string): string {
+  if (typeof p !== "string" || !p.trim()) throw new Error("Invalid path: empty");
+  if (NULL_BYTE.test(p)) throw new Error("Invalid path: contains null byte");
+  if (DANGEROUS_PATH_CHARS.test(p)) throw new Error("Invalid path: contains illegal characters");
+  if (p.includes("..")) throw new Error("Invalid path: path traversal detected");
+  return p.replace(/[\r\n]/g, "");
+}
+
+export function sanitizeUrl(url: string): string {
+  if (typeof url !== "string" || !url.trim()) throw new Error("Invalid URL: empty");
+  if (NULL_BYTE.test(url)) throw new Error("Invalid URL: contains null byte");
+  if (DANGEROUS_URL_CHARS.test(url)) throw new Error("Invalid URL: contains illegal characters");
+  const trimmed = url.replace(/[\r\n]/g, "").trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Invalid URL: only http and https protocols allowed");
+    }
+    return parsed.href;
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("protocol")) throw e;
+    throw new Error("Invalid URL: malformed");
+  }
+}
+
+export function sanitizeString(s: string, maxLength: number = 256): string {
+  if (typeof s !== "string") throw new Error("Invalid input: expected string");
+  if (NULL_BYTE.test(s)) throw new Error("Invalid input: contains null byte");
+  if (CONTROL_CHARS.test(s)) throw new Error("Invalid input: contains control characters");
+  return s.substring(0, maxLength).replace(/[\r\n]/g, "");
+}
+
+export function sanitizeFormat(fmt: string): string {
+  const ALLOWED = [
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "ogg", "opus",
+    "mp3", "wav", "flac", "aac", "m4a", "jpg", "jpeg", "png",
+    "webp", "bmp", "tiff", "tif", "gif", "avif", "heic", "heif",
+    "bestvideo+bestaudio/best", "best", "worst",
+    "best_4k", "best_1080", "mp4_4k", "mp4_1080", "original",
+    "compress",
+  ];
+  const cleaned = sanitizeString(fmt, 64);
+  if (!ALLOWED.includes(cleaned.toLowerCase())) throw new Error(`Invalid format: ${cleaned}`);
+  return cleaned;
+}
+
+export function sanitizeCodec(codec: string): string {
+  const cleaned = sanitizeString(codec, 64);
+  if (!/^[a-z0-9_.\-]+$/i.test(cleaned)) throw new Error("Invalid codec name");
+  return cleaned;
+}
+
+export function sanitizeConfigName(name: string): string {
+  const cleaned = sanitizeString(name, 128);
+  if (!/^[a-zA-Z0-9_\- ]+$/.test(cleaned)) throw new Error("Config name contains invalid characters");
+  return cleaned;
+}
+
 export interface DetectFileResponse {
   ok: boolean;
   file_type: string;
@@ -75,9 +138,10 @@ export interface GpuInfoResponse {
 }
 
 export async function detectFile(path: string, devMode: boolean): Promise<DetectFileResponse> {
-  console.log(`[cmd] detectFile("${path.split(/[\\/]/).pop()}", devMode=${devMode})`);
+  const safePath = sanitizePath(path);
+  console.log(`[cmd] detectFile("${safePath.split(/[\\/]/).pop()}", devMode=${devMode})`);
   try {
-    const res = await invoke<DetectFileResponse>("detect_file", { path, devMode });
+    const res = await invoke<DetectFileResponse>("detect_file", { path: safePath, devMode });
     console.log(`[cmd] detectFile => ok=${res.ok}, type=${res.file_type}, formats=[${res.allowed_formats.join(", ")}]`);
     return res;
   } catch (err) {
@@ -87,9 +151,10 @@ export async function detectFile(path: string, devMode: boolean): Promise<Detect
 }
 
 export async function detectUrl(url: string): Promise<DetectUrlResponse> {
-  console.log(`[cmd] detectUrl("${url.substring(0, 60)}")`);
+  const safeUrl = sanitizeUrl(url);
+  console.log(`[cmd] detectUrl("${safeUrl.substring(0, 60)}")`);
   try {
-    const res = await invoke<DetectUrlResponse>("detect_url", { url });
+    const res = await invoke<DetectUrlResponse>("detect_url", { url: safeUrl });
     console.log(`[cmd] detectUrl => ok=${res.ok}, title="${res.title}"`);
     return res;
   } catch (err) {
@@ -104,12 +169,15 @@ export async function startConvert(params: {
   format: string;
   dev_mode: boolean;
 }): Promise<void> {
-  console.log(`[cmd] startConvert("${params.input.split(/[\\/]/).pop()}" => ${params.format.toUpperCase()}, devMode=${params.dev_mode})`);
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  const safeFormat = sanitizeFormat(params.format);
+  console.log(`[cmd] startConvert("${safeInput.split(/[\\/]/).pop()}" => ${safeFormat.toUpperCase()}, devMode=${params.dev_mode})`);
   try {
     await invoke("start_convert", {
-      input: params.input,
-      output: params.output,
-      format: params.format,
+      input: safeInput,
+      output: safeOutput,
+      format: safeFormat,
       devMode: params.dev_mode,
     });
     console.log(`[cmd] startConvert => sent to engine`);
@@ -124,12 +192,15 @@ export async function startDownload(params: {
   format_type: string;
   output_dir: string;
 }): Promise<void> {
-  console.log(`[cmd] startDownload("${params.url.substring(0, 50)}", format=${params.format_type})`);
+  const safeUrl = sanitizeUrl(params.url);
+  const safeFormat = sanitizeFormat(params.format_type);
+  const safeDir = sanitizePath(params.output_dir);
+  console.log(`[cmd] startDownload("${safeUrl.substring(0, 50)}", format=${safeFormat})`);
   try {
     await invoke("start_download", {
-      url: params.url,
-      formatType: params.format_type,
-      outputDir: params.output_dir,
+      url: safeUrl,
+      formatType: safeFormat,
+      outputDir: safeDir,
     });
     console.log(`[cmd] startDownload => sent to engine`);
   } catch (err) {
@@ -152,9 +223,10 @@ export async function cancelOperation(): Promise<void> {
 // ===== BLUR COMMANDS =====
 
 export async function detectVideoInfo(path: string): Promise<VideoInfoResponse> {
-  console.log(`[cmd] detectVideoInfo("${path.split(/[\\/]/).pop()}")`);
+  const safePath = sanitizePath(path);
+  console.log(`[cmd] detectVideoInfo("${safePath.split(/[\\/]/).pop()}")`);
   try {
-    const res = await invoke<VideoInfoResponse>("detect_video_info", { path });
+    const res = await invoke<VideoInfoResponse>("detect_video_info", { path: safePath });
     console.log(`[cmd] detectVideoInfo => ok=${res.ok}, fps=${res.fps_num}/${res.fps_den}, duration=${res.duration}s`);
     return res;
   } catch (err) {
@@ -168,11 +240,13 @@ export async function startBlur(params: {
   output: string;
   settings: BlurSettings;
 }): Promise<void> {
-  console.log(`[cmd] startBlur("${params.input.split(/[\\/]/).pop()}")`);
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  console.log(`[cmd] startBlur("${safeInput.split(/[\\/]/).pop()}")`);
   try {
     await invoke("start_blur", {
-      input: params.input,
-      output: params.output,
+      input: safeInput,
+      output: safeOutput,
       settingsJson: params.settings,
     });
     console.log(`[cmd] startBlur => sent to engine`);
@@ -191,15 +265,17 @@ export async function getWeightPreview(params: {
   gaussian_mean: number;
   gaussian_bound: string;
 }): Promise<WeightPreviewResponse> {
+  const safeWeighting = sanitizeString(params.blur_weighting, 64);
+  const safeBound = sanitizeString(params.gaussian_bound, 64);
   try {
     const res = await invoke<WeightPreviewResponse>("get_weight_preview", {
-      blurWeighting: params.blur_weighting,
+      blurWeighting: safeWeighting,
       blurAmount: params.blur_amount,
       videoFps: params.video_fps,
       outputFps: params.output_fps,
       gaussianStdDev: params.gaussian_std_dev,
       gaussianMean: params.gaussian_mean,
-      gaussianBound: params.gaussian_bound,
+      gaussianBound: safeBound,
     });
     return res;
   } catch (err) {
@@ -209,8 +285,9 @@ export async function getWeightPreview(params: {
 }
 
 export async function getEncodePresets(gpuType: string): Promise<PresetListResponse> {
+  const safeGpu = sanitizeString(gpuType, 64);
   try {
-    return await invoke<PresetListResponse>("get_encode_presets", { gpuType });
+    return await invoke<PresetListResponse>("get_encode_presets", { gpuType: safeGpu });
   } catch (err) {
     console.error(`[cmd] getEncodePresets failed:`, err);
     throw err;
@@ -218,8 +295,9 @@ export async function getEncodePresets(gpuType: string): Promise<PresetListRespo
 }
 
 export async function getQualityConfig(codec: string): Promise<QualityConfigResponse> {
+  const safeCodec = sanitizeCodec(codec);
   try {
-    return await invoke<QualityConfigResponse>("get_quality_config", { codec });
+    return await invoke<QualityConfigResponse>("get_quality_config", { codec: safeCodec });
   } catch (err) {
     console.error(`[cmd] getQualityConfig failed:`, err);
     throw err;
@@ -241,8 +319,9 @@ export async function detectGpu(): Promise<GpuInfoResponse> {
 // ===== MEDIA INFO =====
 
 export async function getMediaDuration(path: string): Promise<number> {
+  const safePath = sanitizePath(path);
   try {
-    return await invoke<number>("get_media_duration", { path });
+    return await invoke<number>("get_media_duration", { path: safePath });
   } catch (err) {
     console.error(`[cmd] getMediaDuration failed:`, err);
     throw err;
@@ -256,12 +335,14 @@ export async function compressFile(params: {
   output: string;
   target_size_bytes: number;
 }): Promise<void> {
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
   const sizeMB = (params.target_size_bytes / 1048576).toFixed(1);
-  console.log(`[cmd] compressFile("${params.input.split(/[\\/]/).pop()}", target=${sizeMB}MB)`);
+  console.log(`[cmd] compressFile("${safeInput.split(/[\\/]/).pop()}", target=${sizeMB}MB)`);
   try {
     await invoke("compress_file", {
-      input: params.input,
-      output: params.output,
+      input: safeInput,
+      output: safeOutput,
       targetSizeBytes: params.target_size_bytes,
     });
     console.log(`[cmd] compressFile => sent to engine`);
@@ -295,8 +376,10 @@ export async function saveBlurConfig(
   description: string,
   settings: BlurSettings
 ): Promise<void> {
+  const safeName = sanitizeConfigName(name);
+  const safeDesc = sanitizeString(description, 512);
   try {
-    await invoke("save_blur_config", { name, description, settingsJson: settings });
+    await invoke("save_blur_config", { name: safeName, description: safeDesc, settingsJson: settings });
   } catch (err) {
     console.error(`[cmd] saveBlurConfig failed:`, err);
     throw err;
@@ -304,8 +387,9 @@ export async function saveBlurConfig(
 }
 
 export async function loadBlurConfig(name: string): Promise<ConfigLoadResponse> {
+  const safeName = sanitizeConfigName(name);
   try {
-    return await invoke<ConfigLoadResponse>("load_blur_config", { name });
+    return await invoke<ConfigLoadResponse>("load_blur_config", { name: safeName });
   } catch (err) {
     console.error(`[cmd] loadBlurConfig failed:`, err);
     throw err;
@@ -322,8 +406,9 @@ export async function listBlurConfigs(): Promise<ConfigListResponse> {
 }
 
 export async function deleteBlurConfig(name: string): Promise<void> {
+  const safeName = sanitizeConfigName(name);
   try {
-    await invoke("delete_blur_config", { name });
+    await invoke("delete_blur_config", { name: safeName });
   } catch (err) {
     console.error(`[cmd] deleteBlurConfig failed:`, err);
     throw err;
@@ -352,11 +437,13 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
+  const safeDownloadDir = settings.downloadDir ? sanitizePath(settings.downloadDir) : settings.downloadDir;
+  const safeOutputDir = settings.outputDir ? sanitizePath(settings.outputDir) : settings.outputDir;
   console.log(`[cmd] saveSettings()`);
   try {
     const res = await invoke<AppSettings>("save_settings", {
-      downloadDir: settings.downloadDir,
-      outputDir: settings.outputDir,
+      downloadDir: safeDownloadDir,
+      outputDir: safeOutputDir,
       autoSave: settings.autoSave,
       overwriteExisting: settings.overwriteExisting,
     });

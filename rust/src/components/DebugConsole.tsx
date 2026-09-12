@@ -162,39 +162,47 @@ export default memo(function DebugConsole({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button
+        <motion.div className="flex items-center gap-1" whileHover={{ scale: 1.02 }} transition={{ type: "spring", stiffness: 400, damping: 25 }}>
+          <motion.button
             onClick={handleCopyAll}
             disabled={filteredLogs.length === 0}
             className="btn-icon !w-6 !h-6 disabled:opacity-30 disabled:cursor-not-allowed"
             title="Copy all logs"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
           >
             {copiedAll ? <Check size={12} className="text-app-success" /> : <Copy size={12} />}
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             onClick={onToggleCapture}
             className={`btn-icon !w-6 !h-6 ${isCapturing ? "active" : ""}`}
             title={isCapturing ? "Pause capture" : "Resume capture"}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
           >
             {isCapturing ? <Pause size={12} /> : <Play size={12} />}
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             onClick={onClear}
             className="btn-icon !w-6 !h-6 hover:!text-app-danger hover:!bg-app-danger-dim"
             title="Clear logs"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
           >
             <Trash2 size={12} />
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="btn-icon !w-6 !h-6"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
           >
             <ChevronDown
               size={12}
               className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
             />
-          </button>
-        </div>
+          </motion.button>
+        </motion.div>
       </div>
 
       <AnimatePresence>
@@ -209,7 +217,7 @@ export default memo(function DebugConsole({
             <div className="flex items-center gap-1 px-3 py-1.5 border-b border-app-border">
               {(["all", "error", "warn", "info", "system"] as FilterLevel[]).map(
                 (f) => (
-                  <button
+                  <motion.button
                     key={f}
                     onClick={() => setFilter(f)}
                     className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
@@ -223,9 +231,13 @@ export default memo(function DebugConsole({
                           : "bg-app-surface-elevated text-app-text"
                         : "text-app-text-muted hover:text-app-text-secondary hover:bg-app-surface-hover"
                     }`}
+                    whileHover={{ scale: 1.08 }}
+                    whileTap={{ scale: 0.92 }}
+                    animate={filter === f ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 20 }}
                   >
                     {f === "all" ? "All" : levelConfig[f].label}
-                  </button>
+                  </motion.button>
                 )
               )}
               <div className="flex-1" />
@@ -249,9 +261,10 @@ export default memo(function DebugConsole({
                   const config = levelConfig[log.level];
                   const Icon = config.icon;
                   return (
-                    <div
+                    <motion.div
                       key={log.id}
-                      className="group flex items-start gap-2 py-0.5 rounded px-1 -mx-1 hover:bg-app-surface-hover"
+                      className="group flex items-start gap-2 py-0.5 rounded px-1 -mx-1"
+                      whileHover={{ backgroundColor: "rgba(255,255,255,0.04)" }}
                     >
                       <span className="text-app-text-muted select-none shrink-0">
                         {formatTime(log.timestamp)}
@@ -277,18 +290,20 @@ export default memo(function DebugConsole({
                           {log.message}
                         </span>
                       </div>
-                      <button
+                      <motion.button
                         onClick={() => handleCopyLog(log)}
                         className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-app-text-muted hover:text-app-accent opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
                         title="Copy log"
+                        whileHover={{ scale: 1.15 }}
+                        whileTap={{ scale: 0.85 }}
                       >
                         {copiedId === log.id ? (
                           <Check size={10} className="text-app-success" />
                         ) : (
                           <Copy size={10} />
                         )}
-                      </button>
-                    </div>
+                      </motion.button>
+                    </motion.div>
                   );
                 })
               )}

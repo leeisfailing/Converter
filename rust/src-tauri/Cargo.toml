@@ -20,12 +20,23 @@ tauri-plugin-shell = "2"
 tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "io-util", "process", "sync"] }
+tokio = { version = "1", features = ["rt", "io-util", "process", "sync", "time"] }
 dirs = "5"
 url = "2"
+tempfile = "3"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [profile.release]
 strip = true
 lto = true
 codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+
+[profile.test]
 panic = "abort"

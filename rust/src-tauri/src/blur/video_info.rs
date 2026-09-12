@@ -32,47 +32,7 @@ impl Default for VideoInfo {
     }
 }
 
-fn find_ffprobe() -> String {
-    // Check bundled binary relative to the exe (Tauri externalBin places in same dir on Windows)
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
-        // Tauri externalBin: same directory as exe
-        for name in &["ffprobe.exe", "ffprobe"] {
-            let p = exe_dir.join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-        // Dev / Engine/bin layout
-        for name in &["ffprobe.exe", "ffprobe"] {
-            let p = exe_dir.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    // Fallback: check relative to CWD
-    if let Ok(cwd) = std::env::current_dir() {
-        for name in &["ffprobe.exe", "ffprobe"] {
-            let p = cwd.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    // System PATH
-    for name in &["ffprobe", "ffprobe.exe"] {
-        if let Ok(mut child) = Command::new(name)
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            let _ = child.wait();
-            return name.to_string();
-        }
-    }
-    "ffprobe".to_string()
-}
+use crate::paths::ffprobe as find_ffprobe;
 
 pub fn get_video_info(path: &str) -> Result<VideoInfo, String> {
     let ffprobe = find_ffprobe();

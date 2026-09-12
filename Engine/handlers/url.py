@@ -1,7 +1,8 @@
 """URL detection handler."""
+import tempfile
 from Engine.core.ipc import send_response
 from Engine.core.config import resource_path
-from Engine.core.security import validate_url
+from Engine.core.security import validate_url, validate_string, validate_download_format
 
 
 def handle_detect_url(cmd_args: dict):
@@ -10,7 +11,11 @@ def handle_detect_url(cmd_args: dict):
     except (KeyError, TypeError):
         send_response({"ok": False, "error": "Missing required field: url"})
         return
+    if not isinstance(url, str) or not url.strip():
+        send_response({"ok": False, "error": "url must be a non-empty string"})
+        return
     try:
+        url = validate_string(url, "url", 2048)
         validate_url(url)
     except ValueError as e:
         send_response({"ok": False, "error": str(e)})
@@ -32,6 +37,7 @@ def _detect_url_info(url: str) -> dict:
         'noplaylist': True,
         'format': 'best',
         'socket_timeout': 30,
+        'retries': 3,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     }
 

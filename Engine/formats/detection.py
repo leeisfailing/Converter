@@ -24,7 +24,7 @@ _VIDEO_MAGICS = [
 def _detect_from_content(file_path: str) -> str:
     try:
         with open(file_path, 'rb') as f:
-            header = f.read(32)
+            header = f.read(64)
     except (OSError, IOError):
         return None
 
@@ -41,8 +41,10 @@ def _detect_from_content(file_path: str) -> str:
 
     if header.startswith(b'RIFF') and len(header) >= 12:
         riff_subtype = header[8:12]
-        if riff_subtype in (b'WEBP ',):
+        if riff_subtype == b'WEBP':
             return 'photo'
+        if riff_subtype == b'WAVE':
+            return 'audio'
         if riff_subtype == b'AVI ':
             return 'video'
 
@@ -53,10 +55,16 @@ def _detect_from_content(file_path: str) -> str:
             return 'photo'
         if brand in (b'avif', b'avis'):
             return 'photo'
+        if brand == b'M4A ':
+            return 'audio'
         return 'video'
 
     if header.startswith(b'OggS'):
-        return 'video'
+        if b'OpusHead' in header or b'\x01vorbis' in header:
+            return 'audio'
+        if b'\x80theora' in header:
+            return 'video'
+        return None  # An Ogg container alone does not identify its stream type.
 
     return None
 

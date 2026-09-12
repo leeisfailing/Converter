@@ -323,8 +323,8 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    updateWeightPreview(controller.signal);
-    return () => controller.abort();
+    const timer = setTimeout(() => updateWeightPreview(controller.signal), 100);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [updateWeightPreview]);
 
   const handleLoadConfig = async (name: string) => {
@@ -542,15 +542,15 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
   );
 
   return (
-    <div className="space-y-3">
+    <motion.div className="space-y-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
       {/* Config Manager */}
-      <div className="panel p-3">
+      <motion.div className="panel p-3" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30 }}>
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold text-app-text-secondary uppercase tracking-wider">
             Preset Config
           </span>
           <div className="flex items-center gap-1">
-            <button
+            <motion.button
               onClick={() => {
                 setPasteError("");
                 setShowPasteModal(true);
@@ -558,10 +558,12 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               disabled={disabled}
               className="btn-icon !w-7 !h-7"
               title="Paste config"
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
             >
               <ClipboardPaste size={14} className="text-app-text-secondary" />
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               onClick={() => {
                 setConfigError("");
                 setShowSaveModal(true);
@@ -569,18 +571,22 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               disabled={disabled}
               className="btn-icon !w-7 !h-7"
               title="Save current settings"
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
             >
               <Save size={14} className="text-app-text-secondary" />
-            </button>
+            </motion.button>
             {selectedConfig && !configs.find((c) => c.name === selectedConfig && c.is_preset) && (
-              <button
+              <motion.button
                 onClick={() => handleDeleteConfig(selectedConfig)}
                 disabled={disabled}
                 className="btn-icon !w-7 !h-7 hover:!text-app-danger hover:!bg-app-danger-dim"
                 title="Delete config"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               >
                 <Trash2 size={14} />
-              </button>
+              </motion.button>
             )}
           </div>
         </div>
@@ -619,7 +625,7 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
             {configs.find((c) => c.name === selectedConfig)?.description}
           </p>
         )}
-      </div>
+      </motion.div>
 
       {/* File selector */}
       <motion.div
@@ -659,13 +665,16 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
           className="space-y-3"
         >
           {/* Motion Blur */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.06 }}>
           <Section title="Motion Blur" defaultOpen>
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Enable blur</span>
-              <button
+              <motion.button
                 onClick={() => update({ blur: !settings.blur })}
                 disabled={disabled}
                 className={`toggle ${settings.blur ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             {settings.blur && (
@@ -758,15 +767,19 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               </>
             )}
           </Section>
+          </motion.div>
 
           {/* Frame Interpolation */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.10 }}>
           <Section title="Frame Interpolation">
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Enable interpolation</span>
-              <button
+              <motion.button
                 onClick={() => update({ interpolate: !settings.interpolate })}
                 disabled={disabled}
                 className={`toggle ${settings.interpolate ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             {settings.interpolate && (
@@ -876,7 +889,7 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                   <span className="text-xs text-app-text-secondary">
                     Pre-interpolate (two-pass)
                   </span>
-                  <button
+                  <motion.button
                     onClick={() =>
                       update({
                         pre_interpolate: !settings.pre_interpolate,
@@ -884,20 +897,26 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                     }
                     disabled={disabled}
                     className={`toggle ${settings.pre_interpolate ? "active" : ""}`}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
                   />
                 </div>
               </>
             )}
           </Section>
+          </motion.div>
 
           {/* Deduplication */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.14 }}>
           <Section title="Deduplication">
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Enable deduplication</span>
-              <button
+              <motion.button
                 onClick={() => update({ deduplicate: !settings.deduplicate })}
                 disabled={disabled}
                 className={`toggle ${settings.deduplicate ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             {settings.deduplicate && (
@@ -940,15 +959,19 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               </>
             )}
           </Section>
+          </motion.div>
 
           {/* Timescale */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.18 }}>
           <Section title="Timescale">
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Enable timescale</span>
-              <button
+              <motion.button
                 onClick={() => update({ timescale: !settings.timescale })}
                 disabled={disabled}
                 className={`toggle ${settings.timescale ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             {settings.timescale && (
@@ -977,7 +1000,7 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                   <span className="text-xs text-app-text-secondary">
                     Adjust audio pitch
                   </span>
-                  <button
+                  <motion.button
                     onClick={() =>
                       update({
                         output_timescale_audio_pitch:
@@ -986,20 +1009,26 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                     }
                     disabled={disabled}
                     className={`toggle ${settings.output_timescale_audio_pitch ? "active" : ""}`}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
                   />
                 </div>
               </>
             )}
           </Section>
+          </motion.div>
 
           {/* Video Filters */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.22 }}>
           <Section title="Video Filters">
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Enable filters</span>
-              <button
+              <motion.button
                 onClick={() => update({ filters: !settings.filters })}
                 disabled={disabled}
                 className={`toggle ${settings.filters ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             {settings.filters && (
@@ -1034,8 +1063,10 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               </>
             )}
           </Section>
+          </motion.div>
 
           {/* Encoding */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.26 }}>
           <Section title="Encoding" defaultOpen>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[11px] text-app-text-secondary min-w-[80px]">
@@ -1091,29 +1122,35 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">GPU encoding</span>
-              <button
+              <motion.button
                 onClick={() => update({ gpu_encoding: !settings.gpu_encoding })}
                 disabled={disabled}
                 className={`toggle ${settings.gpu_encoding ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
           </Section>
+          </motion.div>
 
           {/* Advanced */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 30, delay: 0.30 }}>
           <Section title="Advanced">
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">GPU decoding</span>
-              <button
+              <motion.button
                 onClick={() => update({ gpu_decoding: !settings.gpu_decoding })}
                 disabled={disabled}
                 className={`toggle ${settings.gpu_decoding ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">
                 GPU interpolation
               </span>
-              <button
+              <motion.button
                 onClick={() =>
                   update({
                     gpu_interpolation: !settings.gpu_interpolation,
@@ -1121,13 +1158,15 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                 }
                 disabled={disabled}
                 className={`toggle ${settings.gpu_interpolation ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">
                 Detailed filenames
               </span>
-              <button
+              <motion.button
                 onClick={() =>
                   update({
                     detailed_filenames: !settings.detailed_filenames,
@@ -1135,16 +1174,20 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                 }
                 disabled={disabled}
                 className={`toggle ${settings.detailed_filenames ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-app-text-secondary">Debug mode</span>
-              <button
+              <motion.button
                 onClick={() =>
                   updateAdvanced({ debug: !settings.advanced.debug })
                 }
                 disabled={disabled}
                 className={`toggle ${settings.advanced.debug ? "active" : ""}`}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               />
             </div>
             <div className="flex items-center justify-between gap-3">
@@ -1163,12 +1206,14 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               />
             </div>
           </Section>
+          </motion.div>
 
           {/* Add to Queue */}
           {filePath && (
             <motion.button
               initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
+              whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleAdd}
               disabled={disabled}
@@ -1246,14 +1291,16 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                 <p className="text-[10px] text-app-danger">{configError}</p>
               )}
 
-              <button
+              <motion.button
                 onClick={handleSaveConfig}
                 disabled={isSaving || !configName.trim()}
                 className="w-full btn btn-primary py-2 disabled:opacity-30"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               >
                 <Save size={14} />
                 {isSaving ? "Saving..." : "Save"}
-              </button>
+              </motion.button>
             </motion.div>
           </motion.div>
         )}
@@ -1313,14 +1360,16 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
                 <p className="text-[10px] text-app-danger">{pasteError}</p>
               )}
 
-              <button
+              <motion.button
                 onClick={handleApplyPaste}
                 disabled={!pasteText.trim()}
                 className="w-full btn btn-primary py-2 disabled:opacity-30"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
               >
                 <ClipboardPaste size={14} />
                 Apply Config
-              </button>
+              </motion.button>
             </motion.div>
           </motion.div>
         )}
@@ -1390,28 +1439,32 @@ export default function BlurSettings({ onAdd, disabled }: Props) {
               )}
 
               <div className="flex gap-2">
-                <button
+                <motion.button
                   onClick={() => {
                     setShowPostPasteSave(false);
                     setConfigError("");
                   }}
                   className="flex-1 btn py-2"
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
                 >
                   Skip
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   onClick={handlePostPasteSave}
                   disabled={isSaving || !configName.trim()}
                   className="flex-1 btn btn-primary py-2 disabled:opacity-30"
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
                 >
                   <Save size={14} />
                   {isSaving ? "Saving..." : "Save"}
-                </button>
+                </motion.button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }

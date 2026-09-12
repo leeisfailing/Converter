@@ -16,18 +16,21 @@
         "width": 1024,
         "height": 768,
         "resizable": false,
+        "dragDropEnabled": true,
         "center": true,
         "decorations": true,
         "transparent": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://*; connect-src 'self' ipc: http://ipc.localhost; media-src 'self' file: https://*"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self' https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; sandbox 'allow-scripts' 'allow-same-origin' 'allow-popups'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' http://localhost:1420 https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,12 +46,33 @@
     "resources": {
       "bin/libvapoursynth.dll": "libvapoursynth.dll",
       "bin/vsscript.dll": "vsscript.dll",
-      "bin/plugins/*": "plugins/"
+      "bin/plugins/*": "plugins/",
+      "../../Engine/__init__.py": "Engine/__init__.py",
+      "../../Engine/__main__.py": "Engine/__main__.py",
+      "../../Engine/core/*.py": "Engine/core/",
+      "../../Engine/handlers/*.py": "Engine/handlers/",
+      "../../Engine/workers/*.py": "Engine/workers/",
+      "../../Engine/formats/*.py": "Engine/formats/",
+      "vapoursynth/*.py": "vapoursynth/",
+      "vapoursynth/blur/*.py": "vapoursynth/blur/",
+      "../../Engine/bin/*": "Engine/bin/",
+      "../../Engine/bin/plugins/": "Engine/bin/plugins/",
+      "bin/python/": "Engine/bin/python/"
     }
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyNDgyMUM1NTlBMTk0N0UKUldSK2xLRlp4U0ZJWXZVbDR0L0ZPUSthVGZFRlQyNm82RTRwZUVLQWdLMTM2K2JaUXQxZWJaaDEK",
+      "endpoints": [
+        "https://github.com/leeisfailing/Converter/releases/latest/download/latest.json",
+        "https://afodajwurtywdxeqoiym.supabase.co/functions/v1/update-manifest"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

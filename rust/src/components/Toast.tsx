@@ -24,17 +24,19 @@ const colorMap = {
 export default function ToastContainer({ toasts, onRemove }: Props) {
   return (
     <div className="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
-      <AnimatePresence>
+      <AnimatePresence mode="popLayout">
         {toasts.map((toast) => {
           const Icon = iconMap[toast.type];
           const colors = colorMap[toast.type];
           return (
             <motion.div
               key={toast.id}
-              initial={{ opacity: 0, x: 100, scale: 0.95 }}
+              initial={{ opacity: 0, x: 100, scale: 0.85 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 100, scale: 0.95 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+              exit={{ opacity: 0, x: 100, scale: 0.85 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              whileHover={{ scale: 1.03, x: -4 }}
+              whileTap={{ scale: 0.97 }}
               className={`pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${colors}`}
             >
               <Icon size={16} className="shrink-0 mt-0.5" />

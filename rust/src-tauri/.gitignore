@@ -1,0 +1,6 @@
+target/
+gen/
+private_key.pem
+private_key_hex.txt
+updater.key
+updater.key.password

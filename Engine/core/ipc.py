@@ -1,12 +1,17 @@
 """JSON-RPC IPC communication."""
 import json
 import sys
+from threading import Lock
+
+_write_lock = Lock()
 
 
 def send_response(obj: dict):
     try:
-        sys.stdout.write(json.dumps(obj) + "\n")
-        sys.stdout.flush()
+        payload = json.dumps(obj, separators=(",", ":")) + "\n"
+        with _write_lock:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
     except (BrokenPipeError, OSError):
         pass
 

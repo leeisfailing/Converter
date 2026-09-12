@@ -1,55 +1,14 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::mpsc;
 
 use super::presets;
 use super::settings::BlurSettings;
 use super::video_info::VideoInfo;
 
-fn find_binary(exe_names: &[&str], check_arg: &str) -> String {
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
-        for name in exe_names {
-            let p = exe_dir.join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-        for name in exe_names {
-            let p = exe_dir.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        for name in exe_names {
-            let p = cwd.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    for name in exe_names {
-        if let Ok(mut child) = Command::new(name)
-            .arg(check_arg)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            let _ = child.wait();
-            return name.to_string();
-        }
-    }
-    exe_names[0].to_string()
-}
-
-fn find_vspipe() -> String {
-    find_binary(&["vspipe.exe", "vspipe"], "--version")
-}
-
-fn find_ffmpeg() -> String {
-    find_binary(&["ffmpeg.exe", "ffmpeg"], "-version")
-}
+use crate::paths::{ffmpeg as find_ffmpeg, vspipe as find_vspipe};
 
 pub fn get_vapoursynth_script_path() -> Result<String, String> {
     // First try runtime path relative to the executable
@@ -252,6 +211,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
     output_path: &str,
     video_info: &VideoInfo,
     settings: &BlurSettings,
+    operation: &crate::operations::Operation,
     mut progress_callback: F,
 ) -> Result<(), String> {
     let commands = build_render_commands(input_path, output_path, video_info, settings)?;
@@ -260,26 +220,23 @@ pub fn run_render<F: FnMut(i32, i32)>(
     let ffmpeg = find_ffmpeg();
 
     // Set up plugin paths so vspipe can find bundled VS plugins
-    let plugin_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .map(|p| p.join("plugins"))
-        .or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .map(|p| p.join("Engine").join("bin").join("plugins"))
-        });
+    let plugin_path = crate::paths::vapoursynth_plugins();
 
     let mut vspipe_cmd = Command::new(&vspipe);
     vspipe_cmd.args(&commands.vspipe);
+    #[cfg(windows)]
+    if let Some(dir) = std::path::Path::new(&vspipe).parent() {
+        let vsscript = dir.join("vsscript.dll");
+        if vsscript.is_file() { vspipe_cmd.env("VSSCRIPT_PATH", vsscript); }
+        vspipe_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
     if let Some(ref pp) = plugin_path {
         if pp.exists() {
-            let current = std::env::var("VAPOURSYNTH_EXTRA_PLUGIN_PATH").unwrap_or_default();
-            let new_path = if current.is_empty() {
-                pp.to_string_lossy().to_string()
-            } else {
-                format!("{};{}", current, pp.to_string_lossy())
-            };
+            let mut plugin_dirs = vec![pp.to_path_buf()];
+            if let Some(current) = std::env::var_os("VAPOURSYNTH_EXTRA_PLUGIN_PATH") {
+                plugin_dirs.extend(std::env::split_paths(&current));
+            }
+            let new_path = std::env::join_paths(plugin_dirs).map_err(|e| e.to_string())?;
             vspipe_cmd.env("VAPOURSYNTH_EXTRA_PLUGIN_PATH", &new_path);
         }
     }
@@ -294,6 +251,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
         Some(s) => s,
         None => {
             let _ = vspipe_child.kill();
+            let _ = vspipe_child.wait();
             return Err("Failed to capture vspipe stdout".to_string());
         }
     };
@@ -324,7 +282,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
         }
     };
 
-    let (progress_tx, progress_rx) = mpsc::channel::<(i32, i32)>();
+    let (progress_tx, progress_rx) = mpsc::sync_channel::<(i32, i32)>(1);
 
     // Read vspipe stderr for progress
     let vspipe_stderr = vspipe_child.stderr.take();
@@ -339,7 +297,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
                         if let Some((current, total)) = frame_info.split_once('/') {
                             if let (Ok(c), Ok(t)) = (current.parse::<i32>(), total.parse::<i32>()) {
                                 if t > 0 {
-                                    let _ = progress_tx.send((c, t));
+                                    let _ = progress_tx.try_send((c, t));
                                 }
                             }
                         }
@@ -350,11 +308,19 @@ pub fn run_render<F: FnMut(i32, i32)>(
     });
 
     // Read ffmpeg stderr for errors
-    let ffmpeg_reader = BufReader::new(ffmpeg_stderr);
-    let mut ffmpeg_errors = Vec::new();
+    let errors_handle = crate::process_output::capture_tail(ffmpeg_stderr);
 
-    // Poll both processes and progress channel
+    // Drain stderr concurrently; a full pipe must never block the encoder.
     loop {
+        if operation.is_cancelled() {
+            let _ = ffmpeg_child.kill();
+            let _ = vspipe_child.kill();
+            let _ = ffmpeg_child.wait();
+            let _ = vspipe_child.wait();
+            let _ = progress_handle.join();
+            let _ = errors_handle.join();
+            return Err("Operation cancelled".into());
+        }
         // Drain progress updates
         while let Ok((current, total)) = progress_rx.try_recv() {
             progress_callback(current, total);
@@ -383,12 +349,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
         progress_callback(current, total);
     }
 
-    // Collect any remaining ffmpeg stderr lines
-    for line in ffmpeg_reader.lines().map_while(Result::ok) {
-        if !line.is_empty() {
-            ffmpeg_errors.push(line);
-        }
-    }
+    let ffmpeg_errors = String::from_utf8_lossy(&errors_handle.join().unwrap_or_default()).into_owned();
 
     let vspipe_exit = match vspipe_child.wait() {
         Ok(s) => s,
@@ -405,7 +366,7 @@ pub fn run_render<F: FnMut(i32, i32)>(
     if !ffmpeg_exit.success() {
         let mut error_msg = String::new();
         if !ffmpeg_errors.is_empty() {
-            error_msg.push_str(&ffmpeg_errors.join("\n"));
+            error_msg.push_str(&ffmpeg_errors);
         }
         if error_msg.is_empty() {
             error_msg = format!(

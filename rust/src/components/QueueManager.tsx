@@ -38,7 +38,12 @@ const typeConfig: Record<string, { icon: typeof Download; color: string; bg: str
   compress: { icon: HardDrive, color: "text-emerald-400", bg: "bg-emerald-500/10" },
 };
 
-const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void }>(
+const staggerItem = {
+  hidden: { opacity: 0, x: -20 },
+  visible: { opacity: 1, x: 0 },
+};
+
+const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void }>(
   ({ item, onRemove }, ref) => {
     const sConfig = statusConfig[item.status];
     const tConfig = typeConfig[item.type] || typeConfig.convert;
@@ -49,9 +54,12 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
       <motion.div
         ref={ref}
         layout
-        initial={{ opacity: 0, x: -10 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 10, height: 0 }}
+        initial="hidden"
+        animate="visible"
+        variants={staggerItem}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        whileHover={{ scale: 1.01, x: 2 }}
+        whileTap={{ scale: 0.99 }}
         className={`panel p-3 flex items-center gap-3 ${sConfig.bg} ${
           item.status === "active" ? "border-app-accent/30" : ""
         }`}
@@ -92,18 +100,21 @@ const QueueItemRow = forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id
         </div>
 
         {/* Remove button */}
-        {(item.status === "completed" || item.status === "failed" || item.status === "cancelled") && (
-          <button
+        {item.status !== "active" && (
+          <motion.button
             onClick={() => onRemove(item.id)}
+            aria-label={`Remove ${item.label} from queue`}
             className="w-6 h-6 rounded flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
+            whileHover={{ scale: 1.2 }}
+            whileTap={{ scale: 0.8 }}
           >
             <Trash2 size={12} />
-          </button>
+          </motion.button>
         )}
       </motion.div>
     );
   }
-);
+));
 QueueItemRow.displayName = "QueueItemRow";
 
 export default memo(function QueueManager({ items, onRemove, onClearCompleted }: Props) {
@@ -121,16 +132,24 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
   return (
     <div className="h-full flex flex-col">
       {/* Queue header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-app-border">
+      <motion.div
+        initial={{ opacity: 0, y: -5 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center justify-between px-4 py-3 border-b border-app-border"
+      >
         <div className="flex items-center gap-2">
           <List size={14} className="text-app-accent" />
           <span className="text-xs font-semibold text-app-text uppercase tracking-wider">
             Queue
           </span>
           {activeItem && (
-            <span className="text-[10px] text-app-accent bg-app-accent-dim px-1.5 py-0.5 rounded">
+            <motion.span
+              initial={{ scale: 0.8 }}
+              animate={{ scale: 1 }}
+              className="text-[10px] text-app-accent bg-app-accent-dim px-1.5 py-0.5 rounded"
+            >
               Processing 1 of {items.length}
-            </span>
+            </motion.span>
           )}
           {!activeItem && pendingCount > 0 && (
             <span className="text-[10px] text-app-text-muted">
@@ -139,14 +158,16 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
           )}
         </div>
         {completedCount > 0 && (
-          <button
+          <motion.button
             onClick={onClearCompleted}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             className="text-[10px] text-app-text-muted hover:text-app-text transition-colors cursor-pointer"
           >
             Clear done
-          </button>
+          </motion.button>
         )}
-      </div>
+      </motion.div>
 
       {/* Queue items */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">

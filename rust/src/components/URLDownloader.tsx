@@ -11,6 +11,21 @@ interface Props {
 
 type DetectState = "idle" | "detecting" | "done" | "error";
 
+const containerVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } },
+};
+
+const staggerContainer = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06 } },
+};
+
+const chipVariants = {
+  hidden: { opacity: 0, y: 8, scale: 0.92 },
+  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.25, ease: "easeOut" } },
+};
+
 export default function URLDownloader({ onAdd, disabled }: Props) {
   const [url, setUrl] = useState("");
   const [detectState, setDetectState] = useState<DetectState>("idle");
@@ -95,7 +110,12 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   };
 
   return (
-    <div className="space-y-4">
+    <motion.div
+      className="space-y-4"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       {/* URL Input */}
       <div className="panel p-4">
         <div className="section-label flex items-center gap-1.5 mb-3">
@@ -103,7 +123,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
           Paste URL
         </div>
         <div className="flex gap-2">
-          <input
+          <motion.input
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
             type="url"
             className={`input flex-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}
             placeholder="Paste any URL — video, audio, file, etc."
@@ -114,6 +136,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
           />
           {detectState === "idle" || detectState === "error" ? (
             <motion.button
+              whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleDetect}
               disabled={disabled || !url.trim()}
@@ -132,6 +155,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             </motion.button>
           ) : (
             <motion.button
+              whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleReset}
               disabled={disabled}
@@ -198,10 +222,18 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             {/* Format picker */}
             <div className="panel p-4">
               <div className="section-label mb-3">Pick quality</div>
-              <div className="grid grid-cols-3 gap-2">
+              <motion.div
+                className="grid grid-cols-3 gap-2"
+                variants={staggerContainer}
+                initial="hidden"
+                animate="visible"
+              >
                 {detectedInfo.formats.map((fmt) => (
-                  <button
+                  <motion.button
                     key={fmt.value}
+                    variants={chipVariants}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
                     onClick={() => setSelectedFormat(fmt.value)}
                     disabled={disabled}
                     className={`format-chip ${selectedFormat === fmt.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
@@ -217,13 +249,14 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
                       {fmt.label}
                     </span>
                     <span className="text-[10px] text-app-text-muted">{fmt.desc}</span>
-                  </button>
+                  </motion.button>
                 ))}
-              </div>
+              </motion.div>
             </div>
 
             {/* Add button */}
             <motion.button
+              whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleAdd}
               disabled={disabled || !selectedFormat}
@@ -239,6 +272,6 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
       <p className="text-[11px] text-app-text-muted text-center">
         Paste any URL, click Detect to see options, then add to queue.
       </p>
-    </div>
+    </motion.div>
   );
 }

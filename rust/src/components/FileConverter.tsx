@@ -227,8 +227,25 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     [allowedFormats]
   );
 
+  const chipContainerVariants = {
+    hidden: {},
+    visible: {
+      transition: { staggerChildren: 0.03 },
+    },
+  };
+
+  const chipVariants = {
+    hidden: { opacity: 0, y: 6 },
+    visible: { opacity: 1, y: 0 },
+  };
+
   return (
-    <div className="space-y-4">
+    <motion.div
+      className="space-y-4"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
+    >
       {/* File Drop */}
       <motion.div
         ref={dropRef}
@@ -236,7 +253,14 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         className={`drop-area ${filePath ? "has-file" : ""} ${
           isDragOver ? "active" : ""
         } ${disabled ? "opacity-40 pointer-events-none" : "cursor-pointer"}`}
-        whileTap={!disabled ? { scale: 0.995 } : undefined}
+        animate={
+          isDragOver
+            ? { scale: 1.02, borderColor: "var(--accent, #6366f1)" }
+            : { scale: 1, borderColor: "transparent" }
+        }
+        whileHover={!disabled ? { scale: 1.02 } : undefined}
+        whileTap={!disabled ? { scale: 0.98 } : undefined}
+        transition={{ type: "spring", stiffness: 400, damping: 25 }}
       >
         {filePath ? (
           <div className="flex items-center justify-center gap-3">
@@ -335,20 +359,28 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                   <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
                     Video
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <motion.div
+                    className="flex flex-wrap gap-2"
+                    variants={chipContainerVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
                     {videoFormats.map((f) => (
-                      <button
+                      <motion.button
                         key={f.value}
+                        variants={chipVariants}
                         onClick={() => setSelectedFormat(f.value)}
                         disabled={disabled}
+                        whileHover={{ scale: 1.08 }}
+                        whileTap={{ scale: 0.95 }}
                         className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                       >
                         <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
                           {f.label}
                         </span>
-                      </button>
+                      </motion.button>
                     ))}
-                  </div>
+                  </motion.div>
                 </div>
               )}
 
@@ -357,20 +389,28 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                   <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
                     Photo
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <motion.div
+                    className="flex flex-wrap gap-2"
+                    variants={chipContainerVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
                     {photoFormats.map((f) => (
-                      <button
+                      <motion.button
                         key={f.value}
+                        variants={chipVariants}
                         onClick={() => setSelectedFormat(f.value)}
                         disabled={disabled}
+                        whileHover={{ scale: 1.08 }}
+                        whileTap={{ scale: 0.95 }}
                         className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                       >
                         <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
                           {f.label}
                         </span>
-                      </button>
+                      </motion.button>
                     ))}
-                  </div>
+                  </motion.div>
                 </div>
               )}
 
@@ -379,20 +419,28 @@ export default function FileConverter({ onAdd, disabled }: Props) {
                   <p className="text-[10px] text-app-text-muted uppercase tracking-wider mb-2">
                     Audio
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <motion.div
+                    className="flex flex-wrap gap-2"
+                    variants={chipContainerVariants}
+                    initial="hidden"
+                    animate="visible"
+                  >
                     {audioFormats.map((f) => (
-                      <button
+                      <motion.button
                         key={f.value}
+                        variants={chipVariants}
                         onClick={() => setSelectedFormat(f.value)}
                         disabled={disabled}
+                        whileHover={{ scale: 1.08 }}
+                        whileTap={{ scale: 0.95 }}
                         className={`format-chip ${selectedFormat === f.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                       >
                         <span className={`text-xs font-medium ${selectedFormat === f.value ? "text-app-text" : "text-app-text-secondary"}`}>
                           {f.label}
                         </span>
-                      </button>
+                      </motion.button>
                     ))}
-                  </div>
+                  </motion.div>
                 </div>
               )}
             </div>
@@ -401,6 +449,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
               <motion.button
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
+                whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleAdd}
                 disabled={disabled}
@@ -464,6 +513,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
               <motion.button
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
+                whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleAdd}
                 disabled={disabled}
@@ -482,6 +532,6 @@ export default function FileConverter({ onAdd, disabled }: Props) {
           Select or drag a file to convert. You can add multiple conversions to the queue.
         </p>
       )}
-    </div>
+    </motion.div>
   );
 }

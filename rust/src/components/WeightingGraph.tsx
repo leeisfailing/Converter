@@ -1,4 +1,5 @@
 import { useMemo, memo } from "react";
+import { motion } from "framer-motion";
 
 interface Props {
   weights: number[];
@@ -62,60 +63,88 @@ export default memo(function WeightingGraph({ weights, labels }: Props) {
   }
 
   return (
-    <svg
-      viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-      className="w-full h-auto"
-      style={{ maxHeight: "120px" }}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
     >
-      <defs>
-        <linearGradient id="weightGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
+      <svg
+        viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+        className="w-full h-auto"
+        style={{ maxHeight: "120px" }}
+      >
+        <defs>
+          <linearGradient id="weightGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
 
-      {/* Area fill */}
-      <path d={areaD} fill="url(#weightGrad)" />
-
-      {/* Line */}
-      <path
-        d={pathD}
-        fill="none"
-        stroke="var(--accent)"
-        strokeOpacity="0.7"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-
-      {/* Dots */}
-      {points.map((p, i) => (
-        <circle
-          key={i}
-          cx={p.x}
-          cy={p.y}
-          r="3"
-          fill="var(--accent)"
-          fillOpacity="0.9"
-          stroke="var(--accent)"
-          strokeOpacity="0.4"
-          strokeWidth="1"
+        {/* Area fill */}
+        <motion.path
+          d={areaD}
+          fill="url(#weightGrad)"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
         />
-      ))}
 
-      {/* Labels */}
-      {points.length <= 10 &&
-        points.map((p, i) => (
-          <text
-            key={`label-${i}`}
-            x={p.x}
-            y={padding.top + graphHeight + 14}
-            textAnchor="middle"
-            fill="var(--text-muted)"
-            fontSize="8"
-          >
-            {labels?.[i] ?? (i + 1)}
-          </text>
+        {/* Line */}
+        <motion.path
+          d={pathD}
+          fill="none"
+          stroke="var(--accent)"
+          strokeOpacity="0.7"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.8, ease: "easeInOut", delay: 0.15 }}
+        />
+
+        {/* Dots */}
+        {points.map((p, i) => (
+          <motion.circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r="3"
+            fill="var(--accent)"
+            fillOpacity="0.9"
+            stroke="var(--accent)"
+            strokeOpacity="0.4"
+            strokeWidth="1"
+            className="weighting-dot"
+            style={{ transformOrigin: `${p.x}px ${p.y}px` }}
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{
+              duration: 0.3,
+              delay: 0.3 + i * 0.05,
+              ease: "backOut",
+            }}
+            whileHover={{ scale: 1.15 }}
+          />
         ))}
-    </svg>
+
+        {/* Labels */}
+        {points.length <= 10 &&
+          points.map((p, i) => (
+            <motion.text
+              key={`label-${i}`}
+              x={p.x}
+              y={padding.top + graphHeight + 14}
+              textAnchor="middle"
+              fill="var(--text-muted)"
+              fontSize="8"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3, delay: 0.4 + i * 0.05 }}
+            >
+              {labels?.[i] ?? (i + 1)}
+            </motion.text>
+          ))}
+      </svg>
+    </motion.div>
   );
 });

@@ -2,7 +2,7 @@
 import tempfile
 from pathlib import Path
 from Engine.core.ipc import send_progress, send_finished, send_download_status
-from Engine.core.security import validate_url, validate_output_dir, validate_string
+from Engine.core.security import validate_url, validate_output_dir, validate_string, validate_download_format
 from Engine.workers.downloader import DownloadWorker
 
 
@@ -12,13 +12,24 @@ def handle_start_download(cmd_args: dict):
     except KeyError:
         send_finished(False, "Missing required field: url", "")
         return None
+    if not isinstance(url, str) or not url.strip():
+        send_finished(False, "url must be a non-empty string", "")
+        return None
     try:
+        url = validate_string(url, "url", 2048)
         validate_url(url)
         output_dir_str = cmd_args.get("output_dir", tempfile.gettempdir())
+        if not isinstance(output_dir_str, str) or not output_dir_str.strip():
+            send_finished(False, "output_dir must be a non-empty string", "")
+            return None
         output_dir_str = validate_output_dir(output_dir_str)
         output_dir = Path(output_dir_str)
         format_type = cmd_args.get("format_type", "bestvideo+bestaudio/best")
-        validate_string(format_type, "format_type", 128)
+        if not isinstance(format_type, str) or not format_type.strip():
+            send_finished(False, "format_type must be a non-empty string", "")
+            return None
+        format_type = validate_string(format_type, "format_type", 128)
+        format_type = validate_download_format(format_type)
     except ValueError as e:
         send_finished(False, str(e), "")
         return None

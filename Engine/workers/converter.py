@@ -3,28 +3,20 @@ import re
 import subprocess
 import sys
 import threading
+import shlex
+from collections import deque
+from Engine.core.config import find_binary
+from Engine.core.security import validate_path, validate_output_path, validate_string
 from pathlib import Path
 from typing import Callable, List, Optional
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
 _TIME_RE = re.compile(r"time=\s*(\d+):(\d+):(\d+\.?\d*)")
+_DANGEROUS_PATTERN = re.compile(r'[;&|`$\\]')
 
 
 def find_ffmpeg() -> str:
-    if getattr(sys, 'frozen', False):
-        base = Path(sys._MEIPASS)
-        for name in ('ffmpeg.exe', 'ffmpeg'):
-            p = base / 'bin' / name
-            if p.exists():
-                return str(p)
-
-    app_dir = Path(__file__).parent.parent
-    for name in ('ffmpeg.exe', 'ffmpeg'):
-        p = app_dir / 'bin' / name
-        if p.exists():
-            return str(p)
-
-    return 'ffmpeg'
+    return find_binary("ffmpeg")
 
 
 class ConverterWorker:
@@ -35,13 +27,14 @@ class ConverterWorker:
         output_format: str,
         dev_mode: bool = False,
     ):
-        self.input_path = input_path
-        self.output_path = output_path
-        self.output_format = output_format
+        self.input_path = validate_path(input_path, "input_path")
+        self.output_path = validate_output_path(output_path, "output_path")
+        self.output_format = validate_string(output_format, "output_format", 32)
         self.dev_mode = dev_mode
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
-        self._stderr_lines: List[str] = []
+        self._stderr_lines = deque(maxlen=100)
+        self._process = None
         self.on_progress: Optional[Callable[[int], None]] = None
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
 
@@ -63,7 +56,11 @@ class ConverterWorker:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
+            self._process = proc
+            if not self._is_running:
+                proc.terminate()
 
             duration: Optional[float] = None
             last_pct: int = 0
@@ -80,8 +77,6 @@ class ConverterWorker:
                     return
 
                 self._stderr_lines.append(line)
-                if len(self._stderr_lines) > 100:
-                    self._stderr_lines = self._stderr_lines[-50:]
 
                 if duration is None:
                     dur_match = _DURATION_RE.search(line)
@@ -106,13 +101,16 @@ class ConverterWorker:
 
             proc.wait()
 
-            if proc.returncode == 0:
+            if not self._is_running:
+                if self.on_finished:
+                    self.on_finished(False, "Conversion was cancelled", "")
+            elif proc.returncode == 0:
                 if self.on_progress:
                     self.on_progress(100)
                 if self.on_finished:
                     self.on_finished(True, "", self.output_path)
             else:
-                error_detail = "".join(self._stderr_lines[-20:]) if self._stderr_lines else ""
+                error_detail = "".join(list(self._stderr_lines)[-20:])
                 msg = f"ffmpeg failed with exit code {proc.returncode}"
                 if error_detail.strip():
                     msg += f"\n\nffmpeg output:\n{error_detail}"
@@ -126,6 +124,7 @@ class ConverterWorker:
             if self.on_finished:
                 self.on_finished(False, f"Conversion error: {str(exc)}", "")
         finally:
+            self._process = None
             if proc is not None and proc.poll() is None:
                 proc.kill()
                 proc.wait()
@@ -142,22 +141,46 @@ class ConverterWorker:
 
         cmd = [find_ffmpeg(), '-y', '-hide_banner', '-i', str(input_file)]
 
-        if file_type == 'video' or (self.dev_mode and self.output_format in VIDEO_OUTPUT_FORMATS):
-            fmt = VIDEO_OUTPUT_FORMATS.get(self.output_format, VIDEO_OUTPUT_FORMATS['mp4'])
-            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
-            else:
-                cmd += ['-an']
-        elif file_type == 'audio' or (self.dev_mode and self.output_format in AUDIO_OUTPUT_FORMATS):
-            fmt = AUDIO_OUTPUT_FORMATS.get(self.output_format, AUDIO_OUTPUT_FORMATS['mp3'])
+        is_video_output = self.output_format in VIDEO_OUTPUT_FORMATS
+        is_audio_output = self.output_format in AUDIO_OUTPUT_FORMATS
+        is_photo_output = self.output_format in PHOTO_OUTPUT_FORMATS
+
+        if is_audio_output and (file_type == 'video' or file_type == 'audio'):
+            fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
             cmd += ['-vn']
             if fmt.get('acodec'):
                 cmd += ['-c:a', fmt['acodec']]
             if fmt.get('bitrate'):
                 cmd += ['-b:a', fmt['bitrate']]
-        elif file_type == 'photo' or (self.dev_mode and self.output_format in PHOTO_OUTPUT_FORMATS):
-            fmt = PHOTO_OUTPUT_FORMATS.get(self.output_format, PHOTO_OUTPUT_FORMATS['jpg'])
+        elif is_photo_output and file_type == 'photo':
+            fmt = PHOTO_OUTPUT_FORMATS[self.output_format]
+            if 'quality' in fmt:
+                cmd += ['-q:v', fmt['quality']]
+            if 'compression' in fmt:
+                cmd += ['-compression_level', fmt['compression']]
+        elif is_video_output and (file_type == 'video' or file_type == 'photo'):
+            fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
+            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
+            if fmt.get('acodec'):
+                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
+            else:
+                cmd += ['-an']
+        elif self.dev_mode and is_audio_output:
+            fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
+            cmd += ['-vn']
+            if fmt.get('acodec'):
+                cmd += ['-c:a', fmt['acodec']]
+            if fmt.get('bitrate'):
+                cmd += ['-b:a', fmt['bitrate']]
+        elif self.dev_mode and is_video_output:
+            fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
+            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
+            if fmt.get('acodec'):
+                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
+            else:
+                cmd += ['-an']
+        elif self.dev_mode and is_photo_output:
+            fmt = PHOTO_OUTPUT_FORMATS[self.output_format]
             if 'quality' in fmt:
                 cmd += ['-q:v', fmt['quality']]
             if 'compression' in fmt:
@@ -173,3 +196,9 @@ class ConverterWorker:
 
     def stop(self):
         self._is_running = False
+        proc = self._process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass

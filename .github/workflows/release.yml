@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      packages: read
+      id-token: write
+    environment:
+      name: release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: rust/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: rust/src-tauri -> target
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: rust
+      - name: Assemble bundled Python runtime
+        run: python scripts/bundle_runtime.py
+      - name: Verify detached app resources
+        run: python scripts/verify_bundled_runtime.py
+      - name: Validate release configuration
+        run: npm run release:check
+        working-directory: rust
+      - name: Check signing secrets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "Set TAURI_SIGNING_PRIVATE_KEY in repository Actions secrets." }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { throw "Set TAURI_SIGNING_PRIVATE_KEY_PASSWORD for the encrypted signing key." }
+      - name: Test frontend
+        run: npm test
+        working-directory: rust
+      - name: Test Python engine
+        run: >-
+          rust/src-tauri/bin/python/python.exe -B -c
+          "import runpy, sys; sys.path.insert(0, '.'); sys.argv = ['unittest', 'discover', '-s', 'Engine/tests', '-v']; runpy.run_module('unittest', run_name='__main__')"
+      - name: Test Rust backend
+        run: cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
+      - name: Build signed installers
+        id: build
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: rust
+          tagName: v__VERSION__
+          releaseName: Converter v__VERSION__
+          releaseBody: |
+            Windows x64 release. Download the setup installer for a new installation.
+            Existing installations can use About & Updates after this release is published.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: false
+          args: --bundles nsis,msi -- --locked
+      - name: Verify latest.json exists
+        shell: pwsh
+        run: |
+          $latestJson = Get-ChildItem -Path "rust/target/release/bundle" -Recurse -Filter "latest.json" -ErrorAction SilentlyContinue
+          if (-not $latestJson) { throw "latest.json was not generated. The updater manifest is missing." }
+          Write-Host "latest.json found at: $($latestJson.FullName)"
+      - name: Verify release assets
+        shell: pwsh
+        run: |
+          $assets = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest" -Headers @{ Authorization = "token ${{ secrets.GITHUB_TOKEN }}" }).assets
+          if (-not ($assets.name -contains "latest.json")) {
+            throw "latest.json not found in release assets. Upload failed."
+          }
+          Write-Host "Release assets verified: $($assets.name -join ', ')"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: "rust/target/release/bundle/**/*.{msi,nsis.exe,nsis.zip}"
+      - name: Upload latest.json to Supabase (backup endpoint)
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          $latestJsonPath = Get-ChildItem -Path "rust/target/release/bundle" -Recurse -Filter "latest.json" | Select-Object -First 1 -ExpandProperty FullName
+          if ($latestJsonPath) {
+            Write-Host "Uploading latest.json to Supabase backup endpoint"
+            Invoke-RestMethod -Uri "https://afodajwurtywdxeqoiym.supabase.co/storage/v1/object/updates/latest.json" `
+              -Method PUT `
+              -Headers @{
+                "Authorization" = "Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+                "Content-Type" = "application/json"
+                "Cache-Control" = "no-cache, no-store, must-revalidate"
+              } `
+              -InFile $latestJsonPath

@@ -2,44 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-fn find_ffmpeg() -> String {
-    // Check bundled binary relative to the exe
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
-        for name in &["ffmpeg.exe", "ffmpeg"] {
-            let p = exe_dir.join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-        for name in &["ffmpeg.exe", "ffmpeg"] {
-            let p = exe_dir.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        for name in &["ffmpeg.exe", "ffmpeg"] {
-            let p = cwd.join("Engine").join("bin").join(name);
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-    }
-    // Fallback: try bare name via PATH
-    for name in &["ffmpeg", "ffmpeg.exe"] {
-        if let Ok(mut child) = Command::new(name)
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            let _ = child.wait();
-            return name.to_string();
-        }
-    }
-    "ffmpeg".to_string()
-}
+use crate::paths::ffmpeg as find_ffmpeg;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
@@ -47,24 +10,12 @@ pub struct GpuInfo {
     pub has_hardware_encoder: bool,
 }
 
-fn check_encoder(encoder_name: &str) -> bool {
-    let ffmpeg = find_ffmpeg();
-    let output = Command::new(&ffmpeg)
-        .args(["-encoders"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout.contains(encoder_name)
-        }
-        Err(_) => false,
-    }
+pub fn detect_gpu_type() -> GpuInfo {
+    static GPU: std::sync::OnceLock<GpuInfo> = std::sync::OnceLock::new();
+    GPU.get_or_init(detect_gpu_uncached).clone()
 }
 
-pub fn detect_gpu_type() -> GpuInfo {
+fn detect_gpu_uncached() -> GpuInfo {
     let ffmpeg = find_ffmpeg();
     let output = Command::new(&ffmpeg)
         .args(["-encoders"])

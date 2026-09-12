@@ -16,11 +16,13 @@ import {
   Check,
   AlertCircle,
   Folder,
+  Info,
 } from "lucide-react";
 
 interface Props {
   onSettingsChanged: (settings: AppSettings) => void;
   disabled: boolean;
+  onOpenAbout: () => void;
 }
 
 function isValidPath(p: string): boolean {
@@ -28,7 +30,7 @@ function isValidPath(p: string): boolean {
   return !/[<>"|?*]/.test(p);
 }
 
-export default function Settings({ onSettingsChanged, disabled }: Props) {
+export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: Props) {
   const [settings, setSettings] = useState<AppSettings>({
     downloadDir: "",
     outputDir: "",
@@ -293,11 +295,13 @@ export default function Settings({ onSettingsChanged, disabled }: Props) {
         transition={{ delay: 0.2 }}
         className="flex gap-2"
       >
-        <button
-          onClick={handleSave}
-          disabled={disabled || isBusy}
-          className="flex-1 btn btn-primary py-2.5"
-        >
+          <motion.button
+            onClick={handleSave}
+            disabled={disabled || isBusy}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            className="flex-1 btn btn-primary py-2.5"
+          >
           {saving ? (
             "Saving..."
           ) : saveMessage === "ok" ? (
@@ -311,10 +315,12 @@ export default function Settings({ onSettingsChanged, disabled }: Props) {
           ) : (
             "Save Settings"
           )}
-        </button>
-        <button
+        </motion.button>
+        <motion.button
           onClick={handleReset}
           disabled={disabled || isBusy}
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.98 }}
           className="btn py-2.5 px-4"
           title="Reset to defaults"
         >
@@ -324,8 +330,18 @@ export default function Settings({ onSettingsChanged, disabled }: Props) {
               Reset
             </>
           )}
-        </button>
+        </motion.button>
       </motion.div>
+
+      <motion.button
+        type="button"
+        onClick={onOpenAbout}
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.98 }}
+        className="w-full btn py-2.5 text-xs"
+      >
+        <Info size={14} aria-hidden="true" /> About & Updates
+      </motion.button>
 
       <p className="text-[11px] text-app-text-muted text-center">
         Settings are saved to your system's config folder and persist across app restarts.

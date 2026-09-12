@@ -4,6 +4,9 @@ import re
 import urllib.parse
 import urllib.request
 import threading
+import time
+import socket
+from Engine.core.config import find_binary
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -11,6 +14,10 @@ try:
     import yt_dlp
 except ImportError:
     yt_dlp = None
+
+
+class DownloadCancelled(Exception):
+    """Stop downloading immediately from yt-dlp progress callbacks."""
 
 
 def _find_unique_path(directory: Path, filename: str) -> Path:
@@ -33,6 +40,8 @@ class DownloadWorker:
         self.format_type = format_type
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
+        self._last_progress = None
+        self._last_status_time = 0.0
         self.on_progress: Optional[Callable[[int], None]] = None
         self.on_download_status: Optional[Callable[[dict], None]] = None
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
@@ -43,6 +52,8 @@ class DownloadWorker:
 
     def _run(self):
         if not self._is_running:
+            if self.on_finished:
+                self.on_finished(False, "Download was cancelled", "")
             return
 
         if yt_dlp is not None:
@@ -50,6 +61,10 @@ class DownloadWorker:
                 self._download_with_ytdlp()
                 return
             except Exception as e:
+                if not self._is_running:
+                    if self.on_finished:
+                        self.on_finished(False, "Download was cancelled", "")
+                    return
                 if "youtube.com" in self.url.lower() or "youtu.be" in self.url.lower():
                     if self.on_finished:
                         self.on_finished(False, f"Download failed: {str(e)}", "")
@@ -74,12 +89,11 @@ class DownloadWorker:
 
         def progress_hook(d: dict):
             if not self._is_running:
-                return
+                raise DownloadCancelled("Download was cancelled")
 
             status = d.get('status', '')
             if status == 'finished':
-                if self.on_progress:
-                    self.on_progress(100)
+                self._report_progress(100)
                 return
 
             if status != 'downloading':
@@ -102,10 +116,12 @@ class DownloadWorker:
                     except (ValueError, TypeError):
                         pct = None
 
-            if self.on_progress and pct is not None:
-                self.on_progress(pct)
+            if pct is not None:
+                self._report_progress(pct)
 
-            if self.on_download_status:
+            now = time.monotonic()
+            if self.on_download_status and now - self._last_status_time >= 0.1:
+                self._last_status_time = now
                 self.on_download_status({
                     'percent': pct,
                     'speed': speed,
@@ -117,6 +133,8 @@ class DownloadWorker:
         is_youtube = "youtube.com" in self.url.lower() or "youtu.be" in self.url.lower()
 
         ydl_opts = {
+            'ffmpeg_location': find_binary('ffmpeg'),
+            'noplaylist': True,
             'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
             'format': 'bestvideo+bestaudio/best',
             'progress_hooks': [progress_hook],
@@ -136,8 +154,6 @@ class DownloadWorker:
             cookies_file = resource_path('cookies.txt')
             if cookies_file.exists():
                 ydl_opts['cookiefile'] = str(cookies_file)
-            else:
-                ydl_opts['cookiesfrombrowser'] = ('chrome',)
 
         if self.format_type == "mp4_4k":
             ydl_opts['format'] = 'bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
@@ -159,6 +175,10 @@ class DownloadWorker:
             ydl_opts['format'] = 'bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
         elif self.format_type == "best_1080":
             ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+        elif self.format_type == "original":
+            # "original" is an app option, not a yt-dlp format identifier.
+            # Audio-only sources also have a valid original representation.
+            ydl_opts['format'] = 'bestvideo+bestaudio/best/bestaudio'
         elif self.format_type != "bestvideo+bestaudio/best":
             ydl_opts['format'] = self.format_type
 
@@ -166,14 +186,7 @@ class DownloadWorker:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=True)
         except Exception as e:
-            if 'DPAPI' in str(e) or 'cookiesfrombrowser' in str(e):
-                ydl_opts.pop('cookiesfrombrowser', None)
-                ydl_opts['quiet'] = True
-                ydl_opts['no_warnings'] = True
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(self.url, download=True)
-            else:
-                raise
+            raise
 
         if not self._is_running:
             if self.on_finished:
@@ -232,8 +245,7 @@ class DownloadWorker:
                         read_so_far += len(buffer)
                         if totalsize > 0:
                             pct = min(int((read_so_far / totalsize) * 100), 100)
-                            if self.on_progress:
-                                self.on_progress(pct)
+                            self._report_progress(pct)
 
             if not self._is_running:
                 try:
@@ -244,6 +256,8 @@ class DownloadWorker:
                     self.on_finished(False, "Download was cancelled", "")
                 return
 
+            if totalsize >= 0 and read_so_far != totalsize:
+                raise IOError(f"Incomplete download: expected {totalsize} bytes, received {read_so_far}")
             temp_path.rename(final_path)
 
             if self.on_progress:
@@ -259,3 +273,10 @@ class DownloadWorker:
 
     def stop(self):
         self._is_running = False
+
+    def _report_progress(self, percent):
+        percent = max(0, min(100, int(percent)))
+        if percent != self._last_progress:
+            self._last_progress = percent
+            if self.on_progress:
+                self.on_progress(percent)

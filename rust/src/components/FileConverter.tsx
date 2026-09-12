@@ -255,8 +255,8 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         } ${disabled ? "opacity-40 pointer-events-none" : "cursor-pointer"}`}
         animate={
           isDragOver
-            ? { scale: 1.02, borderColor: "var(--accent, #6366f1)" }
-            : { scale: 1, borderColor: "transparent" }
+            ? { scale: 1.02, borderColor: "#6366f1" }
+            : { scale: 1, borderColor: "rgba(0, 0, 0, 0)" }
         }
         whileHover={!disabled ? { scale: 1.02 } : undefined}
         whileTap={!disabled ? { scale: 0.98 } : undefined}

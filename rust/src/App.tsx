@@ -146,13 +146,23 @@ export default function App() {
       const currentSettings = appSettings;
       if (item.type === "download") {
         const outputDir = item.outputDir || currentSettings.downloadDir || (await tempDir());
-        await startDownload({ url: sanitizeUrl(item.url!), format_type: sanitizeFormat(item.formatType || "bestvideo+bestaudio/best"), output_dir: sanitizePath(outputDir) });
+        const url = await sanitizeUrl(item.url!);
+        const formatType = await sanitizeFormat(item.formatType || "bestvideo+bestaudio/best");
+        const dir = await sanitizePath(outputDir);
+        await startDownload({ url, format_type: formatType, output_dir: dir });
       } else if (item.type === "compress") {
-        await compressFile({ input: sanitizePath(item.inputPath!), output: sanitizePath(item.outputPath!), target_size_bytes: item.targetSizeBytes! });
+        const input = await sanitizePath(item.inputPath!);
+        const output = await sanitizePath(item.outputPath!);
+        await compressFile({ input, output, target_size_bytes: item.targetSizeBytes! });
       } else if (item.type === "convert") {
-        await startConvert({ input: sanitizePath(item.inputPath!), output: sanitizePath(item.outputPath!), format: sanitizeFormat(item.outputFormat!), dev_mode: item.devMode || false });
+        const input = await sanitizePath(item.inputPath!);
+        const output = await sanitizePath(item.outputPath!);
+        const format = await sanitizeFormat(item.outputFormat!);
+        await startConvert({ input, output, format, dev_mode: item.devMode || false });
       } else if (item.type === "blur") {
-        await startBlur({ input: sanitizePath(item.inputPath!), output: sanitizePath(item.outputPath!), settings: item.blurSettings! });
+        const input = await sanitizePath(item.inputPath!);
+        const output = await sanitizePath(item.outputPath!);
+        await startBlur({ input, output, settings: item.blurSettings! });
       }
     } catch (err) {
       console.error(`[queue] Failed: "${item.label}"`, err);
@@ -195,9 +205,9 @@ export default function App() {
     queue.clearCompleted();
   }, [queue.clearCompleted]);
 
-  const handleDownloadAdd = useCallback((url: string, formatType: string) => {
-    const safeUrl = sanitizeUrl(url);
-    const safeFormat = sanitizeFormat(formatType);
+  const handleDownloadAdd = useCallback(async (url: string, formatType: string) => {
+    const safeUrl = await sanitizeUrl(url);
+    const safeFormat = await sanitizeFormat(formatType);
     const isYoutube = safeUrl.toLowerCase().includes("youtube.com") || safeUrl.toLowerCase().includes("youtu.be");
     const label = isYoutube ? safeUrl.replace(/https?:\/\/(www\.)?/, "").substring(0, 50) : safeUrl.split("/").pop()?.substring(0, 50) || safeUrl;
     addToQueue({
@@ -214,13 +224,13 @@ export default function App() {
     toast.addToast("info", "Added to queue", `${label} (${safeFormat.toUpperCase()})`);
   }, [addToQueue, appSettings]);
 
-  const handleConvertAdd = useCallback((
+  const handleConvertAdd = useCallback(async (
     inputPath: string, outputPath: string, outputFormat: string,
     devMode: boolean, compressSize?: number
   ) => {
-    const safeInput = sanitizePath(inputPath);
-    const safeOutput = sanitizePath(outputPath);
-    const safeFormat = sanitizeFormat(outputFormat);
+    const safeInput = await sanitizePath(inputPath);
+    const safeOutput = await sanitizePath(outputPath);
+    const safeFormat = await sanitizeFormat(outputFormat);
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
     const finalOutputPath = applyAutoSave(safeOutput, appSettings.autoSave, appSettings.outputDir);
 
@@ -252,9 +262,9 @@ export default function App() {
     toast.addToast("info", "Added to queue", `${fileName} → ${safeFormat.toUpperCase()}`);
   }, [addToQueue, appSettings]);
 
-  const handleBlurAdd = useCallback((inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
-    const safeInput = sanitizePath(inputPath);
-    const safeOutput = sanitizePath(outputPath);
+  const handleBlurAdd = useCallback(async (inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
+    const safeInput = await sanitizePath(inputPath);
+    const safeOutput = await sanitizePath(outputPath);
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
     const finalOutputPath = applyAutoSave(safeOutput, appSettings.autoSave, appSettings.outputDir);
     addToQueue({

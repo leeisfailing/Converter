@@ -12,10 +12,22 @@ ROOT = Path(__file__).resolve().parent.parent
 TAURI = ROOT / "rust/src-tauri"
 
 
+def assert_installed_tool(path: str, installed: Path) -> None:
+    # Runner TEMP may use an 8.3 alias (RUNNER~1) while embedded Python returns
+    # the long path. Compare filesystem-resolved paths, not their spelling.
+    tool = Path(path)
+    root = installed.resolve(strict=True)
+    assert tool.is_absolute(), f"Tool path is not absolute: {path}"
+    resolved = tool.resolve(strict=True)
+    assert resolved.is_file() and resolved.is_relative_to(root), (
+        f"Tool escaped installed resources: {path} (resolved: {resolved}, root: {root})"
+    )
+
+
 def main():
     config = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="Converter installed ") as directory:
-        installed = Path(directory)
+        installed = Path(directory).resolve(strict=True)
         # Match Tauri resource-map semantics: directory entries recurse; globs
         # select files and flatten them into the specified target directory.
         for pattern, target in config["bundle"]["resources"].items():
@@ -59,7 +71,7 @@ def main():
             "('ffmpeg','ffprobe','vspipe','deno')}}))"])
         details = json.loads(probe.stdout)
         for path in [details["python"], *details["tools"].values()]:
-            assert Path(path).is_relative_to(installed), f"Tool escaped installed resources: {path}"
+            assert_installed_tool(path, installed)
         assert "site-packages" in details["tools"]["vspipe"]
         for name in ("ffmpeg", "ffprobe"):
             run([details["tools"][name], "-version"])

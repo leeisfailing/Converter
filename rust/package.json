@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:installer": "tauri build --bundles nsis",
+    "build:portable": "npm run build && cargo build --release --manifest-path src-tauri/Cargo.toml && node scripts/build-portable.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "signer:generate": "node scripts/generate-updater-key.mjs",

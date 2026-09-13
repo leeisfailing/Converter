@@ -47,11 +47,14 @@ to `Engine/bin/python/` in the app resources, including its standard library,
 native libraries, and Python packages. The application uses this interpreter
 before searching the system. Its installed users do not need Python or pip.
 CI and release workflows run the setup script before compiling. Generated
+FFmpeg 9.0.1 and FFprobe sidecars are also downloaded with a pinned SHA-256
+checksum into `rust/src-tauri/bin/` using Tauri's Windows x64 filenames.
+They do not need to be committed to Git. Generated
 runtime files and cached downloads are ignored by Git; rerun setup after a
 fresh checkout. Earlier runtime contents are retained in `.runtime-downloads/`.
 Run `python scripts/verify_bundled_runtime.py` to exercise a temporary installed
 layout with system Python and media tools removed from its PATH. This checks
-imports, engine IPC, ffmpeg/ffprobe, vspipe, and the bundled LSMASHSource plugin.
+imports, engine IPC, ffmpeg/ffprobe, audio encoding, Deno, and vspipe.
 
 ## Automatic Updates
 

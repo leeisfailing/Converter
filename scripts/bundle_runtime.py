@@ -17,6 +17,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / ".runtime-downloads"
 DESTINATION = ROOT / "rust/src-tauri/bin/python"
+FFMPEG_ARTIFACT = (
+    "https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-essentials_build.zip",
+    "fec81ae03971d9dd4be3ebe02e263bd2ec1d789483f931bdba5f5715e65da2e9",
+)
 ARTIFACTS = (
     (
         "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
@@ -61,6 +65,7 @@ def main() -> None:
     if os.name != "nt":
         raise SystemExit("This runtime is for Windows x64; run setup on Windows.")
     CACHE.mkdir(exist_ok=True)
+    assemble_media_tools()
     # Build and validate separately so failed downloads never damage the current runtime.
     staging = Path(tempfile.mkdtemp(prefix="python-", dir=CACHE))
     for url, digest, relative in ARTIFACTS:
@@ -101,6 +106,24 @@ def main() -> None:
         shutil.move(str(DESTINATION), str(backup))
     shutil.move(str(staging), str(DESTINATION))
     print(f"Bundled runtime ready: {DESTINATION}", flush=True)
+
+
+def assemble_media_tools() -> None:
+    """Prepare the exact sidecar filenames required by Tauri on fresh checkouts."""
+    CACHE.mkdir(exist_ok=True)
+    with zipfile.ZipFile(download(*FFMPEG_ARTIFACT)) as archive, tempfile.TemporaryDirectory(dir=CACHE) as folder:
+        staged = []
+        for name in ('ffmpeg', 'ffprobe'):
+            member = next(path for path in archive.namelist() if path.endswith(f'/bin/{name}.exe'))
+            tool = Path(folder) / f'{name}.exe'
+            tool.write_bytes(archive.read(member))
+            subprocess.run([str(tool), '-version'], check=True, stdout=subprocess.DEVNULL, timeout=30)
+            staged.append((tool, ROOT / f'rust/src-tauri/bin/{name}-x86_64-pc-windows-msvc.exe'))
+        for source, destination in staged:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists() or hashlib.sha256(destination.read_bytes()).digest() != hashlib.sha256(source.read_bytes()).digest():
+                shutil.copy2(source, destination)
+    print('Bundled FFmpeg and FFprobe sidecars ready.', flush=True)
 
 
 if __name__ == "__main__":

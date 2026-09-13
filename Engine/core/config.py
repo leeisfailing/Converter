@@ -50,4 +50,10 @@ def find_binary(name: str) -> str:
             path = directory / candidate
             if path.is_file():
                 return str(path)
+    # Source checkouts use the target-suffixed executables prepared for Tauri.
+    if sys.platform == 'win32' and name.lower() in ('ffmpeg', 'ffprobe', 'ffmpeg.exe', 'ffprobe.exe'):
+        stem = name.lower().removesuffix('.exe')
+        sidecar = base.parent / 'rust/src-tauri/bin' / f'{stem}-x86_64-pc-windows-msvc.exe'
+        if sidecar.is_file():
+            return str(sidecar)
     return shutil.which(name) or name

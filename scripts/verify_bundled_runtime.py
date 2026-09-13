@@ -81,12 +81,11 @@ def main():
         vspipe = Path(details["tools"]["vspipe"])
         environment["VSSCRIPT_PATH"] = str(vspipe.with_name("vsscript.dll"))
         run([str(vspipe), "--info", str(script), "-"])
-        # Load the shipped native source plugin, detecting missing DLL dependencies.
-        run([str(python), "-I", "-B", "-c",
-             "import vapoursynth as vs; "
-             f"vs.core.std.LoadPlugin(path={str(installed / 'Engine/bin/plugins/LSMASHSource.dll')!r}); "
-             "assert hasattr(vs.core, 'lsmas')"])
-        print("Detached bundle smoke test passed: Python, yt-dlp, ffmpeg, ffprobe, engine IPC, VapourSynth/vspipe, LSMASHSource.")
+        # Exercise an actual encode using the packaged tools with system PATH removed.
+        converted = installed / 'converted.mp3'
+        run([details['tools']['ffmpeg'], '-v', 'error', '-i', str(audio), '-c:a', 'libmp3lame', str(converted)])
+        assert converted.stat().st_size > 0
+        print("Detached bundle smoke test passed: Python, yt-dlp/EJS, Deno, ffmpeg, ffprobe, engine IPC, audio encoding, VapourSynth/vspipe.")
         print(json.dumps({key: details[key] for key in ("yt_dlp", "vapoursynth")}))
 
 

@@ -195,9 +195,16 @@ class ConverterWorker:
                 self.on_finished(False, f"Conversion error: {str(exc)}", "")
         finally:
             self._process = None
-            if proc is not None and proc.poll() is None:
-                proc.kill()
-                proc.wait()
+            if proc is not None:
+                stderr = proc.stderr
+                if stderr is not None:
+                    try:
+                        stderr.close()
+                    except Exception:
+                        pass
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 
     def _should_update_progress(self, pct: int) -> bool:
         """Throttle progress updates to reduce callback overhead."""

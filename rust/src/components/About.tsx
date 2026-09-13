@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { X, Bug } from "lucide-react";
 import { isUpdateBusy, useUpdater } from "../lib/updater";
 import UpdatePanel from "./UpdatePanel";
 
 interface Props {
   onClose: () => void;
   hasPendingWork: boolean;
+  onOpenBugReport: () => void;
 }
 
-export default function About({ onClose, hasPendingWork }: Props) {
+export default function About({ onClose, hasPendingWork, onOpenBugReport }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const updater = useUpdater();
   const locked = isUpdateBusy(updater.status) && updater.status !== "checking";
@@ -39,7 +40,7 @@ export default function About({ onClose, hasPendingWork }: Props) {
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
           <h2 id="about-title" className="text-base font-semibold">About Converter</h2>
-          <p className="text-xs text-app-text-secondary mt-1">Media downloader, converter, and motion blur tool by Lee.</p>
+          <p className="text-xs text-app-text-secondary mt-1">Media downloader and converter by Lee.</p>
         </div>
         <button type="button" onClick={onClose} disabled={locked} aria-label="Close About" className="btn-icon disabled:opacity-40">
           <X size={16} aria-hidden="true" />
@@ -50,6 +51,19 @@ export default function About({ onClose, hasPendingWork }: Props) {
         <span className="font-mono">v{updater.currentVersion}</span>
       </div>
       <UpdatePanel hasPendingWork={hasPendingWork} />
+      
+      <div className="border-t border-app-border pt-4 mt-4">
+        <button
+          type="button"
+          onClick={onOpenBugReport}
+          disabled={locked}
+          className="flex items-center gap-2 text-sm text-app-text-secondary hover:text-app-text transition-colors"
+        >
+          <Bug size={14} />
+          Report a Bug
+        </button>
+      </div>
+
       <div className="flex justify-end mt-4">
         <button type="button" onClick={onClose} disabled={locked} className="btn px-4 py-2 text-xs">
           {updater.status === "update_available" ? "Later" : "Close"}

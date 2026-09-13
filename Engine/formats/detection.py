@@ -95,7 +95,9 @@ def get_allowed_output_formats(file_type: str, dev_mode: bool = False) -> dict:
         return all_formats
 
     if file_type == 'video':
-        return dict(VIDEO_OUTPUT_FORMATS)
+        formats = dict(VIDEO_OUTPUT_FORMATS)
+        formats.update(AUDIO_OUTPUT_FORMATS)
+        return formats
     elif file_type == 'photo':
         return dict(PHOTO_OUTPUT_FORMATS)
     elif file_type == 'audio':

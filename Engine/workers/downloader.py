@@ -7,6 +7,7 @@ import threading
 import time
 import socket
 from Engine.core.config import find_binary
+from Engine.core.ytdlp_options import javascript_options
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -41,7 +42,8 @@ class DownloadWorker:
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
         self._last_progress = None
-        self._last_status_time = 0.0
+        self._last_progress_time: float = 0.0
+        self._last_status_time: float = 0.0
         self.on_progress: Optional[Callable[[int], None]] = None
         self.on_download_status: Optional[Callable[[dict], None]] = None
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
@@ -120,7 +122,7 @@ class DownloadWorker:
                 self._report_progress(pct)
 
             now = time.monotonic()
-            if self.on_download_status and now - self._last_status_time >= 0.1:
+            if self.on_download_status and now - self._last_status_time >= 0.5:
                 self._last_status_time = now
                 self.on_download_status({
                     'percent': pct,
@@ -133,6 +135,7 @@ class DownloadWorker:
         is_youtube = "youtube.com" in self.url.lower() or "youtu.be" in self.url.lower()
 
         ydl_opts = {
+            **javascript_options(),
             'ffmpeg_location': find_binary('ffmpeg'),
             'noplaylist': True,
             'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
@@ -155,29 +158,40 @@ class DownloadWorker:
             if cookies_file.exists():
                 ydl_opts['cookiefile'] = str(cookies_file)
 
-        if self.format_type == "mp4_4k":
-            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif self.format_type == "mp4_1080":
+        if self.format_type == "mp4_1080":
             ydl_opts['format'] = 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+            ydl_opts['merge_output_format'] = 'mp4'
+        elif self.format_type == "mp4_720":
+            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+            ydl_opts['merge_output_format'] = 'mp4'
+        elif self.format_type == "mp4_480":
+            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best'
+            ydl_opts['merge_output_format'] = 'mp4'
+        elif self.format_type == "mp4_360":
+            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best'
             ydl_opts['merge_output_format'] = 'mp4'
         elif self.format_type == "mp4":
             ydl_opts['format'] = 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
             ydl_opts['merge_output_format'] = 'mp4'
-        elif self.format_type == "mp3":
+        elif self.format_type.startswith("mp3"):
+            bitrate = "192"
+            if self.format_type == "mp3_320":
+                bitrate = "320"
+            elif self.format_type == "mp3_256":
+                bitrate = "256"
+            elif self.format_type == "mp3_192":
+                bitrate = "192"
+            elif self.format_type == "mp3_128":
+                bitrate = "128"
+            elif self.format_type == "mp3_64":
+                bitrate = "64"
             ydl_opts['format'] = 'bestaudio/best'
             ydl_opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '192',
+                'preferredquality': bitrate,
             }]
-        elif self.format_type == "best_4k":
-            ydl_opts['format'] = 'bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
-        elif self.format_type == "best_1080":
-            ydl_opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
         elif self.format_type == "original":
-            # "original" is an app option, not a yt-dlp format identifier.
-            # Audio-only sources also have a valid original representation.
             ydl_opts['format'] = 'bestvideo+bestaudio/best/bestaudio'
         elif self.format_type != "bestvideo+bestaudio/best":
             ydl_opts['format'] = self.format_type
@@ -229,13 +243,14 @@ class DownloadWorker:
                             final_path = _find_unique_path(self.output_dir, filename)
                         temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
-                blocksize = 65536
+                blocksize = 131072
                 read_so_far = 0
                 try:
                     totalsize = int(response.headers.get('Content-Length', -1))
                 except (ValueError, TypeError):
                     totalsize = -1
 
+                status_change_time = time.monotonic()
                 with open(temp_path, 'wb') as out_file:
                     while self._is_running:
                         buffer = response.read(blocksize)
@@ -243,9 +258,11 @@ class DownloadWorker:
                             break
                         out_file.write(buffer)
                         read_so_far += len(buffer)
-                        if totalsize > 0:
+                        now = time.monotonic()
+                        if totalsize > 0 and now - status_change_time >= 0.5:
                             pct = min(int((read_so_far / totalsize) * 100), 100)
                             self._report_progress(pct)
+                            status_change_time = now
 
             if not self._is_running:
                 try:

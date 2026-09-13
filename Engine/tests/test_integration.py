@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import wave
+from itertools import count
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -204,7 +205,11 @@ class DownloadIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=self.directory) as directory, patch("Engine.workers.downloader.yt_dlp", None):
             worker = DownloadWorker(self.base_url + "/download", Path(directory))
             worker.on_progress = lambda _: worker.stop()
-            ok, message, _ = run_worker(worker)
+            # The loopback download can finish before the 0.5s progress throttle.
+            # Advance only the worker's clock so cancellation occurs mid-transfer.
+            with patch("Engine.workers.downloader.time", wraps=time) as clock:
+                clock.monotonic.side_effect = count()
+                ok, message, _ = run_worker(worker)
             self.assertFalse(ok)
             self.assertIn("cancelled", message)
             self.assertEqual(list(Path(directory).iterdir()), [])

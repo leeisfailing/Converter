@@ -20,8 +20,8 @@ tauri-plugin-shell = "2"
 tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "io-util", "process", "sync", "time"] }
-dirs = "5"
+tokio = { version = "1", features = ["rt", "io-util", "process", "sync", "time", "macros"] }
+dirs = "6"
 url = "2"
 tempfile = "3"
 

@@ -20,13 +20,13 @@ impl Operations {
 
     pub fn cancel(&self) {
         if let Ok(active) = self.0.lock() {
-            if let Some(cancelled) = active.as_ref() { cancelled.store(true, Ordering::Relaxed); }
+            if let Some(cancelled) = active.as_ref() { cancelled.store(true, Ordering::Release); }
         }
     }
 }
 
 impl Operation {
-    pub fn is_cancelled(&self) -> bool { self.cancelled.load(Ordering::Relaxed) }
+    pub fn is_cancelled(&self) -> bool { self.cancelled.load(Ordering::Acquire) }
 }
 
 impl Drop for Operation {

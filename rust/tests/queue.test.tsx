@@ -61,10 +61,10 @@ describe("media queue", () => {
     expect(view.result.current.queue[1].status).toBe("completed");
   });
 
-  it("routes compression events and skips duplicate rounded progress updates", async () => {
+  it("routes conversion events and skips duplicate rounded progress updates", async () => {
     const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, vi.fn()); return queue; });
     await act(async () => {});
-    act(() => { view.result.current.enqueue(item("compress", "compress")); view.result.current.updateItemStatus("compress", "active"); });
+    act(() => { view.result.current.enqueue(item("convert", "convert")); view.result.current.updateItemStatus("convert", "active"); });
     act(() => events.handlers.get("convert-progress")!({ payload: 25.1 }));
     const before = view.result.current.queue;
     act(() => events.handlers.get("convert-progress")!({ payload: 25.2 }));

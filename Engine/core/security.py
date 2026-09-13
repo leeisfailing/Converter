@@ -157,8 +157,9 @@ def validate_cookies_file(path: str) -> str:
 
 def validate_download_format(format_type: str) -> str:
     allowed_formats = [
-        "bestvideo+bestaudio/best", "best_4k", "best_1080", "mp4_4k", "mp4_1080",
-        "mp4", "mp3", "original"
+        "bestvideo+bestaudio/best", "mp4_1080", "mp4_720", "mp4_480", "mp4_360",
+        "mp4", "mp3_320", "mp3_256", "mp3_192", "mp3_128", "mp3_64", "mp3",
+        "original"
     ]
     if format_type not in allowed_formats:
         raise ValueError(f"Invalid format type: {format_type}")

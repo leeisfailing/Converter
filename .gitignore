@@ -14,10 +14,6 @@ rust/src-tauri/target/
 ffmpeg2pass-0.log*
 *.mbtree
 
-# VapourSynth source/build
-vapoursynth-R78RC1/
-vapoursynth-temp/
-
 # Binaries are tracked (ffmpeg, ffprobe, vspipe, VS DLLs)
 
 # Build artifacts

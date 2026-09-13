@@ -32,6 +32,7 @@ HANDLERS = {
     "detect_url": ("url", "handle_detect_url"),
     "start_convert": ("convert", "handle_start_convert"),
     "start_download": ("download", "handle_start_download"),
+    "start_reduce": ("reduce", "handle_start_reduce"),
 }
 
 

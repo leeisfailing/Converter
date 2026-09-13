@@ -2,37 +2,38 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+const APP_FOLDER: &str = "Converter by Lee";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// Where downloads are saved (default: user's Downloads folder)
+    /// Where downloads are saved (default: ~/Documents/Converter by Lee/Downloads/)
     pub download_dir: String,
-    /// Where converted/compressed/blurred files go.
-    /// Empty string means "same as input file".
+    /// Where reduced/converted files go (default: ~/Documents/Converter by Lee/Output/)
     pub output_dir: String,
-    /// When true, output files go to output_dir instead of next to input
-    pub auto_save: bool,
-    /// Whether to overwrite files that already exist
-    pub overwrite_existing: bool,
+}
+
+fn app_base_dir() -> PathBuf {
+    dirs::document_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
+        .join(APP_FOLDER)
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        let download_dir = dirs::download_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|p| p.join("Downloads").to_string_lossy().to_string())
-                    .unwrap_or_else(|| ".".to_string())
-            });
-
-        Self {
-            download_dir,
-            output_dir: String::new(),
-            auto_save: false,
-            overwrite_existing: false,
-        }
+        let base = app_base_dir();
+        let download_dir = base.join("Downloads").to_string_lossy().into_owned();
+        let output_dir = base.join("Output").to_string_lossy().into_owned();
+        Self { download_dir, output_dir }
     }
+}
+
+pub fn ensure_default_dirs(settings: &AppSettings) -> Result<(), String> {
+    fs::create_dir_all(&settings.download_dir)
+        .map_err(|e| format!("Failed to create download directory: {e}"))?;
+    fs::create_dir_all(&settings.output_dir)
+        .map_err(|e| format!("Failed to create output directory: {e}"))?;
+    Ok(())
 }
 
 fn settings_dir() -> Result<PathBuf, String> {
@@ -83,10 +84,14 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
 pub fn reset_settings() -> Result<AppSettings, String> {
     let defaults = AppSettings::default();
     save_settings(&defaults)?;
+    ensure_default_dirs(&defaults)?;
     Ok(defaults)
 }
 
-/// Get the user's default downloads directory
 pub fn get_default_download_dir() -> String {
-    AppSettings::default().download_dir
+    app_base_dir().join("Downloads").to_string_lossy().into_owned()
+}
+
+pub fn get_default_output_dir() -> String {
+    app_base_dir().join("Output").to_string_lossy().into_owned()
 }

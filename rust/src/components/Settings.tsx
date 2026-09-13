@@ -6,6 +6,7 @@ import {
   saveSettings,
   resetSettings,
   getDefaultDownloadDir,
+  getDefaultOutputDir,
 } from "../lib/tauri-commands";
 import type { AppSettings } from "../lib/tauri-commands";
 import {
@@ -15,7 +16,6 @@ import {
   RotateCcw,
   Check,
   AlertCircle,
-  Folder,
   Info,
 } from "lucide-react";
 
@@ -34,8 +34,6 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
   const [settings, setSettings] = useState<AppSettings>({
     downloadDir: "",
     outputDir: "",
-    autoSave: false,
-    overwriteExisting: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -64,16 +62,17 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
       onSettingsChanged(s);
     } catch {
       let defaultDir = "";
+      let defaultOutput = "";
       try {
         defaultDir = await getDefaultDownloadDir();
+        defaultOutput = await getDefaultOutputDir();
       } catch {
         defaultDir = "";
+        defaultOutput = "";
       }
       const fallback: AppSettings = {
         downloadDir: defaultDir,
-        outputDir: "",
-        autoSave: false,
-        overwriteExisting: false,
+        outputDir: defaultOutput,
       };
       setSettings(fallback);
       onSettingsChanged(fallback);
@@ -205,8 +204,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
           </span>
         </div>
         <p className="text-[11px] text-app-text-muted">
-          Where converted, compressed, and blurred files are saved when auto-save is on.
-          Leave empty to save next to the original file.
+          Where converted and reduced files are saved.
         </p>
         <div className="flex gap-2">
           <input
@@ -217,7 +215,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
             }
             disabled={disabled}
             className="input flex-1 text-xs"
-            placeholder="Same as input file"
+            placeholder="Output folder"
           />
           <button
             onClick={() =>
@@ -234,65 +232,11 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
         </div>
       </motion.div>
 
-      {/* Auto-save toggle */}
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="panel p-4 flex items-center justify-between"
-      >
-        <div className="flex items-center gap-2">
-          <Folder size={14} className="text-app-accent" />
-          <div>
-            <span className="text-xs font-semibold text-app-text-secondary uppercase tracking-wider">
-              Auto-Save
-            </span>
-            <p className="text-[11px] text-app-text-muted mt-0.5">
-              Automatically save output files to the Output Directory.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() =>
-            setSettings((prev) => ({ ...prev, autoSave: !prev.autoSave }))
-          }
-          disabled={disabled}
-          className={`toggle ${settings.autoSave ? "active" : ""}`}
-        />
-      </motion.div>
-
-      {/* Overwrite toggle */}
-      <motion.div
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="panel p-4 flex items-center justify-between"
-      >
-        <div>
-          <span className="text-xs font-semibold text-app-text-secondary uppercase tracking-wider">
-            Overwrite Existing
-          </span>
-          <p className="text-[11px] text-app-text-muted mt-0.5">
-            Replace files that already exist at the output path.
-          </p>
-        </div>
-        <button
-          onClick={() =>
-            setSettings((prev) => ({
-              ...prev,
-              overwriteExisting: !prev.overwriteExisting,
-            }))
-          }
-          disabled={disabled}
-          className={`toggle ${settings.overwriteExisting ? "active" : ""}`}
-        />
-      </motion.div>
-
       {/* Save / Reset buttons */}
       <motion.div
         initial={{ opacity: 0, y: 5 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        transition={{ delay: 0.1 }}
         className="flex gap-2"
       >
           <motion.button

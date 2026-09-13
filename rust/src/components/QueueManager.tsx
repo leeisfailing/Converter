@@ -3,13 +3,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Download,
   ArrowRightLeft,
-  Film,
+  Minimize2,
   CheckCircle2,
   XCircle,
   Loader2,
   Trash2,
   Clock,
-  HardDrive,
   List,
 } from "lucide-react";
 import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
@@ -34,8 +33,7 @@ const statusConfig: Record<
 const typeConfig: Record<string, { icon: typeof Download; color: string; bg: string }> = {
   download: { icon: Download, color: "text-app-accent", bg: "bg-app-accent-dim" },
   convert: { icon: ArrowRightLeft, color: "text-purple-400", bg: "bg-purple-500/10" },
-  blur: { icon: Film, color: "text-amber-400", bg: "bg-amber-500/10" },
-  compress: { icon: HardDrive, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  reduce: { icon: Minimize2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
 };
 
 const staggerItem = {

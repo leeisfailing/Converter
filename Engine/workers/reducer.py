@@ -1,13 +1,11 @@
-"""File format conversion using ffmpeg."""
+"""File size reduction using ffmpeg."""
 import re
 import subprocess
 import sys
 import threading
-import shlex
 from collections import deque
 from Engine.core.config import find_binary
 from Engine.core.security import validate_path, validate_output_path, validate_string
-from pathlib import Path
 from typing import Callable, List, Optional
 
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
@@ -18,18 +16,22 @@ def find_ffmpeg() -> str:
     return find_binary("ffmpeg")
 
 
-class ConverterWorker:
+class ReducerWorker:
     def __init__(
         self,
         input_path: str,
         output_path: str,
-        output_format: str,
-        dev_mode: bool = False,
+        quality: int = 50,
+        max_width: Optional[int] = None,
+        file_type: str = "video",
+        target_bytes: Optional[int] = None,
     ):
         self.input_path = validate_path(input_path, "input_path")
         self.output_path = validate_output_path(output_path, "output_path")
-        self.output_format = validate_string(output_format, "output_format", 32)
-        self.dev_mode = dev_mode
+        self.quality = max(1, min(100, quality))
+        self.max_width = max_width
+        self.file_type = file_type
+        self.target_bytes = target_bytes
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
         self._stderr_lines: deque = deque(maxlen=100)
@@ -45,73 +47,45 @@ class ConverterWorker:
         self._thread.start()
 
     def _build_command(self) -> List[str]:
-        from Engine.formats.video import VIDEO_OUTPUT_FORMATS
-        from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
-        from Engine.formats.audio import AUDIO_OUTPUT_FORMATS
-        from Engine.formats.detection import detect_file_type
+        ffmpeg = find_ffmpeg()
+        cmd = [ffmpeg, "-i", self.input_path]
 
-        input_file = Path(self.input_path)
-        output_file = Path(self.output_path)
-        file_type = detect_file_type(self.input_path)
+        if self.file_type == "video":
+            crf = max(1, min(51, int(40 - (self.quality * 0.28))))
+            cmd += ["-c:v", "libx264", "-crf", str(crf), "-preset", "medium"]
+            cmd += ["-c:a", "aac", "-b:a", "128k"]
+            if self.max_width is not None:
+                cmd += ["-vf", f"scale={self.max_width}:-2"]
 
-        cmd = [find_ffmpeg(), '-y', '-hide_banner', '-i', str(input_file)]
+        elif self.file_type == "photo":
+            ext = self.output_path.rsplit(".", 1)[-1].lower()
+            if ext in ("jpg", "jpeg"):
+                qv = max(2, min(31, int(31 - (self.quality * 0.29))))
+                cmd += ["-q:v", str(qv)]
+            elif ext == "webp":
+                cmd += ["-quality", str(self.quality)]
+            elif ext == "png":
+                level = max(0, min(9, int(9 - self.quality / 100 * 9)))
+                cmd += ["-compression_level", str(level)]
+            if self.max_width is not None:
+                cmd += ["-vf", f"scale={self.max_width}:-1"]
 
-        is_video_output = self.output_format in VIDEO_OUTPUT_FORMATS
-        is_audio_output = self.output_format in AUDIO_OUTPUT_FORMATS
-        is_photo_output = self.output_format in PHOTO_OUTPUT_FORMATS
+        elif self.file_type == "audio":
+            bitrate = max(32, min(320, int(32 + self.quality * 3.2)))
+            cmd += ["-c:a", "libmp3lame", "-b:a", f"{bitrate}k"]
 
-        if is_audio_output and (file_type == 'video' or file_type == 'audio'):
-            fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-vn']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec']]
-            if fmt.get('bitrate'):
-                cmd += ['-b:a', fmt['bitrate']]
-        elif is_photo_output and file_type == 'photo':
-            fmt = PHOTO_OUTPUT_FORMATS[self.output_format]
-            if 'quality' in fmt:
-                cmd += ['-q:v', fmt['quality']]
-            if 'compression' in fmt:
-                cmd += ['-compression_level', fmt['compression']]
-        elif is_video_output and (file_type == 'video' or file_type == 'photo'):
-            fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
-            else:
-                cmd += ['-an']
-        elif self.dev_mode and is_audio_output:
-            fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-vn']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec']]
-            if fmt.get('bitrate'):
-                cmd += ['-b:a', fmt['bitrate']]
-        elif self.dev_mode and is_video_output:
-            fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
-            else:
-                cmd += ['-an']
-        elif self.dev_mode and is_photo_output:
-            fmt = PHOTO_OUTPUT_FORMATS[self.output_format]
-            if 'quality' in fmt:
-                cmd += ['-q:v', fmt['quality']]
-            if 'compression' in fmt:
-                cmd += ['-compression_level', fmt['compression']]
-        else:
-            raise ValueError(
-                f"Unsupported file type '{file_type}' for conversion. "
-                f"Please select a supported output format."
-            )
-
-        cmd.append(str(output_file))
+        cmd += ["-y", self.output_path]
         return cmd
 
     def _run(self):
         proc = None
         try:
+            if self.target_bytes is not None:
+                from Engine.workers.target_size import reduce_to_target
+                reduce_to_target(self)
+                if self.on_finished:
+                    self.on_finished(True, "", self.output_path)
+                return
             cmd = self._build_command()
 
             if self.on_progress:
@@ -143,7 +117,7 @@ class ConverterWorker:
                         proc.kill()
                         proc.wait()
                     if self.on_finished:
-                        self.on_finished(False, "Conversion was cancelled", "")
+                        self.on_finished(False, "Reduction was cancelled", "")
                     return
 
                 self._stderr_lines.append(line)
@@ -173,7 +147,7 @@ class ConverterWorker:
 
             if not self._is_running:
                 if self.on_finished:
-                    self.on_finished(False, "Conversion was cancelled", "")
+                    self.on_finished(False, "Reduction was cancelled", "")
             elif proc.returncode == 0:
                 if self.on_progress:
                     self.on_progress(100)
@@ -192,7 +166,7 @@ class ConverterWorker:
                 self.on_finished(False, "ffmpeg not found. Please install ffmpeg.", "")
         except Exception as exc:
             if self.on_finished:
-                self.on_finished(False, f"Conversion error: {str(exc)}", "")
+                self.on_finished(False, f"Reduction error: {str(exc)}", "")
         finally:
             self._process = None
             if proc is not None and proc.poll() is None:
@@ -200,7 +174,6 @@ class ConverterWorker:
                 proc.wait()
 
     def _should_update_progress(self, pct: int) -> bool:
-        """Throttle progress updates to reduce callback overhead."""
         import time
         now = time.time()
         if now - self._last_progress_time >= self._progress_interval:

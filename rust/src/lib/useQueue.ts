@@ -3,7 +3,7 @@ import { subscribeToEvent } from "./tauri-events";
 import type { QueueItem, QueueItemStatus } from "./queue-types";
 import type { FinishedEvent } from "./tauri-commands";
 
-type QueueEventType = "download" | "convert" | "blur";
+type QueueEventType = "download" | "convert" | "reduce";
 interface QueueEventHandlers {
   onProgress: (id: string, progress: number) => void;
   onFinished: (id: string, ok: boolean, message: string, filePath: string) => void;
@@ -34,8 +34,9 @@ export function useQueue() {
   }, [commit]);
 
   const registerListeners = useCallback((type: QueueEventType, handlers: QueueEventHandlers) => {
-    const active = () => queueRef.current.find((item) => item.status === "active" &&
-      (item.type === type || (type === "convert" && item.type === "compress")));
+    const active = () => queueRef.current.find((item) =>
+      item.status === "active" && item.type === type
+    );
     const progress = subscribeToEvent<number>(`${type}-progress`, ({ payload }) => {
       const item = active();
       if (item && Number.isFinite(payload)) handlers.onProgress(item.id, payload);

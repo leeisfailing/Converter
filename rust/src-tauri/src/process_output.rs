@@ -1,22 +1,25 @@
 use crate::operations::Operation;
-use std::{collections::VecDeque, io::{self, Read}, process::{Command, Output, Stdio}, thread::{self, JoinHandle}, time::Duration};
+use std::{io::{self, Read}, process::{Child, Command, Output, Stdio}, thread::{self, JoinHandle}};
 
 const TAIL_LIMIT: usize = 64 * 1024;
 
 pub fn capture_tail(mut reader: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
     thread::spawn(move || {
-        let mut tail = VecDeque::with_capacity(TAIL_LIMIT);
+        let mut tail = Vec::with_capacity(TAIL_LIMIT);
         let mut buffer = [0_u8; 4096];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
                 Ok(count) => {
-                    tail.extend(&buffer[..count]);
-                    if tail.len() > TAIL_LIMIT { tail.drain(..tail.len() - TAIL_LIMIT); }
+                    tail.extend_from_slice(&buffer[..count]);
+                    if tail.len() > TAIL_LIMIT {
+                        let excess = tail.len() - TAIL_LIMIT;
+                        tail.drain(..excess);
+                    }
                 }
             }
         }
-        tail.into_iter().collect()
+        tail
     })
 }
 
@@ -26,7 +29,9 @@ pub trait CancellableCommand {
 
 impl CancellableCommand for Command {
     fn output_cancellable(&mut self, operation: &Operation) -> io::Result<Output> {
-        if operation.is_cancelled() { return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled")); }
+        if operation.is_cancelled() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -34,25 +39,48 @@ impl CancellableCommand for Command {
         }
         let mut child = self.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
         let errors = capture_tail(child.stderr.take().expect("piped stderr"));
-        let status = loop {
-            if operation.is_cancelled() {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = errors.join();
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => thread::sleep(Duration::from_millis(50)),
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = errors.join();
-                    return Err(error);
-                }
-            }
-        };
+
+        let status = wait_for_child(&mut child, operation)?;
         Ok(Output { status, stdout: Vec::new(), stderr: errors.join().unwrap_or_default() })
+    }
+}
+
+fn wait_for_child(child: &mut Child, operation: &Operation) -> io::Result<std::process::ExitStatus> {
+    let child_pid = child.id();
+
+    loop {
+        if operation.is_cancelled() {
+            kill_tree(child_pid);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x08000000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 

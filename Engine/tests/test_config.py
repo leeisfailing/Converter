@@ -51,6 +51,12 @@ class BundledConfigTests(unittest.TestCase):
         (self.root / "ffmpeg-x86_64-pc-windows-msvc.exe").touch()
         self.assertEqual(self.config.find_binary("ffmpeg"), str(expected))
 
+    def test_deno_is_found_beside_private_python_without_system_path(self):
+        expected = self.python.parent / "deno.exe"
+        expected.touch()
+        self.assertEqual(self.config.find_binary("deno"), str(expected))
+        self.config.shutil.which.assert_not_called()
+
     def test_vspipe_prefers_matching_python_package_over_standalone(self):
         package = self.python.parent / "Lib" / "site-packages" / "vapoursynth"
         package.mkdir(parents=True)

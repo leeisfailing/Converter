@@ -9,19 +9,19 @@
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
-  "app": {
-    "windows": [
-      {
-        "title": "Converter by Lee",
-        "width": 1024,
-        "height": 768,
-        "resizable": false,
-        "dragDropEnabled": true,
-        "center": true,
-        "decorations": true,
-        "transparent": false
-      }
-    ],
+"app": {
+      "windows": [
+        {
+          "title": "Converter by Lee",
+          "width": 1024,
+          "height": 768,
+          "resizable": false,
+          "dragDropEnabled": true,
+          "center": true,
+          "decorations": false,
+          "transparent": false
+        }
+      ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self' https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; sandbox 'allow-scripts' 'allow-same-origin' 'allow-popups'",
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' http://localhost:1420 https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
@@ -40,23 +40,16 @@
     ],
     "externalBin": [
       "bin/ffmpeg",
-      "bin/ffprobe",
-      "bin/vspipe"
+      "bin/ffprobe"
     ],
     "resources": {
-      "bin/libvapoursynth.dll": "libvapoursynth.dll",
-      "bin/vsscript.dll": "vsscript.dll",
-      "bin/plugins/*": "plugins/",
       "../../Engine/__init__.py": "Engine/__init__.py",
       "../../Engine/__main__.py": "Engine/__main__.py",
       "../../Engine/core/*.py": "Engine/core/",
       "../../Engine/handlers/*.py": "Engine/handlers/",
       "../../Engine/workers/*.py": "Engine/workers/",
       "../../Engine/formats/*.py": "Engine/formats/",
-      "vapoursynth/*.py": "vapoursynth/",
-      "vapoursynth/blur/*.py": "vapoursynth/blur/",
       "../../Engine/bin/*": "Engine/bin/",
-      "../../Engine/bin/plugins/": "Engine/bin/plugins/",
       "bin/python/": "Engine/bin/python/"
     }
   },

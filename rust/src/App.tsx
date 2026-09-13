@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import AppHeader from "./components/AppHeader";
 import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
-const BlurSettings = lazy(() => import("./components/BlurSettings"));
+import FileReducer from "./components/FileReducer";
 import QueueManager from "./components/QueueManager";
 import DebugConsole from "./components/DebugConsole";
 const SettingsPanel = lazy(() => import("./components/Settings"));
@@ -16,8 +17,7 @@ import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import {
   startDownload,
   startConvert,
-  startBlur,
-  compressFile,
+  startReduce,
   cancelOperation,
   getSettings,
   sanitizePath,
@@ -26,12 +26,12 @@ import {
 } from "./lib/tauri-commands";
 import type { AppSettings } from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
-import type { BlurSettings as BlurSettingsType } from "./components/BlurSettings";
-import { Download, ArrowRightLeft, Zap, Film, Sun, Moon, Terminal, Settings, Info } from "lucide-react";
+import { Download, ArrowRightLeft, Minimize2, Zap, Settings } from "lucide-react";
 const About = lazy(() => import("./components/About"));
+const BugReport = lazy(() => import("./components/BugReport"));
 import { loadAppVersion, useAppVersion } from "./lib/updater";
 
-type Mode = "download" | "convert" | "blur";
+type Mode = "download" | "convert" | "reduce";
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -90,10 +90,10 @@ function getInitialTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-function applyAutoSave(outputPath: string, autoSave: boolean, outputDir: string): string {
-  if (!autoSave || !outputDir) return outputPath;
-  const baseName = outputPath.split(/[\\/]/).pop() || outputPath;
-  return outputDir.replace(/[\\/]+$/, "") + sep + baseName;
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 let nextId = 0;
@@ -104,7 +104,7 @@ function genId(): string {
 const MODE_CONFIG = [
   { id: "download" as Mode, label: "Download", icon: Download },
   { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
-  { id: "blur" as Mode, label: "Blur", icon: Film },
+  { id: "reduce" as Mode, label: "Reduce", icon: Minimize2 },
 ];
 
 const modeTransition = {
@@ -126,11 +126,10 @@ export default function App() {
   const [showConsole, setShowConsole] = useState(() => localStorage.getItem("debug_console_open") === "true");
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showBugReport, setShowBugReport] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     downloadDir: "",
     outputDir: "",
-    autoSave: false,
-    overwriteExisting: false,
   });
 
   const debugConsole = useDebugConsole({ maxLogs: 500 });
@@ -150,19 +149,21 @@ export default function App() {
         const formatType = await sanitizeFormat(item.formatType || "bestvideo+bestaudio/best");
         const dir = await sanitizePath(outputDir);
         await startDownload({ url, format_type: formatType, output_dir: dir });
-      } else if (item.type === "compress") {
-        const input = await sanitizePath(item.inputPath!);
-        const output = await sanitizePath(item.outputPath!);
-        await compressFile({ input, output, target_size_bytes: item.targetSizeBytes! });
       } else if (item.type === "convert") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
         const format = await sanitizeFormat(item.outputFormat!);
         await startConvert({ input, output, format, dev_mode: item.devMode || false });
-      } else if (item.type === "blur") {
+      } else if (item.type === "reduce") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
-        await startBlur({ input, output, settings: item.blurSettings! });
+        await startReduce({
+          input, output,
+          quality: item.reduceQuality || 50,
+          target_bytes: item.reduceTargetBytes ?? null,
+          max_width: item.reduceMaxWidth || null,
+          file_type: item.reduceFileType || "video",
+        });
       }
     } catch (err) {
       console.error(`[queue] Failed: "${item.label}"`, err);
@@ -218,68 +219,60 @@ export default function App() {
       url: safeUrl,
       formatType: safeFormat,
       outputDir: appSettings.downloadDir || undefined,
-      label: `${label}${safeFormat === "mp3" ? " (MP3)" : safeFormat === "mp4" ? " (MP4)" : ""}`,
+      label: `${label}${safeFormat.startsWith("mp3") ? " (MP3)" : safeFormat.startsWith("mp4") ? " (MP4)" : ""}`,
       createdAt: Date.now(),
     });
     toast.addToast("info", "Added to queue", `${label} (${safeFormat.toUpperCase()})`);
   }, [addToQueue, appSettings]);
 
+  const handleReduceAdd = useCallback(async (
+    inputPath: string, outputPath: string, quality: number,
+    maxWidth: number | null, fileType: "video" | "photo" | "audio",
+    targetBytes: number | null,
+  ) => {
+    const safeInput = await sanitizePath(inputPath);
+    const safeOutput = await sanitizePath(outputPath);
+    const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
+    const finalOutputPath = appSettings.outputDir
+      ? `${appSettings.outputDir}${sep()}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
+    const reductionLabel = targetBytes ? `under ${(targetBytes / 1_000_000).toLocaleString()} MB` : `${quality}% quality`;
+    addToQueue({
+      id: genId(),
+      type: "reduce",
+      status: "pending",
+      progress: 0,
+      inputPath: safeInput, outputPath: finalOutputPath,
+      reduceQuality: quality, reduceMaxWidth: maxWidth || undefined, reduceFileType: fileType,
+      reduceTargetBytes: targetBytes ?? undefined,
+      label: `${fileName} → ${reductionLabel}`,
+      createdAt: Date.now(),
+    });
+    toast.addToast("info", "Added to queue", `${fileName} → ${reductionLabel}`);
+  }, [addToQueue, appSettings]);
+
   const handleConvertAdd = useCallback(async (
     inputPath: string, outputPath: string, outputFormat: string,
-    devMode: boolean, compressSize?: number
+    devMode: boolean,
   ) => {
     const safeInput = await sanitizePath(inputPath);
     const safeOutput = await sanitizePath(outputPath);
     const safeFormat = await sanitizeFormat(outputFormat);
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
-    const finalOutputPath = applyAutoSave(safeOutput, appSettings.autoSave, appSettings.outputDir);
+    const finalOutputPath = appSettings.outputDir || safeOutput;
 
-    if (safeFormat === "compress" && compressSize) {
-      const sizeLabel = compressSize >= 1073741824
-        ? `${(compressSize / 1073741824).toFixed(1)} GB`
-        : compressSize >= 1048576 ? `${(compressSize / 1048576).toFixed(1)} MB`
-        : `${(compressSize / 1024).toFixed(1)} KB`;
-      addToQueue({
-        id: genId(),
-        type: "compress",
-        status: "pending",
-        progress: 0,
-        inputPath: safeInput, outputPath: finalOutputPath, targetSizeBytes: compressSize,
-        label: `${fileName} → ${sizeLabel}`,
-        createdAt: Date.now(),
-      });
-    } else {
-      addToQueue({
-        id: genId(),
-        type: "convert",
-        status: "pending",
-        progress: 0,
-        inputPath: safeInput, outputPath: finalOutputPath, outputFormat: safeFormat, devMode,
-        label: `${fileName} → ${safeFormat.toUpperCase()}`,
-        createdAt: Date.now(),
-      });
-    }
+    addToQueue({
+      id: genId(),
+      type: "convert",
+      status: "pending",
+      progress: 0,
+      inputPath: safeInput, outputPath: finalOutputPath, outputFormat: safeFormat, devMode,
+      label: `${fileName} → ${safeFormat.toUpperCase()}`,
+      createdAt: Date.now(),
+    });
     toast.addToast("info", "Added to queue", `${fileName} → ${safeFormat.toUpperCase()}`);
   }, [addToQueue, appSettings]);
 
-  const handleBlurAdd = useCallback(async (inputPath: string, outputPath: string, blurSettings: BlurSettingsType) => {
-    const safeInput = await sanitizePath(inputPath);
-    const safeOutput = await sanitizePath(outputPath);
-    const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
-    const finalOutputPath = applyAutoSave(safeOutput, appSettings.autoSave, appSettings.outputDir);
-    addToQueue({
-      id: genId(),
-      type: "blur",
-      status: "pending",
-      progress: 0,
-      inputPath: safeInput, outputPath: finalOutputPath, blurSettings,
-      label: `${fileName} → Blur`,
-      createdAt: Date.now(),
-    });
-    toast.addToast("info", "Added to queue", `${fileName} → Blur`);
-  }, [addToQueue, appSettings]);
-
-  const handleCancel = useCallback(async () => {
+    const handleCancel = useCallback(async () => {
     try {
       await cancelOperation();
       queue.cancelActive();
@@ -302,72 +295,42 @@ export default function App() {
   return (
     <>
       <ErrorBoundary>
-        <div className="h-full flex flex-col bg-app-bg">
-          <header className="flex items-center justify-between px-5 py-3 border-b border-app-border bg-app-surface">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-app-accent-dim">
-                <Zap size={16} className="text-app-accent" />
-              </div>
-              <h1 className="text-base font-semibold text-app-text tracking-tight">Converter</h1>
-              <span className="text-[10px] text-app-text-muted bg-app-surface-hover px-1.5 py-0.5 rounded">v{appVersion}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setShowAbout(true)} className="btn-icon" title="About & Updates" aria-label="About & Updates">
-                <Info size={16} aria-hidden="true" />
+        <div className="app-shell h-full flex flex-col bg-app-bg">
+          <AppHeader
+            version={appVersion}
+            theme={theme}
+            showConsole={showConsole}
+            showSettings={showSettings}
+            onAbout={() => setShowAbout(true)}
+            onConsole={() => {
+              const next = !showConsole;
+              setShowConsole(next);
+              localStorage.setItem("debug_console_open", String(next));
+            }}
+            onSettings={() => setShowSettings((prev) => !prev)}
+            onTheme={toggleTheme}
+            onWindowError={(message) => toast.addToast("error", "Window action failed", message)}
+          />
+          <nav className="workspace-nav" aria-label="Media tools">
+            {MODE_CONFIG.map(({ id, label, icon: Icon }) => (
+              <button type="button" key={id}
+                className="workspace-tab"
+                aria-current={!showSettings && mode === id ? "page" : undefined}
+                disabled={isProcessing}
+                onClick={() => { setMode(id); setShowSettings(false); }}>
+                <Icon size={16} aria-hidden="true" />{label}
               </button>
-              <button
-                onClick={() => {
-                  const next = !showConsole;
-                  setShowConsole(next);
-                  localStorage.setItem("debug_console_open", String(next));
-                }}
-                className={`btn-icon ${showConsole ? "active" : ""}`}
-                title={showConsole ? "Hide console (Ctrl+Shift+D)" : "Show console"}
-              >
-                <Terminal size={16} />
-              </button>
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className={`btn-icon ${showSettings ? "active" : ""}`}
-                title={showSettings ? "Close settings" : "Settings (Ctrl+,)"}
-              >
-                <Settings size={16} />
-                {appSettings.autoSave && <span className="settings-badge" />}
-              </button>
-              <button onClick={toggleTheme} className="btn-icon" title="Toggle theme">
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-            </div>
-          </header>
+            ))}
+          </nav>
 
-          <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1 overflow-y-auto p-5">
-              <div className="max-w-[600px] mx-auto space-y-4">
-                {!showSettings && (
-                  <motion.div
-                    className="radio-group"
-                    initial="hidden"
-                    animate="visible"
-                    variants={staggerContainer}
-                  >
-                    {MODE_CONFIG.map(({ id, label, icon: Icon }) => (
-                      <motion.button
-                        key={id}
-                        variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        onClick={() => !isProcessing && setMode(id)}
-                        className={`radio-pill ${mode === id ? "active" : ""}`}
-                        disabled={isProcessing}
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.97 }}
-                      >
-                        <Icon size={15} />
-                        {label}
-                      </motion.button>
-                    ))}
-                  </motion.div>
-                )}
-
+          <div className="workspace-layout flex-1 flex overflow-hidden">
+            <div className="workspace-main flex-1 overflow-y-auto">
+              <div className="workspace-content mx-auto space-y-5">
+                <div className="workspace-intro">
+                  <p className="workspace-eyebrow">{showSettings ? "Preferences" : "Media workspace"}</p>
+                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : "Less size. More space."}</h1>
+                  <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We’ll handle the rest." : "Find the right balance between file size and quality."}</p>
+                </div>
                 <Suspense fallback={<p className="text-sm text-app-text-secondary">Loading tools...</p>}>
                 <AnimatePresence mode="wait">
                   {showSettings ? (
@@ -396,9 +359,9 @@ export default function App() {
                           <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
-                      {mode === "blur" && (
-                        <motion.div key="blur" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
-                          <BlurSettings onAdd={handleBlurAdd} disabled={isProcessing} />
+                      {mode === "reduce" && (
+                        <motion.div key="reduce" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
+                          <FileReducer onAdd={handleReduceAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
                     </>
@@ -439,7 +402,7 @@ export default function App() {
             </div>
 
             {queue.hasQueue && (
-              <div className="w-[300px] border-l border-app-border bg-app-surface overflow-hidden flex flex-col">
+              <div className="workspace-queue border-l border-app-border bg-app-surface overflow-hidden flex flex-col">
                 <QueueManager
                   items={queue.queue}
                   onRemove={removeFromQueue}
@@ -453,7 +416,10 @@ export default function App() {
         </div>
       </ErrorBoundary>
       {showAbout && (
-        <Suspense fallback={null}><About onClose={() => setShowAbout(false)} hasPendingWork={queue.processingRef.current || queue.queue.some((item) => item.status === "pending" || item.status === "active")} /></Suspense>
+        <Suspense fallback={null}><About onClose={() => setShowAbout(false)} hasPendingWork={queue.processingRef.current || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></Suspense>
+      )}
+      {showBugReport && (
+        <Suspense fallback={null}><BugReport onClose={() => setShowBugReport(false)} /></Suspense>
       )}
     </>
   );

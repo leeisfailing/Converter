@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link, Music, Film, Plus, Monitor, Loader2, Globe, Clock } from "lucide-react";
+import { Link, Music, Film, Plus, ChevronDown, Loader2, Globe, Clock } from "lucide-react";
 import { detectUrl } from "../lib/tauri-commands";
 import type { UrlFormat } from "../lib/tauri-commands";
 
@@ -40,6 +40,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     format_type: string;
   } | null>(null);
   const [selectedFormat, setSelectedFormat] = useState("");
+  const [selectedFormatType, setSelectedFormatType] = useState<string>("");
+  const [selectedQuality, setSelectedQuality] = useState<string>("");
+  const [qualityDropdownOpen, setQualityDropdownOpen] = useState(false);
 
   const requestIdRef = useRef(0);
 
@@ -67,6 +70,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setDetectError("");
     setDetectedInfo(null);
     setSelectedFormat("");
+    setSelectedFormatType("");
+    setSelectedQuality("");
+    setQualityDropdownOpen(false);
 
     try {
       const result = await detectUrl(trimmed);
@@ -79,7 +85,11 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
           return;
         }
         setDetectedInfo(result);
-        setSelectedFormat(result.formats[0].value);
+        const firstFmt = result.formats[0];
+        setSelectedFormatType(firstFmt.value);
+        const defaultQuality = firstFmt.qualities?.[0]?.value || firstFmt.value;
+        setSelectedQuality(defaultQuality);
+        setSelectedFormat(defaultQuality);
         setDetectState("done");
       } else {
         setDetectError("Could not detect URL info");
@@ -99,6 +109,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setDetectState("idle");
     setDetectedInfo(null);
     setSelectedFormat("");
+    setSelectedFormatType("");
+    setSelectedQuality("");
+    setQualityDropdownOpen(false);
   };
 
   const handleReset = () => {
@@ -106,7 +119,10 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setDetectState("idle");
     setDetectedInfo(null);
     setSelectedFormat("");
+    setSelectedFormatType("");
+    setSelectedQuality("");
     setDetectError("");
+    setQualityDropdownOpen(false);
   };
 
   return (
@@ -221,9 +237,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
 
             {/* Format picker */}
             <div className="panel p-4">
-              <div className="section-label mb-3">Pick quality</div>
+              <div className="section-label mb-3">Pick format</div>
               <motion.div
-                className="grid grid-cols-3 gap-2"
+                className="grid grid-cols-2 gap-2"
                 variants={staggerContainer}
                 initial="hidden"
                 animate="visible"
@@ -232,26 +248,81 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
                   <motion.button
                     key={fmt.value}
                     variants={chipVariants}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setSelectedFormat(fmt.value)}
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => {
+                      setSelectedFormatType(fmt.value);
+                      const defaultQ = fmt.qualities?.[0]?.value || fmt.value;
+                      setSelectedQuality(defaultQ);
+                      setSelectedFormat(defaultQ);
+                    }}
                     disabled={disabled}
-                    className={`format-chip ${selectedFormat === fmt.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+                    className={`format-chip ${selectedFormatType === fmt.value ? "selected" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
                   >
-                    {fmt.value.includes("mp3") ? (
-                      <Music size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
-                    ) : fmt.value.includes("mp4") ? (
-                      <Film size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
+                    {fmt.value === "mp3" ? (
+                      <Music size={14} className={selectedFormatType === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
                     ) : (
-                      <Monitor size={14} className={selectedFormat === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
+                      <Film size={14} className={selectedFormatType === fmt.value ? "text-app-accent" : "text-app-text-muted"} />
                     )}
-                    <span className={`text-[11px] font-medium ${selectedFormat === fmt.value ? "text-app-text" : "text-app-text-secondary"}`}>
+                    <span className={`text-[11px] font-medium ${selectedFormatType === fmt.value ? "text-app-text" : "text-app-text-secondary"}`}>
                       {fmt.label}
                     </span>
                     <span className="text-[10px] text-app-text-muted">{fmt.desc}</span>
                   </motion.button>
                 ))}
               </motion.div>
+
+              {/* Quality dropdown */}
+              {selectedFormatType && (() => {
+                const activeFmt = detectedInfo.formats.find(f => f.value === selectedFormatType);
+                const qualities = activeFmt?.qualities;
+                if (!qualities || qualities.length === 0) return null;
+                const currentQ = qualities.find(q => q.value === selectedQuality) || qualities[0];
+                return (
+                  <div className="mt-3 relative">
+                    <div className="section-label mb-1.5">Quality</div>
+                    <button
+                      type="button"
+                      onClick={() => setQualityDropdownOpen(!qualityDropdownOpen)}
+                      disabled={disabled}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-app-surface border border-app-border text-left text-sm text-app-text hover:border-app-accent/50 transition-colors"
+                    >
+                      <span>{currentQ.label}</span>
+                      <ChevronDown size={14} className={`text-app-text-muted transition-transform ${qualityDropdownOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    <AnimatePresence>
+                      {qualityDropdownOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute z-20 mt-1 w-full rounded-lg bg-app-surface border border-app-border shadow-lg overflow-hidden"
+                        >
+                          {qualities.map((q) => (
+                            <button
+                              key={q.value}
+                              type="button"
+                              onClick={() => {
+                                setSelectedQuality(q.value);
+                                setSelectedFormat(q.value);
+                                setQualityDropdownOpen(false);
+                              }}
+                              className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                                q.value === selectedQuality
+                                  ? "bg-app-accent/10 text-app-accent"
+                                  : "text-app-text hover:bg-app-accent/5"
+                              }`}
+                            >
+                              {q.label}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Add button */}

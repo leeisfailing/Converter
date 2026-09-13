@@ -10,11 +10,8 @@ import {
   Music,
   ArrowRight,
   Plus,
-  HardDrive,
   FileUp,
 } from "lucide-react";
-
-type ConvertMode = "format" | "compress";
 
 interface Props {
   onAdd: (
@@ -22,8 +19,6 @@ interface Props {
     outputPath: string,
     format: string,
     devMode: boolean,
-    compressSize?: number,
-    compressUnit?: string
   ) => void;
   disabled: boolean;
 }
@@ -52,21 +47,12 @@ const ALL_FORMATS = [
   { value: "opus", label: "Opus", type: "audio" },
 ];
 
-const SIZE_UNITS = [
-  { value: "MB", label: "MB" },
-  { value: "KB", label: "KB" },
-  { value: "GB", label: "GB" },
-];
-
 export default function FileConverter({ onAdd, disabled }: Props) {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fileType, setFileType] = useState<string | null>(null);
   const [allowedFormats, setAllowedFormats] = useState<string[]>([]);
   const [selectedFormat, setSelectedFormat] = useState("");
   const [devMode, setDevMode] = useState(false);
-  const [convertMode, setConvertMode] = useState<ConvertMode>("format");
-  const [compressSize, setCompressSize] = useState("");
-  const [compressUnit, setCompressUnit] = useState("MB");
   const [isDragOver, setIsDragOver] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
   const detectGeneration = useRef(0);
@@ -85,7 +71,6 @@ export default function FileConverter({ onAdd, disabled }: Props) {
           console.log(`[converter] File dropped: "${paths[0].split(/[\\/]/).pop()}"`);
           setFilePath(paths[0]);
           setSelectedFormat("");
-          setConvertMode("format");
         }
       }
     });
@@ -145,7 +130,6 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     if (selected) {
       setFilePath(selected as string);
       setSelectedFormat("");
-      setConvertMode("format");
     }
   };
 
@@ -153,14 +137,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     if (!filePath) return "";
     const lastDot = filePath.lastIndexOf(".");
     const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
-
-    let outputPath: string;
-    if (convertMode === "compress") {
-      const ext = filePath.split(".").pop() || "mp4";
-      outputPath = `${base}_compressed.${ext}`;
-    } else {
-      outputPath = `${base}_converted.${selectedFormat}`;
-    }
+    let outputPath = `${base}_converted.${selectedFormat}`;
 
     if (usedOutputPaths.current.has(outputPath)) {
       let counter = 2;
@@ -174,42 +151,25 @@ export default function FileConverter({ onAdd, disabled }: Props) {
 
     usedOutputPaths.current.add(outputPath);
     return outputPath;
-  }, [filePath, selectedFormat, convertMode]);
+  }, [filePath, selectedFormat]);
 
   const handleAdd = () => {
     if (!filePath) return;
+    if (!selectedFormat) return;
 
-    if (convertMode === "format" && !selectedFormat) return;
-    if (convertMode === "compress" && (!compressSize || parseFloat(compressSize) <= 0))
-      return;
-
-    const sizeBytes =
-      convertMode === "compress"
-        ? parseFloat(compressSize) *
-          (compressUnit === "GB"
-            ? 1073741824
-            : compressUnit === "MB"
-            ? 1048576
-            : 1024)
-        : undefined;
-
-    const format = convertMode === "format" ? selectedFormat : "compress";
-    console.log(`[converter] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${format.toUpperCase()}`);
+    console.log(`[converter] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${selectedFormat.toUpperCase()}`);
 
     onAdd(
       filePath,
       getOutputPath(),
-      format,
+      selectedFormat,
       devMode,
-      sizeBytes,
-      convertMode === "compress" ? compressUnit : undefined
     );
 
     setFilePath(null);
     setSelectedFormat("");
     setFileType(null);
     setAllowedFormats([]);
-    setCompressSize("");
     setDevMode(false);
     usedOutputPaths.current.clear();
   };
@@ -289,33 +249,6 @@ export default function FileConverter({ onAdd, disabled }: Props) {
         )}
       </motion.div>
 
-      {/* Mode Selector */}
-      {filePath && (
-        <motion.div
-          initial={{ opacity: 0, y: 5 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="radio-group">
-            <button
-              onClick={() => setConvertMode("format")}
-              disabled={disabled}
-              className={`radio-pill ${convertMode === "format" ? "active" : ""} ${disabled ? "opacity-40 pointer-events-none" : ""}`}
-            >
-              <ArrowRight size={14} />
-              Convert Format
-            </button>
-            <button
-              onClick={() => setConvertMode("compress")}
-              disabled={disabled || fileType !== "video"}
-              className={`radio-pill ${convertMode === "compress" ? "active" : ""} ${disabled || fileType !== "video" ? "opacity-40 pointer-events-none" : ""}`}
-            >
-              <HardDrive size={14} />
-              Compress Size
-            </button>
-          </div>
-        </motion.div>
-      )}
-
       {/* DEV MODE */}
       {filePath && (
         <motion.div
@@ -339,7 +272,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
 
       {/* Format Selection */}
       <AnimatePresence>
-        {filePath && convertMode === "format" && allowedFormats.length > 0 && (
+        {filePath && allowedFormats.length > 0 && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
@@ -457,70 +390,6 @@ export default function FileConverter({ onAdd, disabled }: Props) {
               >
                 <Plus size={16} />
                 Add to Queue — {selectedFormat.toUpperCase()}
-              </motion.button>
-            )}
-          </motion.div>
-        )}
-
-        {/* Compress Size Selection */}
-        {filePath && convertMode === "compress" && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-          >
-            <div className="panel p-4 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-app-text-muted">
-                <span className="font-medium text-app-text-secondary">Original</span>
-                <ArrowRight size={12} />
-                <span className="font-medium text-app-text-secondary">Target size</span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-app-text-secondary min-w-[80px]">
-                  Target size
-                </span>
-                <input
-                  type="number"
-                  value={compressSize}
-                  onChange={(e) => setCompressSize(e.target.value)}
-                  disabled={disabled}
-                  className="input w-24 py-1.5 px-2 text-xs"
-                  placeholder="100"
-                  min="0"
-                  step="any"
-                />
-                <select
-                  value={compressUnit}
-                  onChange={(e) => setCompressUnit(e.target.value)}
-                  disabled={disabled}
-                  className="select py-1.5 px-2 text-xs"
-                >
-                  {SIZE_UNITS.map((u) => (
-                    <option key={u.value} value={u.value}>
-                      {u.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <p className="text-[10px] text-app-text-muted">
-                ffmpeg will calculate the optimal bitrate to achieve your target file size.
-              </p>
-            </div>
-
-            {compressSize && parseFloat(compressSize) > 0 && (
-              <motion.button
-                initial={{ opacity: 0, y: 5 }}
-                animate={{ opacity: 1, y: 0 }}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleAdd}
-                disabled={disabled}
-                className="w-full btn btn-primary py-3 mt-3"
-              >
-                <Plus size={16} />
-                Add to Queue — {compressSize}{compressUnit}
               </motion.button>
             )}
           </motion.div>

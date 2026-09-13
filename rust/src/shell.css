@@ -1,0 +1,221 @@
+/* Desktop shell: slate surfaces, violet selection, and a separate window-control rail. */
+.app-shell {
+  --shell-muted: #a0aabc;
+  --shell-line: #303642;
+  --shell-close: #c93647;
+  --shell-close-hover: #ad2939;
+  --text-muted: #8c99ad;
+}
+
+[data-theme="light"] .app-shell {
+  --shell-muted: #526076;
+  --shell-line: #d8deea;
+  --text-muted: #607089;
+}
+
+.app-header {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  height: 68px;
+  padding: 0 12px 0 24px;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  height: 100%;
+}
+
+.app-brand > * { pointer-events: none; }
+.app-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+.app-brand-name {
+  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-weight: 650;
+  font-size: 17px;
+  letter-spacing: -0.6px;
+}
+.app-version {
+  padding: 3px 6px;
+  border: 1px solid var(--shell-line);
+  border-radius: 5px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  color: var(--shell-muted);
+}
+.app-drag-space { flex: 1; align-self: stretch; min-width: 16px; }
+.app-tools, .window-controls { display: flex; align-items: center; gap: 4px; }
+.window-controls { border-left: 1px solid var(--shell-line); padding-left: 12px; }
+
+.header-control {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--shell-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.header-control:hover { color: var(--text); background: var(--surface-hover); }
+.header-control:active { background: var(--border-hover); }
+.header-control[aria-pressed="true"] {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+.header-control:focus-visible, .workspace-tab:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+.window-control { width: 44px; height: 36px; border-color: var(--shell-line); }
+.window-close { color: var(--text); }
+.window-close:hover, .window-close:focus-visible {
+  color: #fff;
+  background: var(--shell-close);
+  border-color: var(--shell-close);
+}
+.window-close:active { color: #fff; background: var(--shell-close-hover); }
+
+/* These tooltips appear for keyboard focus as well as pointer hover. */
+.header-control::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: max-content;
+  max-width: 220px;
+  pointer-events: none;
+  padding: 7px 10px;
+  border: 1px solid var(--shell-line);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  box-shadow: 0 4px 12px #0002;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+.header-control:hover::after, .header-control:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 350ms;
+}
+
+.workspace-nav {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.workspace-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 116px;
+  padding: 0 16px;
+  border: none;
+  background: transparent;
+  color: var(--shell-muted);
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+.workspace-tab:hover { background: var(--surface); color: var(--text); }
+.workspace-tab[aria-current="page"] { color: var(--text); }
+.workspace-tab[aria-current="page"] svg { color: var(--accent-hover); }
+.workspace-tab[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  height: 3px;
+  bottom: -1px;
+  left: 16px;
+  right: 16px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent-hover);
+}
+.workspace-tab:disabled { opacity: 0.5; cursor: not-allowed; }
+.workspace-tab:focus-visible { outline-offset: -4px; }
+.workspace-main { min-width: 0; padding: 36px 32px; }
+.workspace-content { max-width: 720px; }
+.workspace-intro { padding-bottom: 8px; }
+.workspace-intro .workspace-eyebrow {
+  color: var(--accent-hover);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  margin-bottom: 10px;
+}
+.workspace-intro h1 {
+  color: var(--text);
+  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.8px;
+  margin-bottom: 10px;
+}
+.workspace-intro p { font-size: 13px; line-height: 1.65; color: var(--shell-muted); }
+.workspace-content .panel { border-color: var(--shell-line); border-radius: 14px; }
+.workspace-content .section-label { color: var(--shell-muted); }
+.workspace-content .input, .workspace-content .select { border-color: var(--shell-line); }
+.workspace-content .input:focus, .workspace-content .select:focus { border-color: var(--accent); }
+.workspace-content .btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.workspace-content .btn-primary:hover:not(:disabled) { background: var(--accent-hover); color: #fff; }
+.workspace-content .btn-primary:disabled { background: var(--accent); color: #fff; }
+.workspace-queue { width: 300px; flex-shrink: 0; }
+
+@media (max-width: 720px) {
+  .app-header { padding-left: 16px; gap: 8px; }
+  .app-brand { gap: 8px; }
+  .app-version { display: none; }
+  .app-drag-space { min-width: 0; }
+  .window-controls { padding-left: 8px; }
+  .workspace-main { padding: 24px 16px; }
+  .workspace-layout { flex-direction: column; overflow-y: auto; }
+  .workspace-main { flex: none; overflow: visible; }
+  .workspace-queue { width: 100%; min-height: 260px; border-left: 0; border-top: 1px solid var(--shell-line); }
+}
+@media (max-width: 480px) {
+  .app-header { height: 100px; flex-wrap: wrap; padding: 8px 12px; gap: 0; }
+  .app-brand { height: 36px; }
+  .app-drag-space { height: 36px; align-self: auto; }
+  .app-tools { order: 3; width: 100%; justify-content: flex-end; }
+  .window-controls { margin-left: 8px; }
+  .workspace-nav { padding: 0 8px; gap: 0; }
+  .workspace-tab { min-width: 0; flex: 1; padding: 0 8px; }
+  .workspace-intro h1 { font-size: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .header-control, .header-control::after, .workspace-tab { transition: none; }
+}

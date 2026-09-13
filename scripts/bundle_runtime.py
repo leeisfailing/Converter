@@ -29,8 +29,18 @@ ARTIFACTS = (
         "Lib/site-packages",
     ),
     (
-        "https://files.pythonhosted.org/packages/f9/8a/cd4c9b02c10c563adfe78118310129641900e1cd6de888cfae2452072696/yt_dlp-2026.7.4-py3-none-any.whl",
-        "f11f2b11d5a8ac4059f9bdf29fa4407dc7c6bb00c5097e95ca22a7a9db518266",
+        "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl",
+        "1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf",
+        "Lib/site-packages",
+    ),
+    (
+        "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+        "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+        "Lib/site-packages",
+    ),
+    (
+        "https://files.pythonhosted.org/packages/7e/0b/3ca6468ec928d817ce6ef062ddfa11e71a3c68035c3401057d7cb33845f6/deno-2.9.5-py3-none-win_amd64.whl",
+        "570d4ee6f1ddb16d14848d36dac6cd2f586d8a0c94cf9c3e6b5da130da2597d5",
         "Lib/site-packages",
     ),
 )
@@ -56,6 +66,10 @@ def main() -> None:
     for url, digest, relative in ARTIFACTS:
         with zipfile.ZipFile(download(url, digest)) as archive:
             archive.extractall(staging / relative)
+            # Wheel script entries need relocation when installing without pip.
+            for member in archive.namelist():
+                if member.endswith('.data/scripts/deno.exe'):
+                    (staging / 'deno.exe').write_bytes(archive.read(member))
     (staging / "python312._pth").write_text(
         "python312.zip\n.\nLib/site-packages\n../../../\nimport site\n", encoding="utf-8"
     )
@@ -70,12 +84,14 @@ def main() -> None:
         clean_env.pop(key, None)
     subprocess.run(
         [str(staging / "python.exe"), "-I", "-B", "-c",
-         "import sys, ssl, sqlite3, yt_dlp.version, vapoursynth as vs; "
+         "import sys, ssl, sqlite3, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs; "
          "assert sys.version_info[:2] == (3, 12); "
          "assert vs.core.std.BlankClip(width=16, height=16, length=1).get_frame(0).width == 16; "
          "print(sys.version); print('yt-dlp', yt_dlp.version.__version__); print(vs.__version__)"],
         cwd=CACHE, env=clean_env, check=True,
     )
+    subprocess.run([str(staging / 'deno.exe'), '--version'],
+                   cwd=CACHE, env=clean_env, check=True)
     DESTINATION.parent.mkdir(parents=True, exist_ok=True)
     if DESTINATION.exists():
         # Retain the prior runtime locally, including any user-added files.

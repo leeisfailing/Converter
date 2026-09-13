@@ -1,6 +1,4 @@
-import type { BlurSettings } from "../components/BlurSettings";
-
-export type QueueItemType = "download" | "convert" | "blur" | "compress";
+export type QueueItemType = "download" | "convert" | "reduce";
 export type QueueItemStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 
 export interface QueueItem {
@@ -17,10 +15,11 @@ export interface QueueItem {
   outputPath?: string;
   outputFormat?: string;
   devMode?: boolean;
-  // Compress fields
-  targetSizeBytes?: number;
-  // Blur fields
-  blurSettings?: BlurSettings;
+  // Reduce fields
+  reduceQuality?: number;
+  reduceTargetBytes?: number;
+  reduceMaxWidth?: number;
+  reduceFileType?: "video" | "photo" | "audio";
   // Result
   resultPath?: string;
   error?: string;

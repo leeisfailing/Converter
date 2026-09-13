@@ -1,7 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const MAX_PATH_LENGTH: usize = 2048;
 pub const MAX_URL_LENGTH: usize = 2048;
+
 pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String> {
     validate_no_null_bytes(path_str, field_name)?;
     if path_str.len() > MAX_PATH_LENGTH {
@@ -12,13 +13,6 @@ pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String>
     }
     if path_str.contains("..") {
         return Err(format!("{} contains invalid path traversal", field_name));
-    }
-    if let Ok(canonicalized) = Path::new(path_str).canonicalize() {
-        if let Some(canonical_str) = canonicalized.to_str() {
-            if canonical_str.contains("..") {
-                return Err(format!("{} contains invalid path traversal after canonicalization", field_name));
-            }
-        }
     }
     Ok(path_str.to_string())
 }
@@ -31,7 +25,7 @@ pub fn validate_file_exists(path_str: &str, field_name: &str) -> Result<String, 
     }
     if let Ok(metadata) = path.metadata() {
         if metadata.len() > 10 * 1024 * 1024 * 1024 {
-            return Err(format!("File exceeds maximum allowed size (10GB)"));
+            return Err("File exceeds maximum allowed size (10GB)".to_string());
         }
     }
     Ok(validated)
@@ -39,14 +33,13 @@ pub fn validate_file_exists(path_str: &str, field_name: &str) -> Result<String, 
 
 pub fn validate_output_path(path_str: &str, field_name: &str) -> Result<String, String> {
     let validated = validate_path(path_str, field_name)?;
-    let parent = Path::new(&validated)
-        .parent()
+    let path = Path::new(&validated);
+    let parent = path.parent()
         .ok_or_else(|| format!("Cannot determine parent directory for: {}", validated))?;
     if !parent.is_dir() {
         return Err(format!("Output directory does not exist: {}", parent.display()));
     }
-    let file_name = Path::new(&validated)
-        .file_name()
+    let file_name = path.file_name()
         .and_then(|f| f.to_str())
         .ok_or_else(|| format!("Invalid filename in: {}", validated))?;
     if file_name.contains('\0') || file_name.contains('\n') || file_name.contains('\r') {
@@ -100,8 +93,7 @@ pub fn validate_output_dir(dir_str: &str) -> Result<String, String> {
     if dir_str.len() > MAX_PATH_LENGTH {
         return Err(format!("output_dir exceeds maximum length of {}", MAX_PATH_LENGTH));
     }
-    let path = PathBuf::from(dir_str);
-    if !path.is_dir() {
+    if !Path::new(dir_str).is_dir() {
         return Err(format!("Output directory does not exist: {}", dir_str));
     }
     Ok(dir_str.to_string())
@@ -149,59 +141,36 @@ fn validate_json_depth(value: &serde_json::Value, current_depth: usize, max_dept
                 validate_json_depth(item, current_depth + 1, max_depth)?;
             }
         }
-        serde_json::Value::String(s) => {
-            if s.len() > 65536 {
-                return Err("JSON string exceeds maximum length of 65536".to_string());
-            }
+        serde_json::Value::String(s) if s.len() > 65536 => {
+            return Err("JSON string exceeds maximum length of 65536".to_string());
         }
         _ => {}
     }
     Ok(())
 }
 
+fn estimate_json_size(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) => 5,
+        serde_json::Value::Number(_) => 20,
+        serde_json::Value::String(s) => s.len() + 2,
+        serde_json::Value::Array(arr) => {
+            2 + arr.iter().map(estimate_json_size).sum::<usize>() + arr.len().saturating_sub(1)
+        }
+        serde_json::Value::Object(map) => {
+            let inner: usize = map.iter()
+                .map(|(k, v)| k.len() + 2 + 1 + estimate_json_size(v))
+                .sum();
+            2 + inner + map.len().saturating_sub(1)
+        }
+    }
+}
+
 fn validate_json_size(value: &serde_json::Value) -> Result<(), String> {
-    let size = std::mem::size_of_val(value);
-    if size > 10 * 1024 * 1024 {
+    if estimate_json_size(value) > 10 * 1024 * 1024 {
         return Err("JSON value exceeds maximum size (10MB)".to_string());
     }
     Ok(())
-}
-
-pub fn validate_weighting(weighting: &str) -> Result<(), String> {
-    const VALID_WEIGHTINGS: &[&str] = &[
-        "equal", "ascending", "descending", "pyramid", "gaussian",
-        "gaussian_reverse", "gaussian_sym", "vegas",
-    ];
-    if !VALID_WEIGHTINGS.contains(&weighting) {
-        if !weighting.split(',').all(|w| w.trim().parse::<f64>().is_ok()) {
-            return Err(format!("Invalid weighting method: {}", weighting));
-        }
-    }
-    Ok(())
-}
-
-pub fn validate_gaussian_bound(bound: &str) -> Result<(f64, f64), String> {
-    if bound.len() > 64 {
-        return Err("Gaussian bound exceeds maximum length".to_string());
-    }
-    let parsed: serde_json::Value = serde_json::from_str(bound)
-        .map_err(|_| format!("Invalid Gaussian bound JSON: {}", bound))?;
-    let arr = parsed.as_array()
-        .ok_or_else(|| "Gaussian bound must be a JSON array of two numbers".to_string())?;
-    if arr.len() != 2 {
-        return Err("Gaussian bound must have exactly two values".to_string());
-    }
-    let a = arr[0].as_f64()
-        .ok_or_else(|| "First bound value must be a number".to_string())?;
-    let b = arr[1].as_f64()
-        .ok_or_else(|| "Second bound value must be a number".to_string())?;
-    if !a.is_finite() || !b.is_finite() {
-        return Err("Gaussian bound values must be finite".to_string());
-    }
-    if a == b {
-        return Err("Gaussian bound values must be distinct".to_string());
-    }
-    Ok((a, b))
 }
 
 pub fn validate_ffmpeg_override(override_str: &str) -> Result<(), String> {

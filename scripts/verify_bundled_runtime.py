@@ -52,17 +52,18 @@ def main():
             return result
 
         probe = run([str(python), "-I", "-B", "-c",
-            "import json, sys, pathlib, yt_dlp.version, vapoursynth as vs; "
+            "import json, sys, pathlib, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs; "
             "from Engine.core.config import find_binary; "
             "print(json.dumps({'python':sys.executable, 'yt_dlp':yt_dlp.version.__version__, "
             "'vapoursynth':str(vs.__version__), 'tools':{n:find_binary(n) for n in "
-            "('ffmpeg','ffprobe','vspipe')}}))"])
+            "('ffmpeg','ffprobe','vspipe','deno')}}))"])
         details = json.loads(probe.stdout)
         for path in [details["python"], *details["tools"].values()]:
             assert Path(path).is_relative_to(installed), f"Tool escaped installed resources: {path}"
         assert "site-packages" in details["tools"]["vspipe"]
         for name in ("ffmpeg", "ffprobe"):
             run([details["tools"][name], "-version"])
+        run([details['tools']['deno'], '--version'])
 
         audio = installed / "test audio ไทย.wav"
         with wave.open(str(audio), "wb") as output:

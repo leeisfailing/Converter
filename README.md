@@ -1,21 +1,14 @@
 # Converter
 
-A desktop media converter, URL downloader, and motion blur tool built with **Tauri 2.0** (Rust + React) and a **Python engine** powered by ffmpeg and yt-dlp.
+A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + React) and a **Python engine** powered by ffmpeg and yt-dlp.
 
 ## Features
 
 - Convert between video and image formats (MP4, MKV, JPG, PNG, WEBP, etc.)
-- Reduce file sizes with target size, percentage, or quality presets
 - Download videos/audio from YouTube and hundreds of sites via yt-dlp
 - Auto-detect GPU hardware encoders (NVIDIA, AMD, Intel)
 - Scale video resolution (1080p, 4K, or keep original)
 - Queue system with real-time progress tracking
-- **Motion Blur** — apply cinematic motion blur with 8 weighting functions (equal, ascending, descending, pyramid, gaussian, vegas, etc.)
-- **Interpolation** — SVP and RIFE motion interpolation for smooth slow-motion or high frame rate
-- **Deduplication** — detect and drop duplicate/stalled frames
-- **Timescale** — time stretching and compression
-- **Video filters** — sharpness, denoise, brightness, contrast, gamma, saturation
-- **Encoding presets** — GPU-optimized for NVIDIA, AMD, Intel, Mac VideoToolbox, and CPU
 - Liquid glass dark UI
 - **Auto-Updates** — automatic updates via GitHub Releases with signature verification
 
@@ -26,8 +19,7 @@ A desktop media converter, URL downloader, and motion blur tool built with **Tau
 - [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
 - Python 3.11+ (to prepare the build runtime)
 - ffmpeg and ffprobe are included in `Engine/bin/`.
-- The Windows app includes private Python, yt-dlp, VapourSynth, and vspipe runtimes.
-- [SVP Flow](https://www.svp-team.com/) (optional, for SVP interpolation)
+- The Windows app includes private Python, yt-dlp, and vspipe runtimes.
 
 ## Setup
 
@@ -47,7 +39,10 @@ npm run tauri build
 ```
 
 The runtime setup installs Python 3.12.10, VapourSynth R77, and yt-dlp
-2026.07.04 into `rust/src-tauri/bin/python/`. Tauri copies the extracted tree
+2026.08.19 with yt-dlp-ejs 0.8.0 and Deno 2.9.5 into
+`rust/src-tauri/bin/python/`. The private Deno runtime enables YouTube's
+JavaScript challenge support without requiring a system installation.
+Tauri copies the extracted tree
 to `Engine/bin/python/` in the app resources, including its standard library,
 native libraries, and Python packages. The application uses this interpreter
 before searching the system. Its installed users do not need Python or pip.
@@ -167,8 +162,7 @@ Converter/
 │   └── requirements.txt
 ├── rust/                 # Tauri 2.0 + React frontend
 │   ├── src-tauri/        # Rust backend
-│   │   ├── src/          # Rust modules (blur, settings, weighting, etc.)
-│   │   ├── vapoursynth/  # VapourSynth scripts for blur pipeline
+│   │   ├── src/          # Rust modules (settings, etc.)
 │   │   ├── public_key.pem    # Updater public key (committed)
 │   │   ├── private_key.pem   # Updater private key (NEVER committed)
 │   │   └── tauri.conf.json   # Includes updater config

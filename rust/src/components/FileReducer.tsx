@@ -40,15 +40,22 @@ function getQualityLabel(q: number): string {
   return "Maximum quality";
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 export default function FileReducer({ onAdd, disabled }: Props) {
   const [filePath, setFilePath] = useState<string | null>(null);
   const [detectedFileType, setDetectedFileType] = useState<"video" | "photo" | "audio" | null>(null);
   const [quality, setQuality] = useState(50);
-  const [reductionMode, setReductionMode] = useState<"quality" | "size">("quality");
+  const [useSizeLimit, setUseSizeLimit] = useState(false);
   const [targetSize, setTargetSize] = useState("10");
   const [targetUnit, setTargetUnit] = useState<"KB" | "MB" | "GB">("MB");
   const targetBytes = Math.floor(Number(targetSize) * { KB: 1_000, MB: 1_000_000, GB: 1_000_000_000 }[targetUnit]);
-  const validTarget = Number.isSafeInteger(targetBytes) && targetBytes > 0 && targetBytes <= 10_000_000_000;
+  const validTarget = !useSizeLimit || (Number.isSafeInteger(targetBytes) && targetBytes > 0 && targetBytes <= 10_000_000_000);
   const [maxWidth, setMaxWidth] = useState<number | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -123,16 +130,14 @@ export default function FileReducer({ onAdd, disabled }: Props) {
     const lastDot = filePath.lastIndexOf(".");
     const ext = lastDot > 0 ? filePath.substring(lastDot) : "";
     const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
-    const outputExt = reductionMode === "size"
-      ? detectedFileType === "video" ? ".mp4" : detectedFileType === "audio" ? ".mp3" : ".webp" : ext;
-    return `${base}_reduced${outputExt}`;
-  }, [filePath, reductionMode, detectedFileType]);
+    return `${base}_reduced${ext}`;
+  }, [filePath]);
 
   const handleAdd = () => {
     if (!filePath || !detectedFileType) return;
-    if (reductionMode === "size" && !validTarget) return;
+    if (useSizeLimit && !validTarget) return;
 
-    console.log(`[reducer] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => quality=${quality}%`);
+    console.log(`[reducer] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => quality=${quality}%${useSizeLimit ? `, max ${targetSize} ${targetUnit}` : ""}`);
 
     onAdd(
       filePath,
@@ -140,16 +145,25 @@ export default function FileReducer({ onAdd, disabled }: Props) {
       quality,
       maxWidth,
       detectedFileType,
-      reductionMode === "size" ? targetBytes : null,
+      useSizeLimit ? targetBytes : null,
     );
 
     setFilePath(null);
     setDetectedFileType(null);
     setQuality(50);
     setMaxWidth(null);
+    setUseSizeLimit(false);
   };
 
   const isVideoOrPhoto = detectedFileType === "video" || detectedFileType === "photo";
+  const outputFileType = detectedFileType === "video" ? "MP4" : detectedFileType === "audio" ? "MP3" : "WebP";
+
+  const buttonLabel = (() => {
+    const parts = [`${quality}% quality`];
+    if (useSizeLimit && validTarget) parts.push(`under ${formatBytes(targetBytes)}`);
+    if (maxWidth) parts.push(`${maxWidth}px wide`);
+    return parts.join(" \u00b7 ");
+  })();
 
   return (
     <motion.div
@@ -216,32 +230,7 @@ export default function FileReducer({ onAdd, disabled }: Props) {
                 <span className="font-medium text-app-text-secondary">Size reduction</span>
               </div>
 
-              <div className="flex gap-2" role="group" aria-label="Reduction mode">
-                {(["quality", "size"] as const).map((mode) => (
-                  <button type="button" key={mode} disabled={disabled} aria-pressed={reductionMode === mode}
-                    className={`format-chip ${reductionMode === mode ? "selected" : ""}`}
-                    onClick={() => setReductionMode(mode)}>{mode === "quality" ? "Quality" : "Target size"}</button>
-                ))}
-              </div>
-              {reductionMode === "size" ? (
-                <div className="space-y-2">
-                  <label htmlFor="reduce-target" className="text-sm text-app-text">Maximum file size</label>
-                  <div className="flex gap-2">
-                    <input id="reduce-target" type="number" min="0" step="any" value={targetSize}
-                      disabled={disabled} onChange={(e) => setTargetSize(e.target.value)}
-                      aria-invalid={!validTarget} aria-describedby="reduce-target-help"
-                      className="flex-1 min-w-0 rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text" />
-                    <select aria-label="Size unit" value={targetUnit} disabled={disabled}
-                      onChange={(e) => setTargetUnit(e.target.value as typeof targetUnit)}
-                      className="rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text">
-                      <option>KB</option><option>MB</option><option>GB</option>
-                    </select>
-                  </div>
-                  <p id="reduce-target-help" className={`text-xs ${validTarget ? "text-app-text-muted" : "text-app-danger"}`}>
-                    {validTarget ? `Output: ${detectedFileType === "video" ? "MP4" : detectedFileType === "audio" ? "MP3" : "WebP"}. Prioritizes quality within your limit; processing may take longer. Resolution stays at your selected width. Very small targets may not be possible. 1 MB = 1,000 KB.` : "Enter a size greater than zero, up to 10 GB."}
-                  </p>
-                </div>
-              ) : <div className="space-y-2">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-medium text-app-text-muted uppercase tracking-wider">
                     Quality
@@ -258,7 +247,58 @@ export default function FileReducer({ onAdd, disabled }: Props) {
                   className="w-full accent-app-accent h-1.5 bg-app-surface-hover rounded-full appearance-none cursor-pointer disabled:opacity-40"
                 />
                 <p className="text-[10px] text-app-text-muted">{getQualityLabel(quality)}</p>
-              </div>}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <button type="button" disabled={disabled}
+                    onClick={() => setUseSizeLimit((prev) => !prev)}
+                    className="flex items-center gap-2 text-[11px] font-medium text-app-text-muted uppercase tracking-wider group"
+                  >
+                    <span className={`inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${
+                      useSizeLimit ? "bg-app-accent border-app-accent text-white" : "border-app-border bg-app-surface group-hover:border-app-accent"
+                    }`}>
+                      {useSizeLimit && (
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      )}
+                    </span>
+                    Max file size
+                  </button>
+                </div>
+                <AnimatePresence>
+                  {useSizeLimit && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-2"
+                    >
+                      <div className="flex gap-2">
+                        <input id="reduce-target" type="number" min="0" step="any" value={targetSize}
+                          disabled={disabled} onChange={(e) => setTargetSize(e.target.value)}
+                          aria-invalid={useSizeLimit && !validTarget} aria-describedby="reduce-target-help"
+                          aria-label="Maximum file size"
+                          className="flex-1 min-w-0 rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text" />
+                        <select aria-label="Size unit" value={targetUnit} disabled={disabled}
+                          onChange={(e) => setTargetUnit(e.target.value as typeof targetUnit)}
+                          className="rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text">
+                          <option>KB</option><option>MB</option><option>GB</option>
+                        </select>
+                      </div>
+                      <p id="reduce-target-help" className={`text-xs ${validTarget ? "text-app-text-muted" : "text-app-danger"}`}>
+                        {validTarget
+                          ? `Output: ${outputFileType}. Quality stays at ${quality}% \u2014 if the file exceeds ${formatBytes(targetBytes)}, it will re-encode to fit. Very small targets may reduce quality.`
+                          : "Enter a size greater than zero, up to 10 GB."}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                {!useSizeLimit && (
+                  <p className="text-xs text-app-text-muted">
+                    No size limit \u2014 output will be encoded at {quality}% quality.
+                  </p>
+                )}
+              </div>
 
               {isVideoOrPhoto && (
                 <div className="space-y-2">
@@ -289,11 +329,11 @@ export default function FileReducer({ onAdd, disabled }: Props) {
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleAdd}
-              disabled={disabled || (reductionMode === "size" && !validTarget)}
+              disabled={disabled || (useSizeLimit && !validTarget)}
               className="w-full btn btn-primary py-3 mt-3"
             >
               <Plus size={16} />
-              Add to Queue — {reductionMode === "size" ? `${targetSize} ${targetUnit} maximum` : `${quality}% quality`}
+              Add to Queue \u2014 {buttonLabel}
             </motion.button>
           </motion.div>
         )}

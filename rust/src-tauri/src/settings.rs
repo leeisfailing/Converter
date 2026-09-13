@@ -11,6 +11,17 @@ pub struct AppSettings {
     pub download_dir: String,
     /// Where reduced/converted files go (default: ~/Documents/Converter by Lee/Output/)
     pub output_dir: String,
+    /// Use GPU hardware encoding when available (default: true)
+    #[serde(default = "default_use_gpu")]
+    pub use_gpu: bool,
+    /// When use_gpu is false, the user can pick a specific encoder (e.g. "h264_amf").
+    /// Empty string means use CPU fallback (libx264).
+    #[serde(default)]
+    pub preferred_encoder: String,
+}
+
+fn default_use_gpu() -> bool {
+    true
 }
 
 fn app_base_dir() -> PathBuf {
@@ -24,7 +35,7 @@ impl Default for AppSettings {
         let base = app_base_dir();
         let download_dir = base.join("Downloads").to_string_lossy().into_owned();
         let output_dir = base.join("Output").to_string_lossy().into_owned();
-        Self { download_dir, output_dir }
+        Self { download_dir, output_dir, use_gpu: true, preferred_encoder: String::new() }
     }
 }
 

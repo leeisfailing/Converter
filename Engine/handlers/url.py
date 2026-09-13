@@ -1,6 +1,5 @@
 """URL detection handler."""
 from Engine.core.ipc import send_response
-from Engine.core.config import resource_path
 from Engine.core.ytdlp_options import javascript_options
 from Engine.core.security import validate_url, validate_string
 
@@ -28,8 +27,6 @@ def handle_detect_url(cmd_args: dict):
 
 
 def _detect_url_info(url: str) -> dict:
-    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
-
     ydl_opts = {
         **javascript_options(),
         'quiet': True,
@@ -41,13 +38,9 @@ def _detect_url_info(url: str) -> dict:
         'format': 'bestvideo+bestaudio/best/bestaudio',
         'socket_timeout': 30,
         'retries': 3,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'geo_bypass': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     }
-
-    if is_youtube:
-        cookies_file = resource_path('cookies.txt')
-        if cookies_file.exists():
-            ydl_opts['cookiefile'] = str(cookies_file)
 
     import yt_dlp as _yt_dlp
     with _yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -72,28 +65,81 @@ def _detect_url_info(url: str) -> dict:
 
     if is_video:
         formats = [
-            {"label": "MP4", "value": "mp4", "desc": "Download video", "qualities": [
+            {"label": "MP4", "value": "mp4", "desc": "Video (H.264)", "qualities": [
+                {"label": "2160p (4K)", "value": "mp4_2160"},
+                {"label": "1440p (2K)", "value": "mp4_1440"},
                 {"label": "1080p", "value": "mp4_1080"},
                 {"label": "720p", "value": "mp4_720"},
                 {"label": "480p", "value": "mp4_480"},
                 {"label": "360p", "value": "mp4_360"},
+                {"label": "240p", "value": "mp4_240"},
             ]},
-            {"label": "MP3", "value": "mp3", "desc": "Extract audio", "qualities": [
+            {"label": "WebM", "value": "webm", "desc": "Video (VP9)", "qualities": [
+                {"label": "2160p (4K)", "value": "webm_2160"},
+                {"label": "1440p (2K)", "value": "webm_1440"},
+                {"label": "1080p", "value": "webm_1080"},
+                {"label": "720p", "value": "webm_720"},
+                {"label": "480p", "value": "webm_480"},
+                {"label": "360p", "value": "webm_360"},
+                {"label": "240p", "value": "webm_240"},
+            ]},
+            {"label": "MKV", "value": "mkv", "desc": "Video (Matroska)", "qualities": [
+                {"label": "2160p (4K)", "value": "mkv_2160"},
+                {"label": "1440p (2K)", "value": "mkv_1440"},
+                {"label": "1080p", "value": "mkv_1080"},
+                {"label": "720p", "value": "mkv_720"},
+                {"label": "480p", "value": "mkv_480"},
+                {"label": "360p", "value": "mkv_360"},
+                {"label": "240p", "value": "mkv_240"},
+            ]},
+            {"label": "MP3", "value": "mp3", "desc": "Audio only", "qualities": [
                 {"label": "320 kbps", "value": "mp3_320"},
                 {"label": "256 kbps", "value": "mp3_256"},
                 {"label": "192 kbps", "value": "mp3_192"},
                 {"label": "128 kbps", "value": "mp3_128"},
                 {"label": "64 kbps", "value": "mp3_64"},
+            ]},
+            {"label": "AAC", "value": "aac", "desc": "Audio only", "qualities": [
+                {"label": "320 kbps", "value": "aac_320"},
+                {"label": "256 kbps", "value": "aac_256"},
+                {"label": "192 kbps", "value": "aac_192"},
+                {"label": "128 kbps", "value": "aac_128"},
+                {"label": "64 kbps", "value": "aac_64"},
+            ]},
+            {"label": "FLAC", "value": "flac", "desc": "Lossless audio", "qualities": []},
+            {"label": "WAV", "value": "wav", "desc": "Uncompressed audio", "qualities": []},
+            {"label": "OGG", "value": "ogg", "desc": "Audio only", "qualities": [
+                {"label": "320 kbps", "value": "ogg_320"},
+                {"label": "256 kbps", "value": "ogg_256"},
+                {"label": "192 kbps", "value": "ogg_192"},
+                {"label": "128 kbps", "value": "ogg_128"},
+                {"label": "64 kbps", "value": "ogg_64"},
             ]},
         ]
     else:
         formats = [
-            {"label": "MP3", "value": "mp3", "desc": "Extract audio", "qualities": [
+            {"label": "MP3", "value": "mp3", "desc": "Audio only", "qualities": [
                 {"label": "320 kbps", "value": "mp3_320"},
                 {"label": "256 kbps", "value": "mp3_256"},
                 {"label": "192 kbps", "value": "mp3_192"},
                 {"label": "128 kbps", "value": "mp3_128"},
                 {"label": "64 kbps", "value": "mp3_64"},
+            ]},
+            {"label": "AAC", "value": "aac", "desc": "Audio only", "qualities": [
+                {"label": "320 kbps", "value": "aac_320"},
+                {"label": "256 kbps", "value": "aac_256"},
+                {"label": "192 kbps", "value": "aac_192"},
+                {"label": "128 kbps", "value": "aac_128"},
+                {"label": "64 kbps", "value": "aac_64"},
+            ]},
+            {"label": "FLAC", "value": "flac", "desc": "Lossless audio", "qualities": []},
+            {"label": "WAV", "value": "wav", "desc": "Uncompressed audio", "qualities": []},
+            {"label": "OGG", "value": "ogg", "desc": "Audio only", "qualities": [
+                {"label": "320 kbps", "value": "ogg_320"},
+                {"label": "256 kbps", "value": "ogg_256"},
+                {"label": "192 kbps", "value": "ogg_192"},
+                {"label": "128 kbps", "value": "ogg_128"},
+                {"label": "64 kbps", "value": "ogg_64"},
             ]},
         ]
 

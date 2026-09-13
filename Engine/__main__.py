@@ -30,9 +30,11 @@ def handle_cancel():
 HANDLERS = {
     "detect_file": ("file", "handle_detect_file"),
     "detect_url": ("url", "handle_detect_url"),
+    "detect_gpu": ("gpu", "handle_detect_gpu"),
     "start_convert": ("convert", "handle_start_convert"),
     "start_download": ("download", "handle_start_download"),
     "start_reduce": ("reduce", "handle_start_reduce"),
+    "start_upscale": ("upscale", "handle_start_upscale"),
 }
 
 

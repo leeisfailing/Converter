@@ -25,11 +25,16 @@ class ConverterWorker:
         output_path: str,
         output_format: str,
         dev_mode: bool = False,
+        use_gpu: bool = False,
+        preferred_encoder: str = "",
     ):
         self.input_path = validate_path(input_path, "input_path")
         self.output_path = validate_output_path(output_path, "output_path")
         self.output_format = validate_string(output_format, "output_format", 32)
         self.dev_mode = dev_mode
+        self.use_gpu = use_gpu
+        self.preferred_encoder = preferred_encoder
+        self.max_width: Optional[int] = None
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
         self._stderr_lines: deque = deque(maxlen=100)
@@ -44,21 +49,68 @@ class ConverterWorker:
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
+    _CODEC_MAP = {
+        'libx264': 'h264', 'h264_nvenc': 'h264', 'h264_amf': 'h264', 'h264_qsv': 'h264',
+        'libx265': 'hevc', 'hevc_nvenc': 'hevc', 'hevc_amf': 'hevc', 'hevc_qsv': 'hevc',
+        'libvpx-vp9': 'vp9', 'av1_nvenc': 'av1', 'av1_amf': 'av1', 'av1_qsv': 'av1',
+    }
+
+    def _codec_for_encoder(self, encoder: str) -> Optional[str]:
+        return self._CODEC_MAP.get(encoder)
+
+    def _probe_codecs(self) -> Optional[dict]:
+        """Probe input file to detect video and audio codecs."""
+        try:
+            cmd = [
+                find_ffmpeg(), '-hide_banner', '-i', self.input_path,
+            ]
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            vcodec, acodec = None, None
+            for line in proc.stderr.splitlines():
+                line_stripped = line.strip()
+                if 'Video:' in line_stripped:
+                    parts = line_stripped.split('Video:')
+                    if len(parts) > 1:
+                        codec_part = parts[1].split(',')[0].strip()
+                        vcodec = codec_part.lower()
+                elif 'Audio:' in line_stripped:
+                    parts = line_stripped.split('Audio:')
+                    if len(parts) > 1:
+                        codec_part = parts[1].split(',')[0].strip()
+                        acodec = codec_part.lower()
+            if vcodec:
+                return {'vcodec': vcodec, 'acodec': acodec}
+        except Exception:
+            pass
+        return None
+
     def _build_command(self) -> List[str]:
         from Engine.formats.video import VIDEO_OUTPUT_FORMATS
         from Engine.formats.photo import PHOTO_OUTPUT_FORMATS
         from Engine.formats.audio import AUDIO_OUTPUT_FORMATS
         from Engine.formats.detection import detect_file_type
+        from Engine.core.gpu import get_video_encoder, video_encoding_args, get_hwaccel_args, get_cuda_scale_filter
 
         input_file = Path(self.input_path)
         output_file = Path(self.output_path)
         file_type = detect_file_type(self.input_path)
 
-        cmd = [find_ffmpeg(), '-y', '-hide_banner', '-i', str(input_file)]
-
+        # Determine video encoder early so hwaccel can be encoder-aware
         is_video_output = self.output_format in VIDEO_OUTPUT_FORMATS
         is_audio_output = self.output_format in AUDIO_OUTPUT_FORMATS
         is_photo_output = self.output_format in PHOTO_OUTPUT_FORMATS
+        video_encoder = None
+        if is_video_output and (file_type == 'video' or file_type == 'photo'):
+            fmt_pre = VIDEO_OUTPUT_FORMATS[self.output_format]
+            video_encoder = get_video_encoder(self.use_gpu, fallback=fmt_pre['vcodec'], preferred_encoder=self.preferred_encoder, output_format=self.output_format)
+
+        cmd = [find_ffmpeg(), '-y', '-nostdin', '-hide_banner']
+        cmd += get_hwaccel_args(self.use_gpu, encoder=video_encoder)
+        cmd += ['-i', str(input_file)]
+        cmd += ['-map_metadata', '0']
 
         if is_audio_output and (file_type == 'video' or file_type == 'audio'):
             fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
@@ -75,11 +127,40 @@ class ConverterWorker:
                 cmd += ['-compression_level', fmt['compression']]
         elif is_video_output and (file_type == 'video' or file_type == 'photo'):
             fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
-            if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
+            encoder = video_encoder
+            # Stream copy when input codec is compatible with output format
+            probe = self._probe_codecs()
+            can_stream_copy = (
+                probe
+                and probe['vcodec'] in ('h264', 'hevc', 'av1', 'vp9')
+                and encoder in ('libx264', 'hevc_nvenc', 'h264_nvenc', 'h264_amf', 'hevc_amf', 'h264_qsv', 'hevc_qsv')
+                and probe['vcodec'] == self._codec_for_encoder(encoder)
+            )
+            if can_stream_copy:
+                cmd += ['-c:v', 'copy']
+                # Also copy audio when output format supports it
+                if fmt.get('acodec') and probe.get('acodec') in ('aac', 'mp3', 'opus', 'vorbis', 'flac', 'ac3', 'eac3'):
+                    cmd += ['-c:a', 'copy']
+                elif fmt.get('acodec'):
+                    cmd += ['-c:a', fmt['acodec'], '-b:a', '192k']
+                else:
+                    cmd += ['-an']
             else:
-                cmd += ['-an']
+                # GPU-resident scale when using full CUDA pipeline (NVENC decode+encode)
+                if encoder and encoder.endswith("_nvenc") and probe and probe.get('width'):
+                    cuda_scale = get_cuda_scale_filter(probe['width'], self.max_width or 0)
+                    if cuda_scale:
+                        cmd += ['-vf', cuda_scale]
+                    elif self.max_width:
+                        cmd += ['-vf', f'scale={self.max_width}:-2']
+                elif self.max_width:
+                    cmd += ['-vf', f'scale={self.max_width}:-2']
+                # Transcode with visually lossless quality (CRF 18)
+                cmd += video_encoding_args(encoder, quality=18)
+                if fmt.get('acodec'):
+                    cmd += ['-c:a', fmt['acodec'], '-b:a', '192k']
+                else:
+                    cmd += ['-an']
         elif self.dev_mode and is_audio_output:
             fmt = AUDIO_OUTPUT_FORMATS[self.output_format]
             cmd += ['-vn']
@@ -89,9 +170,23 @@ class ConverterWorker:
                 cmd += ['-b:a', fmt['bitrate']]
         elif self.dev_mode and is_video_output:
             fmt = VIDEO_OUTPUT_FORMATS[self.output_format]
-            cmd += ['-c:v', fmt['vcodec'], '-preset', 'medium']
+            encoder = video_encoder
+            # GPU-resident scale when using full CUDA pipeline (NVENC decode+encode)
+            if encoder and encoder.endswith("_nvenc"):
+                probe = self._probe_codecs()
+                if probe and probe.get('width'):
+                    cuda_scale = get_cuda_scale_filter(probe['width'], self.max_width or 0)
+                    if cuda_scale:
+                        cmd += ['-vf', cuda_scale]
+                    elif self.max_width:
+                        cmd += ['-vf', f'scale={self.max_width}:-2']
+                elif self.max_width:
+                    cmd += ['-vf', f'scale={self.max_width}:-2']
+            elif self.max_width:
+                cmd += ['-vf', f'scale={self.max_width}:-2']
+            cmd += video_encoding_args(encoder, quality=18)
             if fmt.get('acodec'):
-                cmd += ['-c:a', fmt['acodec'], '-b:a', '128k']
+                cmd += ['-c:a', fmt['acodec'], '-b:a', '192k']
             else:
                 cmd += ['-an']
         elif self.dev_mode and is_photo_output:
@@ -106,7 +201,21 @@ class ConverterWorker:
                 f"Please select a supported output format."
             )
 
+        if self.output_format in ('mp4', 'mov', 'm4v'):
+            cmd += ['-movflags', '+use_metadata_tags']
         cmd.append(str(output_file))
+        import sys
+        print(f"[convert] ffmpeg cmd output_file={output_file!r}, resolved={str(output_file.resolve())!r}", file=sys.stderr, flush=True)
+        print(f"[convert] GPU enabled: {self.use_gpu}", file=sys.stderr, flush=True)
+        print(f"[convert] Preferred encoder: {self.preferred_encoder!r}", file=sys.stderr, flush=True)
+        print(f"[convert] Selected video encoder: {video_encoder!r}", file=sys.stderr, flush=True)
+        print(f"[convert] Full ffmpeg command:", file=sys.stderr, flush=True)
+        print(f"  {' '.join(cmd)}", file=sys.stderr, flush=True)
+        # Show if GPU hwaccel is in the args
+        has_hwaccel = any('hwaccel' in arg for arg in cmd)
+        has_nvenc = any('nvenc' in arg for arg in cmd)
+        has_cuda = any('cuda' in arg for arg in cmd)
+        print(f"[convert] GPU pipeline: hwaccel={has_hwaccel}, nvenc={has_nvenc}, cuda={has_cuda}", file=sys.stderr, flush=True)
         return cmd
 
     def _run(self):

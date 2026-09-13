@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { sanitizePath, sanitizeUrl, startDownload } from "../src/lib/tauri-commands";
+import { sanitizePath, sanitizeUrl, startDownload, startConvert, startReduce, saveSettings } from "../src/lib/tauri-commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -21,6 +21,9 @@ describe("download path validation", () => {
       url: "https://www.youtube.com/watch?v=9tGvNx4tXKo",
       formatType: "bestvideo+bestaudio/best",
       outputDir,
+      writeSubtitles: false,
+      writeThumbnail: false,
+      useBrowserCookies: false,
     });
   });
 
@@ -45,4 +48,15 @@ describe("shared social links", () => {
   ])('preserves query parameters: %s', (url) => {
     expect(sanitizeUrl(url)).toBe(url);
   });
+});
+
+it('passes the manual encoder through settings and media commands', async () => {
+  vi.mocked(invoke).mockResolvedValue({});
+  const preferredEncoder = 'hevc_nvenc';
+  await saveSettings({ downloadDir: 'C:/Downloads', outputDir: 'C:/Output', useGpu: false, preferredEncoder });
+  expect(invoke).toHaveBeenLastCalledWith('save_settings', { downloadDir: 'C:/Downloads', outputDir: 'C:/Output', useGpu: false, preferredEncoder });
+  await startConvert({ input: 'C:/input.mp4', output: 'C:/output.mp4', format: 'mp4', dev_mode: false, use_gpu: false, preferred_encoder: preferredEncoder });
+  expect(invoke).toHaveBeenLastCalledWith('start_convert', expect.objectContaining({ useGpu: false, preferredEncoder }));
+  await startReduce({ input: 'C:/input.mp4', output: 'C:/output.mp4', quality: 50, file_type: 'video', max_width: null, target_bytes: null, use_gpu: false, preferred_encoder: preferredEncoder });
+  expect(invoke).toHaveBeenLastCalledWith('start_reduce', expect.objectContaining({ useGpu: false, preferredEncoder }));
 });

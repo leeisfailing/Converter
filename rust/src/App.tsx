@@ -5,6 +5,7 @@ import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
 import FileReducer from "./components/FileReducer";
+import Upscaler from "./components/Upscaler";
 import QueueManager from "./components/QueueManager";
 import DebugConsole from "./components/DebugConsole";
 const SettingsPanel = lazy(() => import("./components/Settings"));
@@ -18,20 +19,26 @@ import {
   startDownload,
   startConvert,
   startReduce,
+  startUpscale,
+  startConvertNative,
+  startReduceNative,
   cancelOperation,
   getSettings,
   sanitizePath,
   sanitizeUrl,
   sanitizeFormat,
+  detectGpusNative,
+  probeFile,
 } from "./lib/tauri-commands";
 import type { AppSettings } from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
-import { Download, ArrowRightLeft, Minimize2, Zap, Settings } from "lucide-react";
+import { Download, ArrowRightLeft, Minimize2, ArrowUp, Zap, Settings } from "lucide-react";
 const About = lazy(() => import("./components/About"));
 const BugReport = lazy(() => import("./components/BugReport"));
-import { loadAppVersion, useAppVersion } from "./lib/updater";
+import { loadAppVersion, useAppVersion, checkForUpdate } from "./lib/updater";
+import UpdatePrompt from "./components/UpdatePrompt";
 
-type Mode = "download" | "convert" | "reduce";
+type Mode = "download" | "convert" | "reduce" | "upscale";
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -105,6 +112,7 @@ const MODE_CONFIG = [
   { id: "download" as Mode, label: "Download", icon: Download },
   { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
   { id: "reduce" as Mode, label: "Reduce", icon: Minimize2 },
+  { id: "upscale" as Mode, label: "Upscale", icon: ArrowUp },
 ];
 
 const modeTransition = {
@@ -130,7 +138,10 @@ export default function App() {
   const [appSettings, setAppSettings] = useState<AppSettings>({
     downloadDir: "",
     outputDir: "",
+    useGpu: true,
+    preferredEncoder: "",
   });
+  const [nativeGpuInfo, setNativeGpuInfo] = useState<{ available: boolean; encoder: string; vendor: string } | null>(null);
 
   const debugConsole = useDebugConsole({ maxLogs: 500 });
   const toast = useToast();
@@ -140,6 +151,11 @@ export default function App() {
 
   useEffect(() => { void loadAppVersion(); }, []);
 
+  useEffect(() => {
+    const timer = setTimeout(() => { void checkForUpdate(); }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const processNextCallback = useCallback(async (item: QueueItem) => {
     try {
       const currentSettings = appSettings;
@@ -148,21 +164,57 @@ export default function App() {
         const url = await sanitizeUrl(item.url!);
         const formatType = await sanitizeFormat(item.formatType || "bestvideo+bestaudio/best");
         const dir = await sanitizePath(outputDir);
-        await startDownload({ url, format_type: formatType, output_dir: dir });
+        await startDownload({
+          url, format_type: formatType, output_dir: dir,
+          write_subtitles: item.writeSubtitles,
+          write_thumbnail: item.writeThumbnail,
+          use_browser_cookies: item.useBrowserCookies,
+        });
       } else if (item.type === "convert") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
         const format = await sanitizeFormat(item.outputFormat!);
-        await startConvert({ input, output, format, dev_mode: item.devMode || false });
+        console.log(`[convert] processNext: item.outputPath="${item.outputPath}", output="${output}", format="${format}"`);
+        try {
+          await startConvertNative({ input, output, format, dev_mode: item.devMode || false, use_gpu: currentSettings.useGpu, preferred_encoder: currentSettings.preferredEncoder });
+        } catch (nativeErr) {
+          console.warn("[queue] Native convert failed, falling back to Python:", nativeErr);
+          await startConvert({ input, output, format, dev_mode: item.devMode || false, use_gpu: currentSettings.useGpu, preferred_encoder: currentSettings.preferredEncoder });
+        }
       } else if (item.type === "reduce") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
-        await startReduce({
+        try {
+          await startReduceNative({
+            input, output,
+            quality: item.reduceQuality || 50,
+            target_bytes: item.reduceTargetBytes ?? null,
+            max_width: item.reduceMaxWidth || null,
+            file_type: item.reduceFileType || "video",
+            use_gpu: currentSettings.useGpu,
+            preferred_encoder: currentSettings.preferredEncoder,
+          });
+        } catch (nativeErr) {
+          console.warn("[queue] Native reduce failed, falling back to Python:", nativeErr);
+          await startReduce({
+            input, output,
+            quality: item.reduceQuality || 50,
+            target_bytes: item.reduceTargetBytes ?? null,
+            max_width: item.reduceMaxWidth || null,
+            file_type: item.reduceFileType || "video",
+            use_gpu: currentSettings.useGpu,
+            preferred_encoder: currentSettings.preferredEncoder,
+          });
+        }
+      } else if (item.type === "upscale") {
+        const input = await sanitizePath(item.inputPath!);
+        const output = await sanitizePath(item.outputPath!);
+        await startUpscale({
           input, output,
-          quality: item.reduceQuality || 50,
-          target_bytes: item.reduceTargetBytes ?? null,
-          max_width: item.reduceMaxWidth || null,
-          file_type: item.reduceFileType || "video",
+          target: item.upscaleTarget || "4k",
+          file_type: item.upscaleFileType || "video",
+          use_gpu: currentSettings.useGpu,
+          preferred_encoder: currentSettings.preferredEncoder,
         });
       }
     } catch (err) {
@@ -191,6 +243,19 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    detectGpusNative()
+      .then((caps) => {
+        const best = caps.find(c => c.works);
+        if (best) {
+          setNativeGpuInfo({ available: true, encoder: best.encoder, vendor: best.vendor });
+        } else {
+          setNativeGpuInfo({ available: false, encoder: "", vendor: "" });
+        }
+      })
+      .catch(() => setNativeGpuInfo(null));
+  }, []);
+
+  useEffect(() => {
     queue.processNext(processNextCallback);
   }, [queue.queue, processNextCallback, queue.processNext]);
 
@@ -206,11 +271,12 @@ export default function App() {
     queue.clearCompleted();
   }, [queue.clearCompleted]);
 
-  const handleDownloadAdd = useCallback(async (url: string, formatType: string) => {
+  const handleDownloadAdd = useCallback(async (url: string, formatType: string, options?: { writeSubtitles?: boolean; writeThumbnail?: boolean; useBrowserCookies?: boolean }) => {
     const safeUrl = await sanitizeUrl(url);
     const safeFormat = await sanitizeFormat(formatType);
     const isYoutube = safeUrl.toLowerCase().includes("youtube.com") || safeUrl.toLowerCase().includes("youtu.be");
     const label = isYoutube ? safeUrl.replace(/https?:\/\/(www\.)?/, "").substring(0, 50) : safeUrl.split("/").pop()?.substring(0, 50) || safeUrl;
+    const fmtLabel = safeFormat.startsWith("mp3") ? " (MP3)" : safeFormat.startsWith("mp4") ? " (MP4)" : safeFormat.startsWith("webm") ? " (WebM)" : safeFormat.startsWith("mkv") ? " (MKV)" : safeFormat.startsWith("aac") ? " (AAC)" : safeFormat === "flac" ? " (FLAC)" : safeFormat === "wav" ? " (WAV)" : safeFormat.startsWith("ogg") ? " (OGG)" : "";
     addToQueue({
       id: genId(),
       type: "download",
@@ -219,7 +285,10 @@ export default function App() {
       url: safeUrl,
       formatType: safeFormat,
       outputDir: appSettings.downloadDir || undefined,
-      label: `${label}${safeFormat.startsWith("mp3") ? " (MP3)" : safeFormat.startsWith("mp4") ? " (MP4)" : ""}`,
+      writeSubtitles: options?.writeSubtitles,
+      writeThumbnail: options?.writeThumbnail,
+      useBrowserCookies: options?.useBrowserCookies,
+      label: `${label}${fmtLabel}`,
       createdAt: Date.now(),
     });
     toast.addToast("info", "Added to queue", `${label} (${safeFormat.toUpperCase()})`);
@@ -250,6 +319,29 @@ export default function App() {
     toast.addToast("info", "Added to queue", `${fileName} → ${reductionLabel}`);
   }, [addToQueue, appSettings]);
 
+  const handleUpscaleAdd = useCallback(async (
+    inputPath: string, outputPath: string, target: string,
+    fileType: "video" | "photo",
+  ) => {
+    const safeInput = await sanitizePath(inputPath);
+    const safeOutput = await sanitizePath(outputPath);
+    const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
+    const sepVal = sep();
+    const finalOutputPath = appSettings.outputDir
+      ? `${appSettings.outputDir}${sepVal}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
+    addToQueue({
+      id: genId(),
+      type: "upscale",
+      status: "pending",
+      progress: 0,
+      inputPath: safeInput, outputPath: finalOutputPath,
+      upscaleTarget: target, upscaleFileType: fileType,
+      label: `${fileName} → ${target.toUpperCase()}`,
+      createdAt: Date.now(),
+    });
+    toast.addToast("info", "Added to queue", `${fileName} → ${target.toUpperCase()}`);
+  }, [addToQueue, appSettings]);
+
   const handleConvertAdd = useCallback(async (
     inputPath: string, outputPath: string, outputFormat: string,
     devMode: boolean,
@@ -258,7 +350,11 @@ export default function App() {
     const safeOutput = await sanitizePath(outputPath);
     const safeFormat = await sanitizeFormat(outputFormat);
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
-    const finalOutputPath = appSettings.outputDir || safeOutput;
+    const sepVal = sep();
+    const finalOutputPath = appSettings.outputDir
+      ? `${appSettings.outputDir}${sepVal}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
+
+    console.log(`[convert] handleConvertAdd: outputDir="${appSettings.outputDir}", sep="${sepVal}", safeOutput="${safeOutput}", fileName="${safeOutput.split(/[\\/]/).pop()}", finalOutputPath="${finalOutputPath}"`);
 
     addToQueue({
       id: genId(),
@@ -297,7 +393,6 @@ export default function App() {
       <ErrorBoundary>
         <div className="app-shell h-full flex flex-col bg-app-bg">
           <AppHeader
-            version={appVersion}
             theme={theme}
             showConsole={showConsole}
             showSettings={showSettings}
@@ -328,8 +423,13 @@ export default function App() {
               <div className="workspace-content mx-auto space-y-5">
                 <div className="workspace-intro">
                   <p className="workspace-eyebrow">{showSettings ? "Preferences" : "Media workspace"}</p>
-                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : "Less size. More space."}</h1>
-                  <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We’ll handle the rest." : "Find the right balance between file size and quality."}</p>
+                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : mode === "upscale" ? "Higher resolution. Same quality." : "Less size. More space."}</h1>
+                  <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We\u2019ll handle the rest." : mode === "upscale" ? "Enhance resolution with GPU-accelerated upscaling." : "Find the right balance between file size and quality."}</p>
+                  {nativeGpuInfo?.available && (
+                    <p className="text-[11px] text-green-400 mt-1">
+                      GPU: {nativeGpuInfo.vendor} ({nativeGpuInfo.encoder})
+                    </p>
+                  )}
                 </div>
                 <Suspense fallback={<p className="text-sm text-app-text-secondary">Loading tools...</p>}>
                 <AnimatePresence mode="wait">
@@ -362,6 +462,11 @@ export default function App() {
                       {mode === "reduce" && (
                         <motion.div key="reduce" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
                           <FileReducer onAdd={handleReduceAdd} disabled={isProcessing} />
+                        </motion.div>
+                      )}
+                      {mode === "upscale" && (
+                        <motion.div key="upscale" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
+                          <Upscaler onAdd={handleUpscaleAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
                     </>
@@ -413,6 +518,7 @@ export default function App() {
           </div>
 
           <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+          <UpdatePrompt onOpenAbout={() => setShowAbout(true)} />
         </div>
       </ErrorBoundary>
       {showAbout && (

@@ -116,10 +116,12 @@ def reduce_to_target(worker):
 
         rates = [320, 256, 224, 192, 160, 128, 112, 96, 80, 64, 56, 48, 40, 32, 24, 16, 8]
         rates = [r for r in rates if r * 1000 * duration / 8 <= target]
+        if not rates:
+            raise ValueError('Target is too small for this audio. Choose a larger size.')
         lower, upper = 0, None
         for attempt in range(len(rates) if worker.file_type == 'audio' else 5):
             cmd = [find_binary('ffmpeg'), '-v', 'error', '-nostdin', '-y', '-i', worker.input_path,
-                   '-map_metadata', '-1']
+                   '-map_metadata', '0']
             if worker.file_type == 'audio':
                 if not audio:
                     raise ValueError('Target is too small for this audio. Choose a larger size.')
@@ -130,14 +132,16 @@ def reduce_to_target(worker):
                 video_rate = int(budget - audio_rate)
                 if not video or video_rate < 10000:
                     raise ValueError('Target is too small for this video. Choose a larger size.')
-                video_opts = ['-map', '0:v:0', '-c:v', 'libx264',
-                        '-b:v', str(video_rate), '-preset', 'veryslow', '-fastfirstpass', '0', '-pix_fmt', 'yuv420p',
+                # This algorithm requires x264's file-based two-pass analysis.
+                encoder = 'libx264'
+                video_opts = ['-map', '0:v:0', '-c:v', encoder,
+                        '-b:v', str(video_rate), '-preset', 'veryslow', '-pix_fmt', 'yuv420p',
                         '-vf', f'scale={max(2, width // 2 * 2)}:-2',
                         '-passlogfile', str(Path(folder) / 'analysis')]
                 if worker.on_progress:
                     worker.on_progress(min(90, 5 + attempt * 16))
                 _execute(worker, cmd + video_opts + ['-pass', '1', '-an', '-f', 'null', os.devnull])
-                cmd += video_opts + ['-pass', '2', '-map', '0:a:0?', '-movflags', '+faststart']
+                cmd += video_opts + ['-pass', '2', '-map', '0:a:0?', '-movflags', '+faststart+use_metadata_tags']
                 if audio:
                     cmd += ['-c:a', 'aac', '-b:a', str(audio_rate)]
             cmd.append(str(candidate))

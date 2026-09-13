@@ -30,6 +30,9 @@ def handle_start_download(cmd_args: dict):
             return None
         format_type = validate_string(format_type, "format_type", 128)
         format_type = validate_download_format(format_type)
+        write_subtitles = bool(cmd_args.get("write_subtitles", False))
+        write_thumbnail = bool(cmd_args.get("write_thumbnail", False))
+        use_browser_cookies = bool(cmd_args.get("use_browser_cookies", False))
     except ValueError as e:
         send_finished(False, str(e), "")
         return None
@@ -49,7 +52,11 @@ def handle_start_download(cmd_args: dict):
             status=info.get('status', ''),
         )
 
-    worker = DownloadWorker(url, output_dir=output_dir, format_type=format_type)
+    worker = DownloadWorker(
+        url, output_dir=output_dir, format_type=format_type,
+        write_subtitles=write_subtitles, write_thumbnail=write_thumbnail,
+        use_browser_cookies=use_browser_cookies,
+    )
     worker.on_progress = on_progress
     worker.on_finished = on_finished
     worker.on_download_status = on_download_status

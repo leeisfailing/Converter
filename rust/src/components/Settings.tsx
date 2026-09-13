@@ -1,3 +1,4 @@
+import Toggle from "./Toggle";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -7,8 +8,10 @@ import {
   resetSettings,
   getDefaultDownloadDir,
   getDefaultOutputDir,
+  detectGpu,
+  detectGpusNative,
 } from "../lib/tauri-commands";
-import type { AppSettings } from "../lib/tauri-commands";
+import type { AppSettings, GpuInfo, GpuCapability } from "../lib/tauri-commands";
 import {
   FolderOpen,
   Download,
@@ -17,6 +20,7 @@ import {
   Check,
   AlertCircle,
   Info,
+  Monitor,
 } from "lucide-react";
 
 interface Props {
@@ -34,12 +38,17 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
   const [settings, setSettings] = useState<AppSettings>({
     downloadDir: "",
     outputDir: "",
+    useGpu: true,
+    preferredEncoder: "",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [saveMessage, setSaveMessage] = useState<"ok" | "error" | null>(null);
   const messageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
+  const [nativeGpus, setNativeGpus] = useState<GpuCapability[]>([]);
+  const [gpuLoading, setGpuLoading] = useState(true);
 
   const isBusy = saving || resetting;
 
@@ -52,6 +61,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
 
   useEffect(() => {
     loadSettings();
+    detectGpuInfo();
     return () => clearMessageTimer();
   }, []);
 
@@ -73,11 +83,29 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
       const fallback: AppSettings = {
         downloadDir: defaultDir,
         outputDir: defaultOutput,
+        useGpu: true,
+        preferredEncoder: "",
       };
       setSettings(fallback);
       onSettingsChanged(fallback);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const detectGpuInfo = async () => {
+    setGpuLoading(true);
+    try {
+      const [info, nativeCaps] = await Promise.all([
+        detectGpu().catch(() => ({ ok: false, available: false, encoder: null, vendor: null, hwaccel: null, name: null, allEncoders: [], message: "GPU detection failed" })),
+        detectGpusNative().catch(() => []),
+      ]);
+      setGpuInfo(info);
+      setNativeGpus(nativeCaps);
+    } catch {
+      setGpuInfo({ ok: false, available: false, encoder: null, vendor: null, hwaccel: null, name: null, allEncoders: [], message: "GPU detection failed" });
+    } finally {
+      setGpuLoading(false);
     }
   };
 
@@ -171,7 +199,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
             onChange={(e) =>
               setSettings((prev) => ({ ...prev, downloadDir: e.target.value }))
             }
-            disabled={disabled}
+            disabled={disabled || isBusy}
             className="input flex-1 text-xs"
             placeholder="Downloads folder"
           />
@@ -181,7 +209,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
                 setSettings((prev) => ({ ...prev, downloadDir: dir }))
               )
             }
-            disabled={disabled}
+            disabled={disabled || isBusy}
             className="btn px-3 py-2"
             title="Browse for folder"
           >
@@ -213,7 +241,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
             onChange={(e) =>
               setSettings((prev) => ({ ...prev, outputDir: e.target.value }))
             }
-            disabled={disabled}
+            disabled={disabled || isBusy}
             className="input flex-1 text-xs"
             placeholder="Output folder"
           />
@@ -223,7 +251,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
                 setSettings((prev) => ({ ...prev, outputDir: dir }))
               )
             }
-            disabled={disabled}
+            disabled={disabled || isBusy}
             className="btn px-3 py-2"
             title="Browse for folder"
           >
@@ -232,11 +260,104 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
         </div>
       </motion.div>
 
-      {/* Save / Reset buttons */}
+      {/* GPU Acceleration */}
       <motion.div
         initial={{ opacity: 0, y: 5 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
+        className="panel p-4 space-y-3"
+      >
+        <div className="flex items-center gap-2">
+          <Monitor size={14} className="text-app-accent" />
+          <span className="text-xs font-semibold text-app-text-secondary uppercase tracking-wider">
+            Performance
+          </span>
+        </div>
+        <p className="text-[11px] text-app-text-muted">
+          Use GPU encoding for supported video formats. Target-size reduction uses CPU for precise sizing.
+        </p>
+
+        <div className="flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-app-text font-medium">Automatic GPU selection</p>
+            {gpuLoading ? (
+              <p className="text-[11px] text-app-text-muted">Detecting GPU...</p>
+            ) : gpuInfo?.available ? (
+              <p className="text-[11px] text-green-400 truncate">
+                {gpuInfo.name} ({gpuInfo.encoder})
+              </p>
+            ) : (
+              <p className="text-[11px] text-app-text-muted">
+                {gpuInfo?.message || "No hardware encoder detected"}
+              </p>
+            )}
+          </div>
+          <Toggle
+            label="Automatic GPU selection"
+            checked={settings.useGpu}
+            disabled={disabled || isBusy || gpuLoading}
+            onChange={(useGpu) => {
+              setSettings((prev) => {
+                const next = { ...prev, useGpu };
+                onSettingsChanged(next);
+                return next;
+              });
+            }}
+          />
+        </div>
+
+        {!settings.useGpu && (
+          <div className="space-y-2">
+            <label htmlFor="preferred-encoder" className="text-xs text-app-text font-medium">Video encoder</label>
+            <select
+              id="preferred-encoder"
+              className="input w-full text-xs"
+              value={settings.preferredEncoder || "libx264"}
+              disabled={disabled || isBusy || gpuLoading}
+              onChange={(event) => setSettings((prev) => {
+                const next = { ...prev, preferredEncoder: event.target.value };
+                onSettingsChanged(next);
+                return next;
+              })}
+            >
+              {(gpuInfo?.allEncoders?.length ? gpuInfo.allEncoders : [{ id: "libx264", vendor: "CPU", label: "Software H.264 (CPU)" }]).map((encoder) => (
+                <option key={encoder.id} value={encoder.id}>{encoder.label}</option>
+              ))}
+              {settings.preferredEncoder && !["libx264", ...(gpuInfo?.allEncoders ?? []).map((encoder) => encoder.id)].includes(settings.preferredEncoder) && (
+                <option value={settings.preferredEncoder}>{settings.preferredEncoder} (unavailable; uses CPU)</option>
+              )}
+            </select>
+            <p className="text-[11px] text-app-text-muted">Uses CPU when the selected encoder is unavailable or incompatible with the output format. Target-size reduction always uses CPU.</p>
+          </div>
+        )}
+
+        {nativeGpus.length > 0 && (
+          <div className="space-y-1 mt-2">
+            <p className="text-[11px] text-app-text-secondary font-medium">Detected encoders:</p>
+            {nativeGpus.map((gpu) => (
+              <div key={gpu.encoder} className="flex items-center gap-2 text-[11px]">
+                <span className={gpu.works ? "text-green-400" : "text-red-400"}>
+                  {gpu.works ? "●" : "○"}
+                </span>
+                <span className="text-app-text">{gpu.label}</span>
+                <span className="text-app-text-muted">({gpu.vendor}, {gpu.hwaccel})</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!gpuInfo?.available && !gpuLoading && (
+          <p className="text-[11px] text-app-text-muted italic">
+            Hardware encoding is not available on this system. Conversion will use CPU.
+          </p>
+        )}
+      </motion.div>
+
+      {/* Save / Reset buttons */}
+      <motion.div
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
         className="flex gap-2"
       >
           <motion.button

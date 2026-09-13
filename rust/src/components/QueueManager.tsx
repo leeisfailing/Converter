@@ -4,6 +4,7 @@ import {
   Download,
   ArrowRightLeft,
   Minimize2,
+  ArrowUp,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -12,6 +13,25 @@ import {
   List,
 } from "lucide-react";
 import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
+
+function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return "";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let idx = 0;
+  let speed = bytesPerSec;
+  while (speed >= 1024 && idx < units.length - 1) {
+    speed /= 1024;
+    idx++;
+  }
+  return `${speed.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function formatEta(seconds: number): string {
+  if (!seconds || seconds <= 0) return "";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
 
 interface Props {
   items: QueueItem[];
@@ -34,6 +54,7 @@ const typeConfig: Record<string, { icon: typeof Download; color: string; bg: str
   download: { icon: Download, color: "text-app-accent", bg: "bg-app-accent-dim" },
   convert: { icon: ArrowRightLeft, color: "text-purple-400", bg: "bg-purple-500/10" },
   reduce: { icon: Minimize2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  upscale: { icon: ArrowUp, color: "text-blue-400", bg: "bg-blue-500/10" },
 };
 
 const staggerItem = {
@@ -78,6 +99,19 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
             <span className={`text-[10px] ${sConfig.color}`}>
               {item.status === "active" ? `${Math.round(item.progress)}%` : item.status}
             </span>
+            {item.status === "active" && item.type === "download" && (item.downloadSpeed ?? 0) > 0 && (
+              <span className="text-[10px] text-app-accent font-medium">
+                {formatSpeed(item.downloadSpeed ?? 0)}
+              </span>
+            )}
+            {item.status === "active" && item.type === "download" && (item.downloadEta ?? 0) > 0 && (
+              <span className="text-[10px] text-app-text-muted">
+                {formatEta(item.downloadEta ?? 0)} left
+              </span>
+            )}
+            {item.status === "active" && item.type === "download" && item.downloadIsLive && (
+              <span className="text-[10px] text-red-400 font-medium">LIVE</span>
+            )}
             {item.error && (
               <span className="text-[10px] text-app-danger truncate max-w-[120px]">
                 {item.error}

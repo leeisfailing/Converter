@@ -21,7 +21,8 @@ class ExtractorSupportTests(unittest.TestCase):
                 class FixtureDL(yt_dlp.YoutubeDL):
                     def extract_info(self, url, download=False):
                         self_test.assertFalse(download)
-                        self_test.assertNotIn('cookiesfrombrowser', self.params)
+                        # cookiesfrombrowser may be present for YouTube URLs
+                        # (enables age-restricted content detection)
                         return self.process_ie_result({
                             'id': 'fixture', 'title': 'Fixture', 'extractor': 'fixture',
                             'webpage_url': url, 'formats': [dict(f) for f in formats],
@@ -29,8 +30,7 @@ class ExtractorSupportTests(unittest.TestCase):
 
                 self_test = self
                 with tempfile.TemporaryDirectory() as folder, \
-                     patch('yt_dlp.YoutubeDL', FixtureDL), \
-                     patch('Engine.handlers.url.resource_path', return_value=Path(folder) / 'cookies.txt'):
+                     patch('yt_dlp.YoutubeDL', FixtureDL):
                     result = _detect_url_info('https://youtu.be/fixture')
                 self.assertTrue(result['ok'])
                 self.assertEqual(result['title'], 'Fixture')

@@ -2,7 +2,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Info, Minus, Moon, Settings, Sun, Terminal, X } from "lucide-react";
 
 interface AppHeaderProps {
-  version: string;
   theme: "dark" | "light";
   showConsole: boolean;
   showSettings: boolean;
@@ -28,7 +27,6 @@ export default function AppHeader(props: AppHeaderProps) {
       <div className="app-brand" data-tauri-drag-region>
         <img className="app-brand-mark" src="/app-icon.png" width={34} height={34} alt="" draggable={false} />
         <span className="app-brand-name">Converter</span>
-        <span className="app-version">v{props.version}</span>
       </div>
       <div className="app-drag-space" data-tauri-drag-region />
       <div className="app-tools" role="group" aria-label="Application tools">

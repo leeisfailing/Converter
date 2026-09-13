@@ -41,13 +41,23 @@ export function sanitizeString(s: string, maxLength: number = 256): string {
 
 export function sanitizeFormat(fmt: string): string {
   const ALLOWED = [
-    "mp4", "mkv", "webm", "avi", "mov", "flv", "ogg", "opus",
-    "mp3", "wav", "flac", "aac", "m4a", "jpg", "jpeg", "png",
-    "webp", "bmp", "tiff", "tif", "gif", "avif", "heic", "heif",
-    "bestvideo+bestaudio/best", "best", "worst",
-    "mp4_1080", "mp4_720", "mp4_480", "mp4_360",
+    // Video output formats
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "mpg", "mpeg",
+    "3gp", "mts", "vob", "gif",
+    // Audio output formats
+    "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus",
+    // Photo output formats
+    "jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "avif", "heic", "heif",
+    // Download-specific video quality formats
+    "mp4_2160", "mp4_1440", "mp4_1080", "mp4_720", "mp4_480", "mp4_360", "mp4_240",
+    "webm_2160", "webm_1440", "webm_1080", "webm_720", "webm_480", "webm_360", "webm_240",
+    "mkv_2160", "mkv_1440", "mkv_1080", "mkv_720", "mkv_480", "mkv_360", "mkv_240",
+    // Download-specific audio quality formats
     "mp3_320", "mp3_256", "mp3_192", "mp3_128", "mp3_64",
-    "original",
+    "aac_320", "aac_256", "aac_192", "aac_128", "aac_64",
+    "ogg_320", "ogg_256", "ogg_192", "ogg_128", "ogg_64",
+    // Download fallback formats
+    "bestvideo+bestaudio/best", "best", "worst", "original",
   ];
   const cleaned = sanitizeString(fmt, 64);
   if (!ALLOWED.includes(cleaned.toLowerCase())) throw new Error(`Invalid format: ${cleaned}`);
@@ -120,17 +130,21 @@ export async function startConvert(params: {
   output: string;
   format: string;
   dev_mode: boolean;
+  use_gpu: boolean;
+  preferred_encoder?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
   const safeFormat = sanitizeFormat(params.format);
-  console.log(`[cmd] startConvert("${safeInput.split(/[\\/]/).pop()}" => ${safeFormat.toUpperCase()}, devMode=${params.dev_mode})`);
+  console.log(`[cmd] startConvert: input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, devMode=${params.dev_mode}, useGpu=${params.use_gpu}`);
   try {
     await invoke("start_convert", {
       input: safeInput,
       output: safeOutput,
       format: safeFormat,
       devMode: params.dev_mode,
+      useGpu: params.use_gpu,
+      preferredEncoder: params.preferred_encoder ?? "",
     });
     console.log(`[cmd] startConvert => sent to engine`);
   } catch (err) {
@@ -143,16 +157,22 @@ export async function startDownload(params: {
   url: string;
   format_type: string;
   output_dir: string;
+  write_subtitles?: boolean;
+  write_thumbnail?: boolean;
+  use_browser_cookies?: boolean;
 }): Promise<void> {
   const safeUrl = sanitizeUrl(params.url);
   const safeFormat = sanitizeFormat(params.format_type);
   const safeDir = sanitizePath(params.output_dir);
-  console.log(`[cmd] startDownload("${safeUrl.substring(0, 50)}", format=${safeFormat})`);
+  console.log(`[cmd] startDownload("${safeUrl.substring(0, 50)}", format=${safeFormat}, subs=${!!params.write_subtitles}, thumb=${!!params.write_thumbnail}, cookies=${!!params.use_browser_cookies})`);
   try {
     await invoke("start_download", {
       url: safeUrl,
       formatType: safeFormat,
       outputDir: safeDir,
+      writeSubtitles: params.write_subtitles ?? false,
+      writeThumbnail: params.write_thumbnail ?? false,
+      useBrowserCookies: params.use_browser_cookies ?? false,
     });
     console.log(`[cmd] startDownload => sent to engine`);
   } catch (err) {
@@ -168,6 +188,8 @@ export async function startReduce(params: {
   target_bytes?: number | null;
   max_width: number | null;
   file_type: "video" | "photo" | "audio";
+  use_gpu: boolean;
+  preferred_encoder?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
@@ -176,7 +198,7 @@ export async function startReduce(params: {
   if (targetBytes !== null && (!Number.isSafeInteger(targetBytes) || targetBytes < 1 || targetBytes > 10_000_000_000)) {
     throw new Error("Target size must be greater than zero and at most 10 GB");
   }
-  console.log(`[cmd] startReduce("${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type})`);
+  console.log(`[cmd] startReduce("${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu})`);
   try {
     await invoke("start_reduce", {
       input: safeInput,
@@ -185,10 +207,42 @@ export async function startReduce(params: {
       targetBytes,
       maxWidth: params.max_width,
       fileType: params.file_type,
+      useGpu: params.use_gpu,
+      preferredEncoder: params.preferred_encoder ?? "",
     });
     console.log(`[cmd] startReduce => sent to engine`);
   } catch (err) {
     console.error(`[cmd] startReduce failed:`, err);
+    throw err;
+  }
+}
+
+export async function startUpscale(params: {
+  input: string;
+  output: string;
+  target: string;
+  file_type: "video" | "photo";
+  use_gpu: boolean;
+  preferred_encoder?: string;
+}): Promise<void> {
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  if (!["2k", "4k", "8k", "16k"].includes(params.target)) {
+    throw new Error("Invalid upscale target");
+  }
+  console.log(`[cmd] startUpscale("${safeInput.split(/[\\/]/).pop()}", target=${params.target.toUpperCase()}, useGpu=${params.use_gpu})`);
+  try {
+    await invoke("start_upscale", {
+      input: safeInput,
+      output: safeOutput,
+      target: params.target,
+      fileType: params.file_type,
+      useGpu: params.use_gpu,
+      preferredEncoder: params.preferred_encoder ?? "",
+    });
+    console.log(`[cmd] startUpscale => sent to engine`);
+  } catch (err) {
+    console.error(`[cmd] startUpscale failed:`, err);
     throw err;
   }
 }
@@ -209,6 +263,19 @@ export async function cancelOperation(): Promise<void> {
 export interface AppSettings {
   downloadDir: string;
   outputDir: string;
+  useGpu: boolean;
+  preferredEncoder: string;
+}
+
+export interface GpuInfo {
+  ok: boolean;
+  available: boolean;
+  allEncoders: { id: string; vendor: string; label: string }[];
+  encoder: string | null;
+  vendor: string | null;
+  hwaccel: string | null;
+  name: string | null;
+  message: string;
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -231,6 +298,8 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
     const res = await invoke<AppSettings>("save_settings", {
       downloadDir: safeDownloadDir,
       outputDir: safeOutputDir,
+      useGpu: settings.useGpu,
+      preferredEncoder: settings.preferredEncoder,
     });
     console.log(`[cmd] saveSettings => ok`);
     return res;
@@ -266,6 +335,150 @@ export async function getDefaultOutputDir(): Promise<string> {
     return await invoke<string>("get_default_output_dir");
   } catch (err) {
     console.error(`[cmd] getDefaultOutputDir failed:`, err);
+    throw err;
+  }
+}
+
+// ===== CACHE =====
+
+export interface CacheStats {
+  urlHits: number;
+  urlMisses: number;
+  gpuHits: number;
+  gpuMisses: number;
+  urlEntries: number;
+  gpuCached: boolean;
+}
+
+export async function getCacheStats(): Promise<CacheStats> {
+  try {
+    return await invoke<CacheStats>("get_cache_stats");
+  } catch (err) {
+    console.error(`[cmd] getCacheStats failed:`, err);
+    throw err;
+  }
+}
+
+export async function clearCache(): Promise<void> {
+  try {
+    await invoke("clear_cache");
+  } catch (err) {
+    console.error(`[cmd] clearCache failed:`, err);
+    throw err;
+  }
+}
+
+export async function detectGpu(): Promise<GpuInfo> {
+  console.log(`[cmd] detectGpu()`);
+  try {
+    const res = await invoke<GpuInfo>("detect_gpu");
+    console.log(`[cmd] detectGpu => available=${res.available}, encoder=${res.encoder}, name=${res.name}`);
+    return res;
+  } catch (err) {
+    console.error(`[cmd] detectGpu failed:`, err);
+    throw err;
+  }
+}
+
+// ===== NATIVE RUST MEDIA ENGINE =====
+
+export interface ProbeInfo {
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  vcodec: string | null;
+  acodec: string | null;
+  formatName: string | null;
+  bitrate: number | null;
+}
+
+export interface GpuCapability {
+  encoder: string;
+  vendor: string;
+  hwaccel: string;
+  label: string;
+  works: boolean;
+}
+
+export async function probeFile(input: string): Promise<ProbeInfo> {
+  const safeInput = sanitizePath(input);
+  console.log(`[cmd] probeFile("${safeInput.split(/[\\/]/).pop()}")`);
+  try {
+    const res = await invoke<ProbeInfo>("probe_file", { input: safeInput });
+    console.log(`[cmd] probeFile => ${res.width}x${res.height}, vcodec=${res.vcodec}, acodec=${res.acodec}`);
+    return res;
+  } catch (err) {
+    console.error(`[cmd] probeFile failed:`, err);
+    throw err;
+  }
+}
+
+export async function detectGpusNative(): Promise<GpuCapability[]> {
+  console.log(`[cmd] detectGpusNative()`);
+  try {
+    const res = await invoke<GpuCapability[]>("detect_gpus_native");
+    console.log(`[cmd] detectGpusNative => ${res.length} encoders found`);
+    return res;
+  } catch (err) {
+    console.error(`[cmd] detectGpusNative failed:`, err);
+    throw err;
+  }
+}
+
+export async function startConvertNative(params: {
+  input: string;
+  output: string;
+  format: string;
+  dev_mode: boolean;
+  use_gpu: boolean;
+  preferred_encoder?: string;
+}): Promise<void> {
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  const safeFormat = sanitizeFormat(params.format);
+  console.log(`[cmd] startConvertNative: input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, useGpu=${params.use_gpu}`);
+  try {
+    await invoke("start_convert_native", {
+      input: safeInput,
+      output: safeOutput,
+      format: safeFormat,
+      devMode: params.dev_mode,
+      useGpu: params.use_gpu,
+      preferredEncoder: params.preferred_encoder ?? "",
+    });
+  } catch (err) {
+    console.error(`[cmd] startConvertNative failed:`, err);
+    throw err;
+  }
+}
+
+export async function startReduceNative(params: {
+  input: string;
+  output: string;
+  quality: number;
+  target_bytes?: number | null;
+  max_width: number | null;
+  file_type: "video" | "photo" | "audio";
+  use_gpu: boolean;
+  preferred_encoder?: string;
+}): Promise<void> {
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  const quality = Math.max(1, Math.min(100, Math.round(params.quality)));
+  console.log(`[cmd] startReduceNative("${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu})`);
+  try {
+    await invoke("start_reduce_native", {
+      input: safeInput,
+      output: safeOutput,
+      quality,
+      targetBytes: params.target_bytes ?? null,
+      maxWidth: params.max_width,
+      fileType: params.file_type,
+      useGpu: params.use_gpu,
+      preferredEncoder: params.preferred_encoder ?? "",
+    });
+  } catch (err) {
+    console.error(`[cmd] startReduceNative failed:`, err);
     throw err;
   }
 }

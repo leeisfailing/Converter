@@ -1,4 +1,4 @@
-export type QueueItemType = "download" | "convert" | "reduce";
+export type QueueItemType = "download" | "convert" | "reduce" | "upscale";
 export type QueueItemStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 
 export interface QueueItem {
@@ -10,6 +10,12 @@ export interface QueueItem {
   url?: string;
   formatType?: string;
   outputDir?: string;
+  downloadSpeed?: number;
+  downloadEta?: number;
+  downloadIsLive?: boolean;
+  writeSubtitles?: boolean;
+  writeThumbnail?: boolean;
+  useBrowserCookies?: boolean;
   // Convert fields
   inputPath?: string;
   outputPath?: string;
@@ -20,6 +26,9 @@ export interface QueueItem {
   reduceTargetBytes?: number;
   reduceMaxWidth?: number;
   reduceFileType?: "video" | "photo" | "audio";
+  // Upscale fields
+  upscaleTarget?: string;
+  upscaleFileType?: "video" | "photo";
   // Result
   resultPath?: string;
   error?: string;

@@ -35,10 +35,15 @@ def _find_unique_path(directory: Path, filename: str) -> Path:
 
 
 class DownloadWorker:
-    def __init__(self, url: str, output_dir: Path, format_type: str = "bestvideo+bestaudio/best"):
+    def __init__(self, url: str, output_dir: Path, format_type: str = "bestvideo+bestaudio/best",
+                 write_subtitles: bool = False, write_thumbnail: bool = False,
+                 use_browser_cookies: bool = False):
         self.url = url
         self.output_dir = output_dir
         self.format_type = format_type
+        self.write_subtitles = write_subtitles
+        self.write_thumbnail = write_thumbnail
+        self.use_browser_cookies = use_browser_cookies
         self._is_running = True
         self._thread: Optional[threading.Thread] = None
         self._last_progress = None
@@ -141,12 +146,14 @@ class DownloadWorker:
             'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
             'format': 'bestvideo+bestaudio/best',
             'progress_hooks': [progress_hook],
+            'postprocessors': [],
             'nocheckcertificate': False,
             'quiet': True,
             'no_warnings': True,
             'update': False,
             'socket_timeout': 30,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'geo_bypass': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
             'http_headers': {
                 'Accept-Language': 'en-US,en;q=0.9',
             },
@@ -157,22 +164,45 @@ class DownloadWorker:
             cookies_file = resource_path('cookies.txt')
             if cookies_file.exists():
                 ydl_opts['cookiefile'] = str(cookies_file)
+            elif self.use_browser_cookies:
+                # Try to extract cookies from installed browsers (Chrome, Edge, Firefox)
+                ydl_opts['cookiesfrombrowser'] = ('chrome',) + (('edge',) if sys.platform == 'win32' else ())
 
-        if self.format_type == "mp4_1080":
-            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif self.format_type == "mp4_720":
-            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif self.format_type == "mp4_480":
-            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-            ydl_opts['merge_output_format'] = 'mp4'
-        elif self.format_type == "mp4_360":
-            ydl_opts['format'] = 'bestvideo[ext=mp4][height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best'
+        # Subtitle and thumbnail options
+        if self.write_subtitles:
+            ydl_opts['writesubtitles'] = True
+            ydl_opts['writeautomaticsub'] = True
+            ydl_opts['subtitleslangs'] = ['en']
+            ydl_opts['subtitlesformat'] = 'srt/best'
+        if self.write_thumbnail:
+            ydl_opts['writethumbnail'] = True
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegThumbnail',
+            })
+
+        # Video format handling
+        if self.format_type.startswith("mp4_"):
+            height = self.format_type.replace("mp4_", "")
+            ydl_opts['format'] = f'bestvideo[ext=mp4][height<={height}]+bestaudio[ext=m4a]/bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'
             ydl_opts['merge_output_format'] = 'mp4'
         elif self.format_type == "mp4":
             ydl_opts['format'] = 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
             ydl_opts['merge_output_format'] = 'mp4'
+        elif self.format_type.startswith("webm_"):
+            height = self.format_type.replace("webm_", "")
+            ydl_opts['format'] = f'bestvideo[ext=webm][height<={height}]+bestaudio[ext=webm]/bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'
+            ydl_opts['merge_output_format'] = 'webm'
+        elif self.format_type == "webm":
+            ydl_opts['format'] = 'bestvideo[ext=webm][height<=720]+bestaudio[ext=webm]/bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]/best'
+            ydl_opts['merge_output_format'] = 'webm'
+        elif self.format_type.startswith("mkv_"):
+            height = self.format_type.replace("mkv_", "")
+            ydl_opts['format'] = f'bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'
+            ydl_opts['merge_output_format'] = 'mkv'
+        elif self.format_type == "mkv":
+            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best'
+            ydl_opts['merge_output_format'] = 'mkv'
+        # Audio format handling
         elif self.format_type.startswith("mp3"):
             bitrate = "192"
             if self.format_type == "mp3_320":
@@ -186,11 +216,59 @@ class DownloadWorker:
             elif self.format_type == "mp3_64":
                 bitrate = "64"
             ydl_opts['format'] = 'bestaudio/best'
-            ydl_opts['postprocessors'] = [{
+            ydl_opts['postprocessors'].append({
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': bitrate,
-            }]
+            })
+        elif self.format_type.startswith("aac"):
+            bitrate = "192"
+            if self.format_type == "aac_320":
+                bitrate = "320"
+            elif self.format_type == "aac_256":
+                bitrate = "256"
+            elif self.format_type == "aac_192":
+                bitrate = "192"
+            elif self.format_type == "aac_128":
+                bitrate = "128"
+            elif self.format_type == "aac_64":
+                bitrate = "64"
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'aac',
+                'preferredquality': bitrate,
+            })
+        elif self.format_type == "flac":
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'flac',
+            })
+        elif self.format_type == "wav":
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'wav',
+            })
+        elif self.format_type.startswith("ogg"):
+            bitrate = "192"
+            if self.format_type == "ogg_320":
+                bitrate = "320"
+            elif self.format_type == "ogg_256":
+                bitrate = "256"
+            elif self.format_type == "ogg_192":
+                bitrate = "192"
+            elif self.format_type == "ogg_128":
+                bitrate = "128"
+            elif self.format_type == "ogg_64":
+                bitrate = "64"
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'vorbis',
+                'preferredquality': bitrate,
+            })
         elif self.format_type == "original":
             ydl_opts['format'] = 'bestvideo+bestaudio/best/bestaudio'
         elif self.format_type != "bestvideo+bestaudio/best":
@@ -251,6 +329,9 @@ class DownloadWorker:
                     totalsize = -1
 
                 status_change_time = time.monotonic()
+                last_read_so_far = 0
+                last_speed_time = status_change_time
+                current_speed = 0.0
                 with open(temp_path, 'wb') as out_file:
                     while self._is_running:
                         buffer = response.read(blocksize)
@@ -259,9 +340,26 @@ class DownloadWorker:
                         out_file.write(buffer)
                         read_so_far += len(buffer)
                         now = time.monotonic()
+                        elapsed = now - last_speed_time
+                        if elapsed >= 0.5:
+                            current_speed = (read_so_far - last_read_so_far) / elapsed
+                            last_read_so_far = read_so_far
+                            last_speed_time = now
                         if totalsize > 0 and now - status_change_time >= 0.5:
                             pct = min(int((read_so_far / totalsize) * 100), 100)
                             self._report_progress(pct)
+                            if self.on_download_status:
+                                eta = None
+                                if current_speed > 0:
+                                    remaining = totalsize - read_so_far
+                                    eta = max(int(remaining / current_speed), 0)
+                                self.on_download_status({
+                                    'percent': pct,
+                                    'speed': current_speed,
+                                    'eta': eta,
+                                    'is_live': False,
+                                    'status': 'downloading',
+                                })
                             status_change_time = now
 
             if not self._is_running:

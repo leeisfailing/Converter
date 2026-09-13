@@ -15,11 +15,13 @@ pub async fn get_settings() -> Result<AppSettingsResponse, String> {
 pub async fn save_settings(
     download_dir: String,
     output_dir: String,
+    use_gpu: bool,
+    preferred_encoder: String,
 ) -> Result<AppSettingsResponse, String> {
     validation::validate_output_dir(&download_dir)?;
     validation::validate_output_dir(&output_dir)?;
 
-    let s = AppSettings { download_dir, output_dir };
+    let s = AppSettings { download_dir, output_dir, use_gpu, preferred_encoder };
     let settings = s.clone();
     tokio::task::spawn_blocking(move || settings::save_settings(&settings))
         .await

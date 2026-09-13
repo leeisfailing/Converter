@@ -1,11 +1,11 @@
 import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link, Music, Film, Plus, ChevronDown, Loader2, Globe, Clock } from "lucide-react";
+import { Link, Music, Film, Plus, ChevronDown, Loader2, Globe, Clock, Subtitles, Image, Cookie, Settings2 } from "lucide-react";
 import { detectUrl } from "../lib/tauri-commands";
 import type { UrlFormat } from "../lib/tauri-commands";
 
 interface Props {
-  onAdd: (url: string, formatType: string) => void;
+  onAdd: (url: string, formatType: string, options?: { writeSubtitles?: boolean; writeThumbnail?: boolean; useBrowserCookies?: boolean }) => void;
   disabled: boolean;
 }
 
@@ -43,6 +43,10 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   const [selectedFormatType, setSelectedFormatType] = useState<string>("");
   const [selectedQuality, setSelectedQuality] = useState<string>("");
   const [qualityDropdownOpen, setQualityDropdownOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [writeSubtitles, setWriteSubtitles] = useState(false);
+  const [writeThumbnail, setWriteThumbnail] = useState(false);
+  const [useBrowserCookies, setUseBrowserCookies] = useState(false);
 
   const requestIdRef = useRef(0);
 
@@ -104,7 +108,11 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
 
   const handleAdd = () => {
     if (!detectedInfo || !selectedFormat) return;
-    onAdd(detectedInfo.webpage_url || url.trim(), selectedFormat);
+    onAdd(detectedInfo.webpage_url || url.trim(), selectedFormat, {
+      writeSubtitles,
+      writeThumbnail,
+      useBrowserCookies,
+    });
     setUrl("");
     setDetectState("idle");
     setDetectedInfo(null);
@@ -112,6 +120,10 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setSelectedFormatType("");
     setSelectedQuality("");
     setQualityDropdownOpen(false);
+    setOptionsOpen(false);
+    setWriteSubtitles(false);
+    setWriteThumbnail(false);
+    setUseBrowserCookies(false);
   };
 
   const handleReset = () => {
@@ -123,6 +135,10 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setSelectedQuality("");
     setDetectError("");
     setQualityDropdownOpen(false);
+    setOptionsOpen(false);
+    setWriteSubtitles(false);
+    setWriteThumbnail(false);
+    setUseBrowserCookies(false);
   };
 
   return (
@@ -323,6 +339,60 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
                   </div>
                 );
               })()}
+
+              {/* Options toggle */}
+              <button
+                type="button"
+                onClick={() => setOptionsOpen(!optionsOpen)}
+                className="mt-3 flex items-center gap-1.5 text-[11px] text-app-text-muted hover:text-app-text transition-colors"
+              >
+                <Settings2 size={12} />
+                Options
+                <ChevronDown size={10} className={`transition-transform ${optionsOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {/* Options panel */}
+              <AnimatePresence>
+                {optionsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-2 space-y-2"
+                  >
+                    <label className="flex items-center gap-2 text-xs text-app-text-secondary cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={writeSubtitles}
+                        onChange={(e) => setWriteSubtitles(e.target.checked)}
+                        className="rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent/30"
+                      />
+                      <Subtitles size={12} className="text-app-text-muted group-hover:text-app-text" />
+                      Save subtitles
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-app-text-secondary cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={writeThumbnail}
+                        onChange={(e) => setWriteThumbnail(e.target.checked)}
+                        className="rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent/30"
+                      />
+                      <Image size={12} className="text-app-text-muted group-hover:text-app-text" />
+                      Save thumbnail
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-app-text-secondary cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={useBrowserCookies}
+                        onChange={(e) => setUseBrowserCookies(e.target.checked)}
+                        className="rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent/30"
+                      />
+                      <Cookie size={12} className="text-app-text-muted group-hover:text-app-text" />
+                      Use browser cookies (YouTube login)
+                    </label>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Add button */}

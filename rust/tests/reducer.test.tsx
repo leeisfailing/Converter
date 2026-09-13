@@ -12,21 +12,21 @@ it.each([['KB', 1500], ['MB', 1_500_000], ['GB', 1_500_000_000]])('queues a deci
   const add = vi.fn();
   render(<FileReducer disabled={false} onAdd={add} />);
   fireEvent.click(screen.getByText('Click or drag a file here'));
-  fireEvent.click(await screen.findByRole('button', { name: 'Target size' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Max file size' }));
   fireEvent.change(screen.getByLabelText('Maximum file size'), { target: { value: '1.5' } });
   fireEvent.change(screen.getByLabelText('Size unit'), { target: { value: unit } });
   fireEvent.click(screen.getByRole('button', { name: /Add to Queue/ }));
-  expect(add).toHaveBeenCalledWith('C:/Media/input.mov', 'C:/Media/input_reduced.mp4', 50, null, 'video', bytes);
+  expect(add).toHaveBeenCalledWith('C:/Media/input.mov', 'C:/Media/input_reduced.mov', 50, null, 'video', bytes);
 });
 
 it('blocks empty, zero and excessive targets but keeps quality mode available', async () => {
   render(<FileReducer disabled={false} onAdd={vi.fn()} />);
   fireEvent.click(screen.getByText('Click or drag a file here'));
-  fireEvent.click(await screen.findByRole('button', { name: 'Target size' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Max file size' }));
   for (const value of ['', '0', '-1', '10001']) {
     fireEvent.change(screen.getByLabelText('Maximum file size'), { target: { value } });
     expect((screen.getByRole('button', { name: /Add to Queue/ }) as HTMLButtonElement).disabled).toBe(true);
   }
-  fireEvent.click(screen.getByRole('button', { name: 'Quality', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Max file size' }));
   expect((screen.getByRole('button', { name: /Add to Queue/ }) as HTMLButtonElement).disabled).toBe(false);
 });

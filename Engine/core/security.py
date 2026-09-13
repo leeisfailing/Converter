@@ -1,5 +1,6 @@
 """Input sanitization utilities for handlers."""
 import ipaddress
+import math
 import os
 import re
 import subprocess
@@ -127,8 +128,8 @@ def validate_json_value(value: dict, max_depth: int = 10, current_depth: int = 0
         if len(value) > 65536:
             raise ValueError("JSON string too large")
     elif isinstance(value, (int, float)):
-        if not isinstance(value, bool) and not isinstance(value, (int, float)):
-            raise ValueError("Invalid JSON numeric value")
+        if math.isinf(value) or math.isnan(value):
+            raise ValueError("Invalid JSON numeric value: NaN or Infinity not allowed")
 
 
 def sanitize_ffmpeg_args(args: str) -> str:
@@ -157,9 +158,27 @@ def validate_cookies_file(path: str) -> str:
 
 def validate_download_format(format_type: str) -> str:
     allowed_formats = [
-        "bestvideo+bestaudio/best", "mp4_1080", "mp4_720", "mp4_480", "mp4_360",
-        "mp4", "mp3_320", "mp3_256", "mp3_192", "mp3_128", "mp3_64", "mp3",
-        "original"
+        # MP4 video
+        "mp4_2160", "mp4_1440", "mp4_1080", "mp4_720", "mp4_480", "mp4_360", "mp4_240",
+        "mp4",
+        # WebM video
+        "webm_2160", "webm_1440", "webm_1080", "webm_720", "webm_480", "webm_360", "webm_240",
+        "webm",
+        # MKV video
+        "mkv_2160", "mkv_1440", "mkv_1080", "mkv_720", "mkv_480", "mkv_360", "mkv_240",
+        "mkv",
+        # MP3 audio
+        "mp3_320", "mp3_256", "mp3_192", "mp3_128", "mp3_64", "mp3",
+        # WAV audio
+        "wav",
+        # FLAC audio
+        "flac",
+        # AAC audio
+        "aac_320", "aac_256", "aac_192", "aac_128", "aac_64", "aac",
+        # OGG audio
+        "ogg_320", "ogg_256", "ogg_192", "ogg_128", "ogg_64", "ogg",
+        # Fallbacks
+        "bestvideo+bestaudio/best", "best", "worst", "original"
     ]
     if format_type not in allowed_formats:
         raise ValueError(f"Invalid format type: {format_type}")

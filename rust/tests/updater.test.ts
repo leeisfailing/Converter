@@ -174,4 +174,13 @@ describe("updater lifecycle", () => {
     expect(typeof unsubscribe).toBe("function");
     unsubscribe();
   });
+
+  it("checkForUpdate can be called multiple times without side effects", async () => {
+    mocks.check.mockResolvedValue(null);
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().status).toBe("up_to_date");
+    await store.checkForUpdate();
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+  });
 });

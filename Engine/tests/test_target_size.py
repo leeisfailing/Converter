@@ -25,7 +25,7 @@ class TargetSizeTests(unittest.TestCase):
                     subprocess.run([find_binary('ffmpeg'), '-v', 'error', '-y', *args, str(source)], check=True, timeout=30)
                     original = source.read_bytes()
                     results = []
-                    worker = ReducerWorker(str(source), str(output), file_type=kind, target_bytes=target)
+                    worker = ReducerWorker(str(source), str(output), file_type=kind, target_bytes=target, use_gpu=True)
                     worker.on_finished = lambda *result: results.append(result)
                     worker._run()
                     self.assertTrue(results[0][0], results)

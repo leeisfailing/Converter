@@ -43,7 +43,7 @@
   object-fit: contain;
 }
 .app-brand-name {
-  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
   font-weight: 650;
   font-size: 17px;
   letter-spacing: -0.6px;
@@ -174,7 +174,7 @@
 }
 .workspace-intro h1 {
   color: var(--text);
-  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 28px;
   line-height: 1.25;
   font-weight: 600;
@@ -218,4 +218,46 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .header-control, .header-control::after, .workspace-tab { transition: none; }
+}
+
+/* The checked state drives both the track and thumb, with a larger hit area. */
+.app-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.app-switch-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  transition: background-color 160ms ease;
+}
+.app-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  transition: transform 160ms ease;
+}
+.app-switch[aria-checked="true"] .app-switch-track { background: var(--accent); }
+.app-switch[aria-checked="true"] .app-switch-thumb { transform: translateX(16px); }
+.app-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.app-switch:not(:disabled):hover .app-switch-track { filter: brightness(1.1); }
+@media (prefers-reduced-motion: reduce) {
+  .app-switch-track, .app-switch-thumb { transition: none; }
 }

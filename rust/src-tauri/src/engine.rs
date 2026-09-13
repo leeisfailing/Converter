@@ -103,7 +103,7 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
     drop(stdin);
 
     // Read stdout and stderr concurrently to avoid blocking the tokio runtime
-    let stdout_task = tokio::spawn(async move {
+    let mut stdout_task = tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         let mut result = Vec::new();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -114,15 +114,20 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
     let stderr_task = tokio::spawn(stderr_tail(stderr));
 
     let timeout = Duration::from_secs(ENGINE_TIMEOUT_SECS);
-    let (stdout_result, _) = tokio::join!(
-        tokio::time::timeout(timeout, stdout_task),
-        child.wait()
-    );
+    let stdout_result = tokio::time::timeout(timeout, async {
+        tokio::join!(&mut stdout_task, child.wait()).0
+    }).await;
 
     let stdout_lines = match stdout_result {
         Ok(Ok(lines)) => lines,
         Ok(Err(e)) => return Err(format!("Engine output read error: {e}")),
-        Err(_) => return Err(format!("Engine request timed out after {} seconds", ENGINE_TIMEOUT_SECS)),
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(format!("Engine request timed out after {} seconds", ENGINE_TIMEOUT_SECS));
+        },
     };
 
     // Parse response - break early once valid response is found (protocol guarantees first valid line)
@@ -161,6 +166,7 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
 
     let errors = tokio::spawn(stderr_tail(stderr));
     let progress_event = format!("{prefix}-progress");
+    let status_event = format!("{prefix}-status");
     let finished_event = format!("{prefix}-finished");
     let mut lines = BufReader::new(stdout).lines();
     let mut last_progress = None;
@@ -175,6 +181,16 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
                             let _ = app.emit(&progress_event, percent);
                             last_progress = Some(percent);
                         }
+                    },
+                    Some("download_status") => {
+                        let status = serde_json::json!({
+                            "percent": value.get("percent").and_then(|v| v.as_i64()).unwrap_or(0),
+                            "speed": value.get("speed").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                            "eta": value.get("eta").and_then(|v| v.as_i64()).unwrap_or(0),
+                            "is_live": value.get("is_live").and_then(|v| v.as_bool()).unwrap_or(false),
+                            "status": value.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                        });
+                        let _ = app.emit(&status_event, status);
                     },
                     Some("finished") => break serde_json::from_value::<FinishedEvent>(value).map_err(|e| e.to_string()),
                     _ => if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {

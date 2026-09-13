@@ -90,6 +90,67 @@ class MediaIntegrationTests(unittest.TestCase):
                     self.assertEqual(Path(path).resolve(), output.resolve())
                     self.assert_valid_media(output, stream_type)
 
+    def test_gpu_enabled_conversions_and_reduction(self):
+        from Engine.workers.reducer import ReducerWorker
+        source = self.directory / "gpu-source.mp4"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=size=320x240:rate=15:duration=1", "-c:v", "libx264", str(source)],
+                       check=True, capture_output=True, timeout=30)
+        for fmt in VIDEO_OUTPUT_FORMATS:
+            with self.subTest(fmt=fmt):
+                output = self.directory / ("gpu-output." + fmt)
+                ok, message, _ = run_worker(ConverterWorker(str(source), str(output), fmt, use_gpu=True))
+                self.assertTrue(ok, message)
+                self.assert_valid_media(output, "video")
+        output = self.directory / "gpu-reduced.mp4"
+        ok, message, _ = run_worker(ReducerWorker(str(source), str(output), use_gpu=True, max_width=256))
+        self.assertTrue(ok, message)
+        self.assert_valid_media(output, "video")
+
+    def test_manual_encoders_through_engine_protocol(self):
+        from Engine.core.gpu import detect_gpu
+        source = self.directory / "manual-source.mp4"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "testsrc2=size=320x240:rate=15:duration=1", "-c:v", "libx264", str(source)],
+                       check=True, capture_output=True, timeout=30)
+        for encoder in detect_gpu()["all_encoders"]:
+            for command in ("start_convert", "start_reduce"):
+                with self.subTest(encoder=encoder["id"], command=command):
+                    output = self.directory / (command + encoder["id"] + ".mp4")
+                    request = {"cmd": command, "input": str(source), "output": str(output),
+                               "format": "mp4", "file_type": "video", "quality": 50,
+                               "use_gpu": False, "preferred_encoder": encoder["id"]}
+                    # Keep stdin open like the app: EOF deliberately cancels active work.
+                    with tempfile.TemporaryFile(mode='w+') as errors:
+                        process = subprocess.Popen([sys.executable, str(ROOT / "Engine/__main__.py")],
+                                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                   stderr=errors, text=True)
+                        messages = queue.Queue()
+                        reader = threading.Thread(target=lambda: [messages.put(line) for line in process.stdout], daemon=True)
+                        reader.start()
+                        try:
+                            process.stdin.write(json.dumps(request) + "\n")
+                            process.stdin.flush()
+                            deadline = time.monotonic() + 100
+                            while True:
+                                response = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))
+                                if response.get("type") == "finished":
+                                    self.assertTrue(response["ok"], response)
+                                    break
+                        finally:
+                            process.stdin.close()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait()
+                            reader.join(5)
+                            process.stdout.close()
+                    info = json.loads(subprocess.check_output([FFPROBE, "-v", "error", "-show_entries",
+                                                              "stream=codec_name", "-of", "json", str(output)]))
+                    expected = "hevc" if encoder["id"].startswith("hevc") else "av1" if encoder["id"].startswith("av1") else "h264"
+                    self.assertEqual(info["streams"][0]["codec_name"], expected)
+
     def test_m4a_is_detected_as_audio(self):
         output = self.directory / "audio-detection.m4a"
         ok, message, _ = run_worker(ConverterWorker(str(self.audio), str(output), "m4a"))
@@ -119,10 +180,10 @@ class MediaIntegrationTests(unittest.TestCase):
         reader = threading.Thread(target=lambda: [messages.put(line) for line in process.stdout], daemon=True)
         reader.start()
         try:
-            for index in range(2):
-                output = self.directory / f"sequential-{index}.flac"
-                process.stdin.write(json.dumps({"cmd": "start_convert", "input": str(self.audio),
-                                               "output": str(output), "format": "flac"}) + "\n")
+            for index, (source, fmt) in enumerate([(self.audio, 'flac'), (self.audio, 'm4a'), (self.audio, 'opus'), (self.photo, 'webp'), (self.video, 'gif')]):
+                output = self.directory / f"sequential-{index}.{fmt}"
+                process.stdin.write(json.dumps({"cmd": "start_convert", "input": str(source),
+                                               "output": str(output), "format": fmt}) + "\n")
                 process.stdin.flush()
                 deadline = time.monotonic() + 20
                 while True:

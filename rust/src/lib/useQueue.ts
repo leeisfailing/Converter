@@ -6,6 +6,7 @@ import type { FinishedEvent } from "./tauri-commands";
 type QueueEventType = "download" | "convert" | "reduce";
 interface QueueEventHandlers {
   onProgress: (id: string, progress: number) => void;
+  onDownloadStatus: (id: string, speed: number, eta: number, isLive: boolean) => void;
   onFinished: (id: string, ok: boolean, message: string, filePath: string) => void;
 }
 
@@ -33,6 +34,8 @@ export function useQueue() {
     });
   }, [commit]);
 
+  interface DownloadStatusPayload { percent: number; speed: number; eta: number; is_live: boolean; status: string; }
+
   const registerListeners = useCallback((type: QueueEventType, handlers: QueueEventHandlers) => {
     const active = () => queueRef.current.find((item) =>
       item.status === "active" && item.type === type
@@ -41,11 +44,15 @@ export function useQueue() {
       const item = active();
       if (item && Number.isFinite(payload)) handlers.onProgress(item.id, payload);
     });
+    const status = subscribeToEvent<DownloadStatusPayload>(`${type}-status`, ({ payload }) => {
+      const item = active();
+      if (item) handlers.onDownloadStatus(item.id, payload.speed ?? 0, payload.eta ?? 0, payload.is_live ?? false);
+    });
     const finished = subscribeToEvent<FinishedEvent>(`${type}-finished`, ({ payload }) => {
       const item = active();
       if (item) handlers.onFinished(item.id, payload.ok, payload.message, payload.file_path);
     });
-    return () => { progress(); finished(); };
+    return () => { progress(); status(); finished(); };
   }, []);
 
   const processNext = useCallback((onProcess: (item: QueueItem) => Promise<void>) => {

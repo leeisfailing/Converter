@@ -22,13 +22,13 @@ afterEach(cleanup);
 beforeEach(() => { events.handlers.clear(); events.cleanups.length = 0; });
 
 describe("media queue", () => {
-  it("registers only six listeners across rerenders and disposes them all", async () => {
+  it("registers only nine listeners across rerenders and disposes them all", async () => {
     const notify = vi.fn();
     const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, notify); return queue; });
     await act(async () => {});
     act(() => { view.result.current.enqueue(item("one")); });
     view.rerender();
-    expect(events.cleanups).toHaveLength(6);
+    expect(events.cleanups).toHaveLength(9);
     view.unmount();
     expect(events.cleanups.every((fn) => fn.mock.calls.length === 1)).toBe(true);
   });

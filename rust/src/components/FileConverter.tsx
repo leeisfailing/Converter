@@ -1,3 +1,4 @@
+import Toggle from "./Toggle";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -262,11 +263,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
             </span>
             <span className="text-[10px] text-app-text-muted">(cross-type)</span>
           </div>
-          <button
-            onClick={() => setDevMode(!devMode)}
-            disabled={disabled}
-            className={`toggle ${devMode ? "active" : ""}`}
-          />
+          <Toggle label="Dev Mode" checked={devMode} onChange={setDevMode} disabled={disabled} />
         </motion.div>
       )}
 

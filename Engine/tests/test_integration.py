@@ -87,7 +87,7 @@ class MediaIntegrationTests(unittest.TestCase):
                     output = self.directory / f"{source.stem}-{source.suffix[1:]}.{output_format}"
                     ok, message, path = run_worker(ConverterWorker(str(source), str(output), output_format))
                     self.assertTrue(ok, message)
-                    self.assertEqual(path, str(output))
+                    self.assertEqual(Path(path).resolve(), output.resolve())
                     self.assert_valid_media(output, stream_type)
 
     def test_m4a_is_detected_as_audio(self):
@@ -129,7 +129,7 @@ class MediaIntegrationTests(unittest.TestCase):
                     message = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))
                     if message.get("type") == "finished":
                         self.assertTrue(message["ok"], message.get("message"))
-                        self.assertEqual(message["file_path"], str(output))
+                        self.assertEqual(Path(message["file_path"]).resolve(), output.resolve())
                         break
             process.stdin.close()
             process.wait(timeout=10)

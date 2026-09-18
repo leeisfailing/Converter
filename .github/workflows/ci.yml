@@ -24,6 +24,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Assemble bundled Python runtime
         run: python scripts/bundle_runtime.py
+      - name: Build and test C++ engine
+        run: ./scripts/build_cpp_engine.ps1
       - name: Verify detached app resources
         run: python scripts/verify_bundled_runtime.py
       - uses: swatinem/rust-cache@v2

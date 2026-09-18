@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,6 +19,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      attestations: write
       packages: read
       id-token: write
     environment:
@@ -42,6 +43,8 @@ jobs:
         working-directory: rust
       - name: Assemble bundled Python runtime
         run: python scripts/bundle_runtime.py
+      - name: Build and test C++ engine
+        run: ./scripts/build_cpp_engine.ps1
       - name: Verify detached app resources
         run: python scripts/verify_bundled_runtime.py
       - name: Validate release configuration
@@ -80,41 +83,49 @@ jobs:
             Existing installations can use About & Updates after this release is published.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: false
           args: --bundles nsis,msi -- --locked
-      - name: Verify latest.json exists
-        shell: pwsh
-        run: |
-          $latestJson = Get-ChildItem -Path "rust/target/release/bundle" -Recurse -Filter "latest.json" -ErrorAction SilentlyContinue
-          if (-not $latestJson) { throw "latest.json was not generated. The updater manifest is missing." }
-          Write-Host "latest.json found at: $($latestJson.FullName)"
       - name: Verify release assets
+        id: verify
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.build.outputs.releaseId }}
         run: |
-          $assets = (Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/latest" -Headers @{ Authorization = "token ${{ secrets.GITHUB_TOKEN }}" }).assets
-          if (-not ($assets.name -contains "latest.json")) {
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $release = Invoke-RestMethod -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -Headers $headers
+          $manifest = $release.assets | Where-Object name -EQ 'latest.json' | Select-Object -First 1
+          if (-not $manifest) {
             throw "latest.json not found in release assets. Upload failed."
           }
-          Write-Host "Release assets verified: $($assets.name -join ', ')"
+          $headers.Accept = 'application/octet-stream'
+          $manifestPath = Join-Path $env:RUNNER_TEMP 'latest.json'
+          Invoke-WebRequest -Uri $manifest.url -Headers $headers -OutFile $manifestPath
+          $null = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          "manifest-path=$manifestPath" >> $env:GITHUB_OUTPUT
+          "release-draft=$($release.draft.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "Release assets verified: $($release.assets.name -join ', ')"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: "rust/target/release/bundle/**/*.{msi,nsis.exe,nsis.zip}"
+          subject-path: |
+            rust/src-tauri/target/release/bundle/msi/*.msi
+            rust/src-tauri/target/release/bundle/nsis/*.exe
       - name: Upload latest.json to Supabase (backup endpoint)
-        if: success()
+        if: success() && steps.verify.outputs.release-draft == 'false'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          MANIFEST_PATH: ${{ steps.verify.outputs.manifest-path }}
         run: |
-          $latestJsonPath = Get-ChildItem -Path "rust/target/release/bundle" -Recurse -Filter "latest.json" | Select-Object -First 1 -ExpandProperty FullName
-          if ($latestJsonPath) {
+          if ($env:SUPABASE_URL -and $env:SUPABASE_ANON_KEY) {
             Write-Host "Uploading latest.json to Supabase backup endpoint"
-            Invoke-RestMethod -Uri "https://afodajwurtywdxeqoiym.supabase.co/storage/v1/object/updates/latest.json" `
+            Invoke-RestMethod -Uri "$($env:SUPABASE_URL.TrimEnd('/'))/storage/v1/object/updates/latest.json" `
               -Method PUT `
               -Headers @{
-                "Authorization" = "Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+                "Authorization" = "Bearer $env:SUPABASE_ANON_KEY"
                 "Content-Type" = "application/json"
                 "Cache-Control" = "no-cache, no-store, must-revalidate"
               } `
-              -InFile $latestJsonPath
+              -InFile $env:MANIFEST_PATH

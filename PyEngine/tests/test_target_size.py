@@ -51,8 +51,11 @@ class TargetSizeTests(unittest.TestCase):
                     self.assertFalse(list(Path(folder).glob('.reduce-*')))
                     if kind == 'video':
                         # Already-small MP4 files should never suffer a second encode.
+                        results = []
                         worker = ReducerWorker(str(source), str(output), file_type=kind, target_bytes=len(original))
+                        worker.on_finished = lambda *r: results.append(r)
                         worker._run()
+                        self.assertTrue(results[0][0], results[0][1])
                         self.assertEqual(output.read_bytes(), original)
 
 

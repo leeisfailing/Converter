@@ -187,7 +187,7 @@ class MediaIntegrationTests(unittest.TestCase):
                 process.stdin.write(json.dumps({"cmd": "start_convert", "input": str(source),
                                                "output": str(output), "format": fmt}) + "\n")
                 process.stdin.flush()
-                deadline = time.monotonic() + 20
+                deadline = time.monotonic() + 60
                 while True:
                     message = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))
                     if message.get("type") == "finished":

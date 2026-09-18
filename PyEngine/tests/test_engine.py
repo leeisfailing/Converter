@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,6 +16,31 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class EngineTests(unittest.TestCase):
+    def test_dispatch_accepts_next_job_while_finished_callback_returns(self):
+        from PyEngine import __main__ as dispatcher
+        from PyEngine.workers.converter import ConverterWorker
+
+        worker = ConverterWorker("in.mp4", "out.mp4", "mp4")
+        finished = threading.Event()
+        release = threading.Event()
+
+        def on_finished(*result):
+            finished.set()
+            release.wait(5)
+
+        worker.on_finished = on_finished
+        with patch.object(worker, "_perform"), \
+             patch.dict(dispatcher._current_worker, {'start_convert': worker}, clear=True):
+            worker.start()
+            try:
+                self.assertTrue(finished.wait(5))
+                self.assertTrue(worker._thread.is_alive())
+                self.assertFalse(dispatcher._has_active_worker())
+                self.assertFalse(dispatcher._current_worker)
+            finally:
+                release.set()
+                worker._thread.join(5)
+
     def test_dispatch_handles_multiple_commands_and_bad_input(self):
         commands = [[], {"cmd": "missing"}, {"cmd": "detect_file", "path": str(ROOT / "README.md")}]
         result = subprocess.run(

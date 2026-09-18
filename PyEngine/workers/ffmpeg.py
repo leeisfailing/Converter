@@ -27,6 +27,7 @@ class FfmpegWorker:
 
     def _init_process(self):
         self._is_running = True
+        self._completed = False
         self._thread = None
         self._process = None
         self._stderr_lines = deque(maxlen=100)
@@ -37,6 +38,7 @@ class FfmpegWorker:
         self._progress_interval = 0.1
 
     def start(self):
+        self._completed = False
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
@@ -118,6 +120,9 @@ class FfmpegWorker:
         except Exception as exc:
             message = str(exc) if self._is_running else f"{self.operation} was cancelled"
             result = (False, message, "")
+        # Release the dispatcher before publishing completion: the client can
+        # submit another job before this callback/thread has returned.
+        self._completed = True
         if self.on_finished:
             self.on_finished(*result)
 

@@ -49,6 +49,9 @@ def _store_worker(key: str, worker):
 
 def _has_active_worker():
     for key, worker in list(_current_worker.items()):
+        if getattr(worker, '_completed', False) is True:
+            _current_worker.pop(key, None)
+            continue
         thread = getattr(worker, '_thread', None)
         if thread is not None:
             # Completion can reach the next command just before its sender

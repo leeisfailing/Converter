@@ -181,7 +181,7 @@ class MediaIntegrationTests(unittest.TestCase):
         messages = queue.Queue()
         stderr_lines = []
         reader = threading.Thread(target=lambda: [messages.put(line) for line in process.stdout], daemon=True)
-        drain = threading.Thread(target=lambda: stderr_lines.extend(process.stderr.readlines()), daemon=True)
+        drain = threading.Thread(target=lambda: [stderr_lines.append(line) for line in process.stderr], daemon=True)
         reader.start()
         drain.start()
         try:
@@ -192,7 +192,13 @@ class MediaIntegrationTests(unittest.TestCase):
                 process.stdin.flush()
                 deadline = time.monotonic() + 60
                 while True:
-                    message = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))
+                    try:
+                        message = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))
+                    except queue.Empty:
+                        self.fail(f"Timed out converting {source} to {fmt}; exit code: {process.poll()}\n"
+                                  + "".join(stderr_lines))
+                    if message.get("ok") is False:
+                        self.fail(f"Engine rejected {fmt} conversion: {message}\n" + "".join(stderr_lines))
                     if message.get("type") == "finished":
                         self.assertTrue(message["ok"], message.get("message"))
                         self.assertEqual(Path(message["file_path"]).resolve(), output.resolve())
@@ -202,9 +208,13 @@ class MediaIntegrationTests(unittest.TestCase):
             process.wait(timeout=10)
             self.assertEqual(process.returncode, 0, "".join(stderr_lines))
         finally:
+            if not process.stdin.closed:
+                process.stdin.close()
             if process.poll() is None:
                 process.kill()
                 process.wait()
+            reader.join(5)
+            drain.join(5)
             process.stdout.close()
             process.stderr.close()
 

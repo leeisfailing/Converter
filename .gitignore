@@ -19,10 +19,10 @@ ffmpeg2pass-0.log*
 # Build artifacts
 *.exe
 *.dll
-!Engine/bin/*.dll
+!PyEngine/bin/*.dll
 !rust/src-tauri/bin/*.dll
 !rust/src-tauri/bin/plugins/*.dll
-!Engine/bin/plugins/*.dll
+!PyEngine/bin/plugins/*.dll
 *.so
 *.dylib
 

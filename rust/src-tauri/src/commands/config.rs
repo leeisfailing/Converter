@@ -17,11 +17,20 @@ pub async fn save_settings(
     output_dir: String,
     use_gpu: bool,
     preferred_encoder: String,
+    auto_detect_gpu: Option<bool>,
+    selected_gpu: Option<String>,
 ) -> Result<AppSettingsResponse, String> {
     validation::validate_output_dir(&download_dir)?;
     validation::validate_output_dir(&output_dir)?;
 
-    let s = AppSettings { download_dir, output_dir, use_gpu, preferred_encoder };
+    let s = AppSettings {
+        download_dir,
+        output_dir,
+        use_gpu,
+        preferred_encoder,
+        auto_detect_gpu: auto_detect_gpu.unwrap_or(true),
+        selected_gpu: selected_gpu.unwrap_or_default(),
+    };
     let settings = s.clone();
     tokio::task::spawn_blocking(move || settings::save_settings(&settings))
         .await

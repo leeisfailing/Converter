@@ -49,7 +49,7 @@ def main():
             source = TAURI / f"{sidecar}-x86_64-pc-windows-msvc.exe"
             shutil.copy2(source, installed / (Path(sidecar).name + ".exe"))
 
-        runtime = installed / "Engine/bin/python"
+        runtime = installed / "PyEngine/bin/python"
         python = runtime / "python.exe"
         environment = dict(os.environ)
         environment["PATH"] = str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32")
@@ -65,7 +65,7 @@ def main():
 
         probe = run([str(python), "-I", "-B", "-c",
             "import json, sys, pathlib, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs; "
-            "from Engine.core.config import find_binary; "
+            "from PyEngine.core.config import find_binary; "
             "print(json.dumps({'python':sys.executable, 'yt_dlp':yt_dlp.version.__version__, "
             "'vapoursynth':str(vs.__version__), 'tools':{n:find_binary(n) for n in "
             "('ffmpeg','ffprobe','vspipe','deno')}}))"])
@@ -83,7 +83,7 @@ def main():
             output.setsampwidth(2)
             output.setframerate(8000)
             output.writeframes(b"\0" * 1600)
-        detected = run([str(python), "-I", "-B", "-u", "-X", "utf8", str(installed / "Engine/__main__.py")],
+        detected = run([str(python), "-I", "-B", "-u", "-X", "utf8", str(installed / "PyEngine/__main__.py")],
                        input=json.dumps({"cmd": "detect_file", "path": str(audio)}) + "\n")
         response = json.loads(detected.stdout)
         assert response["ok"], response

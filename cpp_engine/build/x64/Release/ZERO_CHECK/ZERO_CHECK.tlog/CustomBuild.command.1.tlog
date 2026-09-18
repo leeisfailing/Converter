@@ -1,0 +1,10 @@
+^C:\USERS\LEE\DESKTOP\CONVERTER\CPP_ENGINE\BUILD\CMAKEFILES\8F38329AA33F10EBFE58209715F136D4\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/Lee/Desktop/Converter/cpp_engine -BC:/Users/Lee/Desktop/Converter/cpp_engine/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/Lee/Desktop/Converter/cpp_engine/build/gpu_engine.slnx
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

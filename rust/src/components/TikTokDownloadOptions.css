@@ -1,0 +1,23 @@
+.tiktok-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin-top: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.tiktok-action-primary { background: var(--accent); border-color: var(--accent); color: white; }
+.tiktok-action:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent); }
+.tiktok-action-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.tiktok-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tiktok-action:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .tiktok-action { transition: none; } }

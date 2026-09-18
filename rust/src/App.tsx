@@ -1,11 +1,13 @@
+import { gpuSelection, gpuStatus, parallelGpuEncoders } from "./lib/gpu-selection";
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import AppHeader from "./components/AppHeader";
 import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
 import FileConverter from "./components/FileConverter";
-import FileReducer from "./components/FileReducer";
+import FileTranscoder from "./components/FileTranscoder";
 import Upscaler from "./components/Upscaler";
+import Enhancer from "./components/Enhancer";
 import QueueManager from "./components/QueueManager";
 import DebugConsole from "./components/DebugConsole";
 const SettingsPanel = lazy(() => import("./components/Settings"));
@@ -17,28 +19,30 @@ import { useQueue } from "./lib/useQueue";
 import { useKeyboardShortcuts } from "./lib/useKeyboardShortcuts";
 import {
   startDownload,
-  startConvert,
-  startReduce,
   startUpscale,
+  startEnhance,
   startConvertNative,
-  startReduceNative,
+  startTranscoderNative,
   cancelOperation,
+  cancelOperationById,
   getSettings,
+  getConcurrency,
   sanitizePath,
   sanitizeUrl,
   sanitizeFormat,
-  detectGpusNative,
+  detectGpu,
   probeFile,
+  checkUpscale,
 } from "./lib/tauri-commands";
 import type { AppSettings } from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
-import { Download, ArrowRightLeft, Minimize2, ArrowUp, Zap, Settings } from "lucide-react";
+import { Download, ArrowRightLeft, Minimize2, ArrowUp, Sparkles, Zap, Settings } from "lucide-react";
 const About = lazy(() => import("./components/About"));
 const BugReport = lazy(() => import("./components/BugReport"));
 import { loadAppVersion, useAppVersion, checkForUpdate } from "./lib/updater";
 import UpdatePrompt from "./components/UpdatePrompt";
 
-type Mode = "download" | "convert" | "reduce" | "upscale";
+type Mode = "download" | "convert" | "transcoder" | "upscale" | "enhance";
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -111,8 +115,9 @@ function genId(): string {
 const MODE_CONFIG = [
   { id: "download" as Mode, label: "Download", icon: Download },
   { id: "convert" as Mode, label: "Convert", icon: ArrowRightLeft },
-  { id: "reduce" as Mode, label: "Reduce", icon: Minimize2 },
+  { id: "transcoder" as Mode, label: "Transcoder", icon: Minimize2 },
   { id: "upscale" as Mode, label: "Upscale", icon: ArrowUp },
+  { id: "enhance" as Mode, label: "Enhance", icon: Sparkles, badge: "BETA" },
 ];
 
 const modeTransition = {
@@ -140,7 +145,10 @@ export default function App() {
     outputDir: "",
     useGpu: true,
     preferredEncoder: "",
+    autoDetectGpu: true,
+    selectedGpu: "",
   });
+  const [parallelEncoders, setParallelEncoders] = useState<string[] | null>(null);
   const [nativeGpuInfo, setNativeGpuInfo] = useState<{ available: boolean; encoder: string; vendor: string } | null>(null);
 
   const debugConsole = useDebugConsole({ maxLogs: 500 });
@@ -158,14 +166,18 @@ export default function App() {
 
   const processNextCallback = useCallback(async (item: QueueItem) => {
     try {
-      const currentSettings = appSettings;
+      const currentSettings = {
+        ...appSettings,
+        ...gpuSelection(appSettings),
+        ...(item.assignedGpu ? { useGpu: true, selectedGpu: item.assignedGpu, preferredEncoder: "" } : {}),
+      };
       if (item.type === "download") {
         const outputDir = item.outputDir || currentSettings.downloadDir || (await tempDir());
         const url = await sanitizeUrl(item.url!);
         const formatType = await sanitizeFormat(item.formatType || "bestvideo+bestaudio/best");
         const dir = await sanitizePath(outputDir);
         await startDownload({
-          url, format_type: formatType, output_dir: dir,
+          id: item.id, url, format_type: formatType, output_dir: dir,
           write_subtitles: item.writeSubtitles,
           write_thumbnail: item.writeThumbnail,
           use_browser_cookies: item.useBrowserCookies,
@@ -175,46 +187,53 @@ export default function App() {
         const output = await sanitizePath(item.outputPath!);
         const format = await sanitizeFormat(item.outputFormat!);
         console.log(`[convert] processNext: item.outputPath="${item.outputPath}", output="${output}", format="${format}"`);
-        try {
-          await startConvertNative({ input, output, format, dev_mode: item.devMode || false, use_gpu: currentSettings.useGpu, preferred_encoder: currentSettings.preferredEncoder });
-        } catch (nativeErr) {
-          console.warn("[queue] Native convert failed, falling back to Python:", nativeErr);
-          await startConvert({ input, output, format, dev_mode: item.devMode || false, use_gpu: currentSettings.useGpu, preferred_encoder: currentSettings.preferredEncoder });
-        }
-      } else if (item.type === "reduce") {
+        await startConvertNative({ id: item.id, input, output, format, dev_mode: item.devMode || false, use_gpu: currentSettings.useGpu, preferred_encoder: currentSettings.preferredEncoder, selected_gpu: currentSettings.selectedGpu });
+      } else if (item.type === "transcoder") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
-        try {
-          await startReduceNative({
-            input, output,
-            quality: item.reduceQuality || 50,
-            target_bytes: item.reduceTargetBytes ?? null,
-            max_width: item.reduceMaxWidth || null,
-            file_type: item.reduceFileType || "video",
-            use_gpu: currentSettings.useGpu,
-            preferred_encoder: currentSettings.preferredEncoder,
-          });
-        } catch (nativeErr) {
-          console.warn("[queue] Native reduce failed, falling back to Python:", nativeErr);
-          await startReduce({
-            input, output,
-            quality: item.reduceQuality || 50,
-            target_bytes: item.reduceTargetBytes ?? null,
-            max_width: item.reduceMaxWidth || null,
-            file_type: item.reduceFileType || "video",
-            use_gpu: currentSettings.useGpu,
-            preferred_encoder: currentSettings.preferredEncoder,
-          });
-        }
+        await startTranscoderNative({
+          id: item.id, input, output,
+          quality: item.transcoderQuality || 50,
+          target_bytes: item.transcoderTargetBytes ?? null,
+          file_type: item.transcoderFileType || "video",
+          use_gpu: currentSettings.useGpu,
+          preferred_encoder: currentSettings.preferredEncoder,
+          selected_gpu: currentSettings.selectedGpu,
+        });
       } else if (item.type === "upscale") {
         const input = await sanitizePath(item.inputPath!);
         const output = await sanitizePath(item.outputPath!);
+        const target = item.upscaleTarget || "4k";
+
+        // Check system capability before attempting upscale
+        const capability = await checkUpscale(target);
+        if (!capability.canUpscale) {
+          console.error(`[queue] Upscale blocked: ${capability.message}`);
+          toast.addToast("error", "Insufficient Resources", capability.message);
+          throw new Error(capability.message);
+        }
+        if (capability.message.startsWith("Warning")) {
+          toast.addToast("warning", "Resource Warning", capability.message);
+        }
+
         await startUpscale({
-          input, output,
-          target: item.upscaleTarget || "4k",
+          id: item.id, input, output,
+          target,
           file_type: item.upscaleFileType || "video",
           use_gpu: currentSettings.useGpu,
           preferred_encoder: currentSettings.preferredEncoder,
+          selected_gpu: currentSettings.selectedGpu,
+        });
+      } else if (item.type === "enhance") {
+        const input = await sanitizePath(item.inputPath!);
+        const output = await sanitizePath(item.outputPath!);
+        await startEnhance({
+          id: item.id, input, output,
+          file_type: item.enhanceFileType || "video",
+          model: item.enhanceModel || "realesrgan-x4plus",
+          tile_size: item.enhanceTileSize || 256,
+          use_gpu: currentSettings.useGpu,
+          selected_gpu: currentSettings.selectedGpu,
         });
       }
     } catch (err) {
@@ -227,6 +246,12 @@ export default function App() {
     getSettings()
       .then(setAppSettings)
       .catch((err) => console.warn("[app] Failed to load settings:", err));
+  }, []);
+
+  useEffect(() => {
+    getConcurrency()
+      .then(queue.setConcurrency)
+      .catch((err) => console.warn("[app] Failed to load concurrency:", err));
   }, []);
 
   useKeyboardShortcuts([
@@ -243,21 +268,19 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    detectGpusNative()
-      .then((caps) => {
-        const best = caps.find(c => c.works);
-        if (best) {
-          setNativeGpuInfo({ available: true, encoder: best.encoder, vendor: best.vendor });
-        } else {
-          setNativeGpuInfo({ available: false, encoder: "", vendor: "" });
-        }
+    detectGpu()
+      .then((info) => {
+        setParallelEncoders(parallelGpuEncoders(info.allEncoders ?? []));
+        setNativeGpuInfo({ available: info.available, encoder: info.encoder || "", vendor: info.vendor || "" });
       })
-      .catch(() => setNativeGpuInfo(null));
+      .catch(() => { setNativeGpuInfo(null); setParallelEncoders([]); });
   }, []);
 
   useEffect(() => {
-    queue.processNext(processNextCallback);
-  }, [queue.queue, processNextCallback, queue.processNext]);
+    const parallel = !appSettings.autoDetectGpu && appSettings.selectedGpu === "parallel";
+    if (parallel && parallelEncoders === null) return;
+    queue.processNextBatch(processNextCallback, parallel ? parallelEncoders ?? [] : undefined);
+  }, [queue.queue, processNextCallback, queue.processNextBatch, parallelEncoders, appSettings.autoDetectGpu, appSettings.selectedGpu]);
 
   const addToQueue = useCallback((item: QueueItem) => {
     queue.enqueue(item);
@@ -294,29 +317,30 @@ export default function App() {
     toast.addToast("info", "Added to queue", `${label} (${safeFormat.toUpperCase()})`);
   }, [addToQueue, appSettings]);
 
-  const handleReduceAdd = useCallback(async (
+  const handleTranscoderAdd = useCallback(async (
     inputPath: string, outputPath: string, quality: number,
-    maxWidth: number | null, fileType: "video" | "photo" | "audio",
-    targetBytes: number | null,
+    fileType: "video" | "photo" | "audio",
+    targetBytes: number | null, mode: "compress" | "reduce",
   ) => {
     const safeInput = await sanitizePath(inputPath);
     const safeOutput = await sanitizePath(outputPath);
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
     const finalOutputPath = appSettings.outputDir
       ? `${appSettings.outputDir}${sep()}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
-    const reductionLabel = targetBytes ? `under ${(targetBytes / 1_000_000).toLocaleString()} MB` : `${quality}% quality`;
+    const modeLabel = mode === "reduce" ? `under ${(targetBytes! / 1_000_000).toLocaleString()} MB` : `${quality}% quality`;
     addToQueue({
       id: genId(),
-      type: "reduce",
+      type: "transcoder",
       status: "pending",
       progress: 0,
       inputPath: safeInput, outputPath: finalOutputPath,
-      reduceQuality: quality, reduceMaxWidth: maxWidth || undefined, reduceFileType: fileType,
-      reduceTargetBytes: targetBytes ?? undefined,
-      label: `${fileName} → ${reductionLabel}`,
+      transcoderMode: mode,
+      transcoderQuality: quality, transcoderFileType: fileType,
+      transcoderTargetBytes: targetBytes ?? undefined,
+      label: `${fileName} → ${modeLabel}`,
       createdAt: Date.now(),
     });
-    toast.addToast("info", "Added to queue", `${fileName} → ${reductionLabel}`);
+    toast.addToast("info", "Added to queue", `${fileName} → ${modeLabel}`);
   }, [addToQueue, appSettings]);
 
   const handleUpscaleAdd = useCallback(async (
@@ -340,6 +364,31 @@ export default function App() {
       createdAt: Date.now(),
     });
     toast.addToast("info", "Added to queue", `${fileName} → ${target.toUpperCase()}`);
+  }, [addToQueue, appSettings]);
+
+  const handleEnhanceAdd = useCallback(async (
+    inputPath: string, outputPath: string,
+    fileType: "video" | "photo",
+    model: string, tileSize: number,
+  ) => {
+    const safeInput = await sanitizePath(inputPath);
+    const safeOutput = await sanitizePath(outputPath);
+    const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
+    const sepVal = sep();
+    const finalOutputPath = appSettings.outputDir
+      ? `${appSettings.outputDir}${sepVal}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
+    const modelLabel = model.replace("realesrgan-", "").replace("realesr-", "").toUpperCase();
+    addToQueue({
+      id: genId(),
+      type: "enhance",
+      status: "pending",
+      progress: 0,
+      inputPath: safeInput, outputPath: finalOutputPath,
+      enhanceModel: model, enhanceTileSize: tileSize, enhanceFileType: fileType,
+      label: `${fileName} → AI ${modelLabel}`,
+      createdAt: Date.now(),
+    });
+    toast.addToast("info", "Added to queue", `${fileName} → AI ${modelLabel}`);
   }, [addToQueue, appSettings]);
 
   const handleConvertAdd = useCallback(async (
@@ -378,6 +427,16 @@ export default function App() {
     }
   }, [queue]);
 
+  const handleCancelItem = useCallback(async (id: string) => {
+    try {
+      await cancelOperationById(id);
+      queue.cancelItem(id);
+      toast.addToast("warning", "Cancelled", "Operation stopped");
+    } catch (err) {
+      console.error(err);
+    }
+  }, [queue]);
+
   const isProcessing = queue.isProcessing;
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -407,13 +466,13 @@ export default function App() {
             onWindowError={(message) => toast.addToast("error", "Window action failed", message)}
           />
           <nav className="workspace-nav" aria-label="Media tools">
-            {MODE_CONFIG.map(({ id, label, icon: Icon }) => (
+            {MODE_CONFIG.map(({ id, label, icon: Icon, badge }) => (
               <button type="button" key={id}
                 className="workspace-tab"
                 aria-current={!showSettings && mode === id ? "page" : undefined}
-                disabled={isProcessing}
                 onClick={() => { setMode(id); setShowSettings(false); }}>
                 <Icon size={16} aria-hidden="true" />{label}
+                {badge && <span className="ml-1.5 inline-flex items-center rounded-md bg-purple-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-purple-300 ring-1 ring-inset ring-purple-500/30">{badge}</span>}
               </button>
             ))}
           </nav>
@@ -423,11 +482,11 @@ export default function App() {
               <div className="workspace-content mx-auto space-y-5">
                 <div className="workspace-intro">
                   <p className="workspace-eyebrow">{showSettings ? "Preferences" : "Media workspace"}</p>
-                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : mode === "upscale" ? "Higher resolution. Same quality." : "Less size. More space."}</h1>
-                  <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We\u2019ll handle the rest." : mode === "upscale" ? "Enhance resolution with GPU-accelerated upscaling." : "Find the right balance between file size and quality."}</p>
-                  {nativeGpuInfo?.available && (
+                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : mode === "upscale" ? "Higher resolution. Same quality." : mode === "enhance" ? "AI-powered quality boost." : "Less size. More space."}</h1>
+                  <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We\u2019ll handle the rest." : mode === "upscale" ? "Enhance resolution with GPU-accelerated upscaling." : mode === "enhance" ? "Super-resolution and denoising using Real-ESRGAN neural networks." : "Find the right balance between file size and quality."}</p>
+                  {!showSettings && mode !== "download" && mode !== "enhance" && (
                     <p className="text-[11px] text-green-400 mt-1">
-                      GPU: {nativeGpuInfo.vendor} ({nativeGpuInfo.encoder})
+                      {gpuStatus(appSettings, nativeGpuInfo)}
                     </p>
                   )}
                 </div>
@@ -459,14 +518,19 @@ export default function App() {
                           <FileConverter onAdd={handleConvertAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
-                      {mode === "reduce" && (
-                        <motion.div key="reduce" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
-                          <FileReducer onAdd={handleReduceAdd} disabled={isProcessing} />
+                      {mode === "transcoder" && (
+                        <motion.div key="transcoder" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
+                          <FileTranscoder onAdd={handleTranscoderAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
                       {mode === "upscale" && (
                         <motion.div key="upscale" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
                           <Upscaler onAdd={handleUpscaleAdd} disabled={isProcessing} />
+                        </motion.div>
+                      )}
+                      {mode === "enhance" && (
+                        <motion.div key="enhance" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2, ease: "easeInOut" }}>
+                          <Enhancer onAdd={handleEnhanceAdd} disabled={isProcessing} />
                         </motion.div>
                       )}
                     </>
@@ -511,6 +575,7 @@ export default function App() {
                 <QueueManager
                   items={queue.queue}
                   onRemove={removeFromQueue}
+                  onCancel={handleCancelItem}
                   onClearCompleted={clearCompleted}
                 />
               </div>
@@ -522,7 +587,7 @@ export default function App() {
         </div>
       </ErrorBoundary>
       {showAbout && (
-        <Suspense fallback={null}><About onClose={() => setShowAbout(false)} hasPendingWork={queue.processingRef.current || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></Suspense>
+        <Suspense fallback={null}><About onClose={() => setShowAbout(false)} hasPendingWork={queue.isProcessing || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></Suspense>
       )}
       {showBugReport && (
         <Suspense fallback={null}><BugReport onClose={() => setShowBugReport(false)} /></Suspense>

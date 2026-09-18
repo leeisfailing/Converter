@@ -1,4 +1,4 @@
-use crate::{cache::AppCache, engine, models::*, validation};
+use crate::{cache::AppCache, engine, cpp_engine, models::*, validation};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -44,33 +44,50 @@ pub struct GpuInfo {
 #[tauri::command]
 pub async fn detect_file(app: AppHandle, path: String, dev_mode: bool) -> Result<DetectFileResponse, String> {
     validation::validate_file_exists(&path, "path")?;
+
+    // Check persistent cache (keyed by path + size + mtime)
+    let (size, mtime) = std::fs::metadata(&path)
+        .ok()
+        .map(|m| (Some(m.len()), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))))
+        .unwrap_or((None, None));
+    let cache_key = format!("detect:{path}");
+    let pc = crate::persistent_cache::PersistentCache::global();
+    if let Some(cached) = pc.get_file(&cache_key, size, mtime).await {
+        return serde_json::from_value(cached).map_err(|e| e.to_string());
+    }
+
     let req = DetectFileRequest { cmd: "detect_file", path: &path, dev_mode };
+    let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
+    let response: DetectFileResponse = engine::request(&app, cmd_json).await?;
+
+    // Cache the result
+    if let Ok(val) = serde_json::to_value(&response) {
+        pc.set_file(&cache_key, val, size, mtime).await;
+    }
+    Ok(response)
+}
+
+#[tauri::command]
+pub async fn detect_url(app: AppHandle, url: String) -> Result<DetectUrlResponse, String> {
+    validation::validate_url(&url)?;
+    let req = DetectUrlRequest { cmd: "detect_url", url: &url };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
     engine::request(&app, cmd_json).await
 }
 
 #[tauri::command]
-pub async fn detect_url(app: AppHandle, url: String, cache: tauri::State<'_, AppCache>) -> Result<DetectUrlResponse, String> {
-    validation::validate_url(&url)?;
-    if let Some(cached) = cache.get_url(&url).await {
-        return serde_json::from_value(cached).map_err(|e| e.to_string());
-    }
-    let req = DetectUrlRequest { cmd: "detect_url", url: &url };
-    let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    let response: DetectUrlResponse = engine::request(&app, cmd_json).await?;
-    cache.set_url(url, serde_json::to_value(&response).map_err(|e| e.to_string())?).await;
-    Ok(response)
-}
-
-#[tauri::command]
 pub async fn detect_gpu(app: AppHandle, cache: tauri::State<'_, AppCache>) -> Result<GpuInfo, String> {
-    if let Some(cached) = cache.get_gpu().await {
+    if let Some(cached) = cache.get_gpu("default").await {
         return Ok(cached);
     }
     let req = DetectGpuRequest { cmd: "detect_gpu" };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    let response: GpuInfo = engine::request(&app, cmd_json).await?;
-    cache.set_gpu(response.clone()).await;
+    let response: GpuInfo = if cpp_engine::binary_path().is_some() {
+        cpp_engine::request(&app, cmd_json).await?
+    } else {
+        engine::request(&app, cmd_json).await?
+    };
+    cache.set_gpu("default".into(), response.clone()).await;
     Ok(response)
 }
 

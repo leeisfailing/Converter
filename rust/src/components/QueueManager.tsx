@@ -11,6 +11,7 @@ import {
   Trash2,
   Clock,
   List,
+  X,
 } from "lucide-react";
 import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
 
@@ -36,6 +37,7 @@ function formatEta(seconds: number): string {
 interface Props {
   items: QueueItem[];
   onRemove: (id: string) => void;
+  onCancel: (id: string) => void;
   onClearCompleted: () => void;
 }
 
@@ -53,7 +55,7 @@ const statusConfig: Record<
 const typeConfig: Record<string, { icon: typeof Download; color: string; bg: string }> = {
   download: { icon: Download, color: "text-app-accent", bg: "bg-app-accent-dim" },
   convert: { icon: ArrowRightLeft, color: "text-purple-400", bg: "bg-purple-500/10" },
-  reduce: { icon: Minimize2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  transcoder: { icon: Minimize2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
   upscale: { icon: ArrowUp, color: "text-blue-400", bg: "bg-blue-500/10" },
 };
 
@@ -62,8 +64,8 @@ const staggerItem = {
   visible: { opacity: 1, x: 0 },
 };
 
-const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void }>(
-  ({ item, onRemove }, ref) => {
+const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void; onCancel: (id: string) => void }>(
+  ({ item, onRemove, onCancel }, ref) => {
     const sConfig = statusConfig[item.status];
     const tConfig = typeConfig[item.type] || typeConfig.convert;
     const SIcon = sConfig.icon;
@@ -91,13 +93,18 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
         {/* Info */}
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-app-text truncate">{item.label}</p>
+          {item.assignedGpu && <p className="text-[11px] text-app-text-secondary">GPU: {item.assignedGpu}</p>}
           <div className="flex items-center gap-2 mt-0.5">
             <SIcon
               size={11}
               className={`${sConfig.color} ${item.status === "active" ? "animate-spin" : ""}`}
             />
             <span className={`text-[10px] ${sConfig.color}`}>
-              {item.status === "active" ? `${Math.round(item.progress)}%` : item.status}
+              {item.status === "active"
+                ? item.downloadPhase === "resolving" ? "Finding video…"
+                  : item.downloadPhase === "retrying" ? "Retrying…"
+                  : `${Math.round(item.progress)}%`
+                : item.status}
             </span>
             {item.status === "active" && item.type === "download" && (item.downloadSpeed ?? 0) > 0 && (
               <span className="text-[10px] text-app-accent font-medium">
@@ -131,8 +138,18 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
           )}
         </div>
 
-        {/* Remove button */}
-        {item.status !== "active" && (
+        {/* Action button */}
+        {item.status === "active" ? (
+          <motion.button
+            onClick={() => onCancel(item.id)}
+            aria-label={`Cancel ${item.label}`}
+            className="w-6 h-6 rounded flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
+            whileHover={{ scale: 1.2 }}
+            whileTap={{ scale: 0.8 }}
+          >
+            <X size={12} />
+          </motion.button>
+        ) : (
           <motion.button
             onClick={() => onRemove(item.id)}
             aria-label={`Remove ${item.label} from queue`}
@@ -149,7 +166,7 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
 ));
 QueueItemRow.displayName = "QueueItemRow";
 
-export default memo(function QueueManager({ items, onRemove, onClearCompleted }: Props) {
+export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted }: Props) {
   const hasItems = items.length > 0;
 
   const completedCount = useMemo(
@@ -205,7 +222,7 @@ export default memo(function QueueManager({ items, onRemove, onClearCompleted }:
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
-            <QueueItemRow key={item.id} item={item} onRemove={onRemove} />
+            <QueueItemRow key={item.id} item={item} onRemove={onRemove} onCancel={onCancel} />
           ))}
         </AnimatePresence>
       </div>

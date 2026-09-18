@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { detectFile } from "../lib/tauri-commands";
+import { detectFile, checkUpscale } from "../lib/tauri-commands";
 import {
   FolderOpen,
   FileVideo,
@@ -10,6 +10,7 @@ import {
   Plus,
   FileUp,
   ArrowUp,
+  AlertTriangle,
 } from "lucide-react";
 
 interface Props {
@@ -34,6 +35,8 @@ export default function Upscaler({ onAdd, disabled }: Props) {
   const [detectedFileType, setDetectedFileType] = useState<"video" | "photo" | null>(null);
   const [target, setTarget] = useState("4k");
   const [isDragOver, setIsDragOver] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const [capabilityWarning, setCapabilityWarning] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const detectGeneration = useRef(0);
 
@@ -61,24 +64,53 @@ export default function Upscaler({ onAdd, disabled }: Props) {
   useEffect(() => {
     if (!filePath) return;
     setDetectedFileType(null);
+    setFileError("");
+    setCapabilityWarning(null);
     let cancelled = false;
     const generation = ++detectGeneration.current;
     console.log(`[upscaler] Detecting file type...`);
     detectFile(filePath, false)
       .then((res) => {
         if (cancelled || generation !== detectGeneration.current) return;
-        if (res.ok) {
-          const ft = res.file_type as "video" | "photo";
+        if (res.ok && (res.file_type === "video" || res.file_type === "photo")) {
+          const ft = res.file_type;
           console.log(`[upscaler] Detected: type=${ft}`);
           setDetectedFileType(ft);
+        } else {
+          setFileError("Choose a supported video or image file.");
         }
       })
       .catch((err) => {
         if (cancelled || generation !== detectGeneration.current) return;
         console.error(`[upscaler] Detection failed:`, err);
+        setFileError("Could not read this file. Choose another video or image.");
       });
     return () => { cancelled = true; };
   }, [filePath]);
+
+  // Check capability when target changes
+  useEffect(() => {
+    if (!target) {
+      setCapabilityWarning(null);
+      return;
+    }
+    let cancelled = false;
+    checkUpscale(target)
+      .then((cap) => {
+        if (cancelled) return;
+        if (!cap.canUpscale) {
+          setCapabilityWarning(cap.message);
+        } else if (cap.message.startsWith("Warning")) {
+          setCapabilityWarning(cap.message);
+        } else {
+          setCapabilityWarning(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCapabilityWarning(null);
+      });
+    return () => { cancelled = true; };
+  }, [target]);
 
   const handleBrowse = async () => {
     const selected = await open({
@@ -102,13 +134,27 @@ export default function Upscaler({ onAdd, disabled }: Props) {
   const getOutputPath = useCallback(() => {
     if (!filePath) return "";
     const lastDot = filePath.lastIndexOf(".");
-    const ext = lastDot > 0 ? filePath.substring(lastDot) : "";
-    const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
+    const hasExtension = lastDot > Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+    const inputExt = hasExtension ? filePath.substring(lastDot).toLowerCase() : "";
+    const ext = detectedFileType === "video" ? ".mp4" :
+      [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif", ".avif"].includes(inputExt) ? inputExt : ".png";
+    const base = hasExtension ? filePath.substring(0, lastDot) : filePath;
     return `${base}_${target.toUpperCase()}${ext}`;
-  }, [filePath, target]);
+  }, [filePath, target, detectedFileType]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!filePath || !detectedFileType) return;
+
+    // Final capability check before adding
+    try {
+      const cap = await checkUpscale(target);
+      if (!cap.canUpscale) {
+        setFileError(cap.message);
+        return;
+      }
+    } catch {
+      // If check fails, allow the add (backend will handle the error)
+    }
 
     console.log(`[upscaler] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${target.toUpperCase()}`);
 
@@ -131,6 +177,7 @@ export default function Upscaler({ onAdd, disabled }: Props) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
     >
+      {fileError && <p role="alert" className="text-xs text-red-400">{fileError}</p>}
       <motion.div
         ref={dropRef}
         onClick={!disabled ? handleBrowse : undefined}
@@ -210,6 +257,17 @@ export default function Upscaler({ onAdd, disabled }: Props) {
                     </button>
                   ))}
                 </div>
+                {capabilityWarning && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="flex items-start gap-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20"
+                  >
+                    <AlertTriangle size={14} className="text-yellow-400 mt-0.5 shrink-0" />
+                    <p className="text-[11px] text-yellow-200">{capabilityWarning}</p>
+                  </motion.div>
+                )}
               </div>
             </div>
 

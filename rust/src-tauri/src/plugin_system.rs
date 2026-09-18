@@ -52,6 +52,12 @@ type PluginProcessFn = extern "C" fn(
 type PluginShutdownFn = extern "C" fn();
 type PluginConfigFn = extern "C" fn() -> *const c_char;
 
+/// The ABI guarantees a live, NUL-terminated string for non-null pointers.
+unsafe fn plugin_string(pointer: *const c_char) -> Option<String> {
+    if pointer.is_null() { return None; }
+    Some(unsafe { CStr::from_ptr(pointer) }.to_string_lossy().into_owned())
+}
+
 // ── Plugin config / capabilities ───────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -194,22 +200,27 @@ impl PluginRegistry {
         // SAFETY: `name_fn` is a valid function pointer resolved from the
         // loaded library. It returns a pointer to a null-terminated C string
         // that is valid for the lifetime of the shared library.
-        let name = unsafe { CStr::from_ptr(name_fn()).to_string_lossy().into_owned() };
+        let name = unsafe { plugin_string(name_fn()) }
+            .filter(|name| !name.trim().is_empty()).ok_or("Plugin returned an empty name")?;
 
         // Read version from optional symbol, or default
-        let version = version_fn.map(|vf| {
+        let version = version_fn.and_then(|vf| {
             // SAFETY: Same reasoning as `name_fn` — valid pointer to C string
             // owned by the shared library.
-            unsafe { CStr::from_ptr(vf()).to_string_lossy().into_owned() }
+            unsafe { plugin_string(vf()) }
         }).unwrap_or_else(|| "0.0.0".to_string());
 
         // Read plugin_config JSON from optional symbol
         let config = config_fn.map(|cf| {
             // SAFETY: `cf` returns a pointer to a JSON-encoded C string.
             // We parse it; if malformed we fall back to defaults.
-            let json_str = unsafe { CStr::from_ptr(cf()).to_string_lossy().into_owned() };
+            let json_str = unsafe { plugin_string(cf()) }.unwrap_or_default();
             serde_json::from_str::<PluginConfig>(&json_str).unwrap_or_default()
         }).unwrap_or_default();
+
+        // Prevent replacing an initialized library without shutting it down.
+        let mut plugins = self.plugins.write().map_err(|e| e.to_string())?;
+        if plugins.contains_key(&name) { return Err(format!("Plugin '{name}' is already loaded")); }
 
         // Initialize (optional)
         if let Some(init) = init_fn {
@@ -247,7 +258,7 @@ impl PluginRegistry {
         };
 
         log::info!("Loaded plugin '{}' v{} from {}", info.name, info.version, info.path.display());
-        self.plugins.write().unwrap().insert(name.clone(), loaded);
+        plugins.insert(name.clone(), loaded);
         Ok(info)
     }
 
@@ -305,7 +316,8 @@ impl PluginRegistry {
         options_json: &str,
         progress_cb: Option<extern "C" fn(f32)>,
     ) -> Result<(), String> {
-        let plugins = self.plugins.read().unwrap();
+        // The C ABI does not require reentrant processing functions.
+        let plugins = self.plugins.write().map_err(|e| e.to_string())?;
         let plugin = plugins
             .get(plugin_name)
             .ok_or_else(|| format!("Plugin '{plugin_name}' not loaded"))?;
@@ -376,12 +388,14 @@ pub async fn plugin_list() -> Result<Vec<PluginInfo>, String> {
 
 #[command]
 pub async fn plugin_load(path: String) -> Result<PluginInfo, String> {
-    PluginRegistry::global().load(Path::new(&path))
+    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().load(Path::new(&path)))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[command]
 pub async fn plugin_unload(name: String) -> Result<(), String> {
-    PluginRegistry::global().unload(&name)
+    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().unload(&name))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[command]
@@ -391,5 +405,25 @@ pub async fn plugin_process(
     output: String,
     options: String,
 ) -> Result<(), String> {
-    PluginRegistry::global().process(&name, &input, &output, &options, None)
+    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().process(&name, &input, &output, &options, None))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn null_plugin_metadata_does_not_dereference_null() {
+        assert_eq!(unsafe { plugin_string(std::ptr::null()) }, None);
+        let name = CString::new("Test plugin").unwrap();
+        assert_eq!(unsafe { plugin_string(name.as_ptr()) }.as_deref(), Some("Test plugin"));
+    }
+
+    #[test]
+    fn unloaded_plugin_reports_error() {
+        let registry = PluginRegistry { plugins: RwLock::new(HashMap::new()) };
+        assert!(registry.process("missing", "in", "out", "{}", None).unwrap_err().contains("not loaded"));
+        assert!(registry.unload("missing").unwrap_err().contains("not loaded"));
+    }
 }

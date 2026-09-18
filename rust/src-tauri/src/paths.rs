@@ -47,10 +47,10 @@ fn tool_roots() -> &'static [PathBuf] {
             .and_then(|p| p.parent().map(Path::to_path_buf))
         {
             roots.push(dir.clone());
-            roots.push(dir.join("Engine/bin"));
-            roots.push(dir.join("resources/Engine/bin"));
+            roots.push(dir.join("PyEngine/bin"));
+            roots.push(dir.join("resources/PyEngine/bin"));
         }
-        roots.push(project_root().join("Engine/bin"));
+        roots.push(project_root().join("PyEngine/bin"));
         roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("bin"));
         roots
     })
@@ -122,20 +122,20 @@ fn find_bundled_python(roots: &[PathBuf]) -> Option<PathBuf> {
 /// Resolve against Tauri's actual resource directory before any development or
 /// system fallback (resource_dir is not necessarily beside current_exe).
 pub fn python_in(resource_dir: &Path) -> String {
-    find_bundled_python(&[resource_dir.join("Engine/bin")])
+    find_bundled_python(&[resource_dir.join("PyEngine/bin")])
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| python().to_string())
 }
 
 /// Dev runs must not prefer stale resource copies in target/debug.
 pub fn engine_runtime(resource_dir: &Path, project: &Path, development: bool) -> (PathBuf, String) {
-    let source = project.join("Engine/__main__.py");
+    let source = project.join("PyEngine/__main__.py");
     if development && source.is_file() {
         let runtime = find_bundled_python(&[project.join("rust/src-tauri/bin")]);
         return (source, runtime.map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| python().to_string()));
     }
-    let bundled = resource_dir.join("Engine/__main__.py");
+    let bundled = resource_dir.join("PyEngine/__main__.py");
     (if bundled.is_file() { bundled } else { source }, python_in(resource_dir))
 }
 
@@ -147,10 +147,10 @@ mod tests {
     fn development_uses_source_and_private_runtime_while_release_uses_bundle() {
         let project = tempfile::tempdir().unwrap();
         let resources = tempfile::tempdir().unwrap();
-        let source = project.path().join("Engine/__main__.py");
-        let copied = resources.path().join("Engine/__main__.py");
+        let source = project.path().join("PyEngine/__main__.py");
+        let copied = resources.path().join("PyEngine/__main__.py");
         let dev_python = project.path().join("rust/src-tauri/bin/python").join(executable("python").as_ref());
-        let bundled_python = resources.path().join("Engine/bin/python").join(executable("python").as_ref());
+        let bundled_python = resources.path().join("PyEngine/bin/python").join(executable("python").as_ref());
         for file in [&source, &copied, &dev_python, &bundled_python] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, []).unwrap();
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn python_uses_tauri_resource_directory_even_when_system_python_exists() {
         let resources = tempfile::tempdir().unwrap();
-        let bundled = resources.path().join("Engine/bin/python").join(executable("python").as_ref());
+        let bundled = resources.path().join("PyEngine/bin/python").join(executable("python").as_ref());
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         std::fs::write(&bundled, []).unwrap();
         assert_eq!(PathBuf::from(python_in(resources.path())), bundled);

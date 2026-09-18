@@ -7,8 +7,8 @@ const ROOT = join(import.meta.dirname, "..");
 const SRC_TAURI = join(ROOT, "src-tauri");
 const RELEASE = join(SRC_TAURI, "target", "release");
 const DIST = join(ROOT, "dist", "portable");
-const ENGINE_SRC = join(ROOT, "..", "Engine");
-const ENGINE_DST = join(DIST, "Engine");
+const ENGINE_SRC = join(ROOT, "..", "PyEngine");
+const ENGINE_DST = join(DIST, "PyEngine");
 
 console.log("Creating portable build...\n");
 
@@ -39,7 +39,7 @@ for (const dir of ["core", "handlers", "workers", "formats"]) {
   const src = join(ENGINE_SRC, dir);
   if (existsSync(src)) cpSync(src, join(ENGINE_DST, dir), { recursive: true });
 }
-console.log("  Engine scripts");
+console.log("  PyEngine scripts");
 
 const pythonSrc = join(SRC_TAURI, "bin", "python");
 const pythonDst = join(ENGINE_DST, "bin", "python");

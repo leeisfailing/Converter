@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn a_full_stderr_pipe_does_not_stall_the_child() {
         let state = crate::operations::Operations::default();
-        let operation = state.begin().unwrap();
+        let operation = tokio_test::block_on(state.begin(crate::operations::OpType::Convert, "test-stderr".into())).unwrap();
         let output = Command::new(crate::paths::python())
             .args(["-c", "import sys; sys.stderr.write('x' * 262144 + 'done')"])
             .output_cancellable(&operation).unwrap();
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn cancellation_prevents_spawning_another_process() {
         let state = crate::operations::Operations::default();
-        let operation = state.begin().unwrap();
-        state.cancel();
+        let operation = tokio_test::block_on(state.begin(crate::operations::OpType::Convert, "test-cancel".into())).unwrap();
+        operation.cancelled_flag().store(true, std::sync::atomic::Ordering::Release);
         let error = Command::new("this-command-must-not-run").output_cancellable(&operation).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     }

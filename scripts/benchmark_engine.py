@@ -11,7 +11,7 @@ timings = []
 for _ in range(5):
     started = time.perf_counter()
     result = subprocess.run(
-        [sys.executable, str(root / "Engine/__main__.py")],
+        [sys.executable, str(root / "PyEngine/__main__.py")],
         input=json.dumps({"cmd": "detect_file", "path": str(root / "README.md")}) + "\n",
         capture_output=True, text=True, check=True,
     )

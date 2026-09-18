@@ -1,0 +1,6 @@
+yt-dlp[default]==2026.8.19
+deno==2.9.5
+vapoursynth>=70
+onnxruntime>=1.17.0
+opencv-python-headless>=4.9.0
+numpy>=1.26.0

@@ -18,9 +18,19 @@ pub struct AppSettings {
     /// Empty string means use CPU fallback (libx264).
     #[serde(default)]
     pub preferred_encoder: String,
+    /// Auto-detect GPU on startup (default: true). When false, use `selected_gpu`.
+    #[serde(default = "default_true")]
+    pub auto_detect_gpu: bool,
+    /// User-selected GPU encoder, or "parallel" for frontend per-job GPU scheduling.
+    #[serde(default)]
+    pub selected_gpu: String,
 }
 
 fn default_use_gpu() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -35,7 +45,14 @@ impl Default for AppSettings {
         let base = app_base_dir();
         let download_dir = base.join("Downloads").to_string_lossy().into_owned();
         let output_dir = base.join("Output").to_string_lossy().into_owned();
-        Self { download_dir, output_dir, use_gpu: true, preferred_encoder: String::new() }
+        Self {
+            download_dir,
+            output_dir,
+            use_gpu: true,
+            preferred_encoder: String::new(),
+            auto_detect_gpu: true,
+            selected_gpu: String::new(),
+        }
     }
 }
 

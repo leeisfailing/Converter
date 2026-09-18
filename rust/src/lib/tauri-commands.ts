@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { normalizePastedUrl } from "./pasted-url";
 
 // Backslashes are Windows path separators, including in the default download folder.
 const DANGEROUS_PATH_CHARS = /[<>"'`;|&$(){}]/;
@@ -19,7 +20,7 @@ export function sanitizeUrl(url: string): string {
   if (typeof url !== "string" || !url.trim()) throw new Error("Invalid URL: empty");
   if (NULL_BYTE.test(url)) throw new Error("Invalid URL: contains null byte");
   if (DANGEROUS_URL_CHARS.test(url)) throw new Error("Invalid URL: contains illegal characters");
-  const trimmed = url.replace(/[\r\n]/g, "").trim();
+  const trimmed = normalizePastedUrl(url.replace(/[\r\n]/g, ""));
   try {
     const parsed = new URL(trimmed);
     if (!["http:", "https:"].includes(parsed.protocol)) {
@@ -41,6 +42,7 @@ export function sanitizeString(s: string, maxLength: number = 256): string {
 
 export function sanitizeFormat(fmt: string): string {
   const ALLOWED = [
+    "tiktok", "tiktok_no_watermark",
     // Video output formats
     "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "mpg", "mpeg",
     "3gp", "mts", "vob", "gif",
@@ -76,6 +78,8 @@ export interface UrlFormatQuality {
 }
 
 export interface UrlFormat {
+  available?: boolean;
+  filesize?: number | null;
   label: string;
   value: string;
   desc: string;
@@ -126,6 +130,7 @@ export async function detectUrl(url: string): Promise<DetectUrlResponse> {
 }
 
 export async function startConvert(params: {
+  id: string;
   input: string;
   output: string;
   format: string;
@@ -136,9 +141,10 @@ export async function startConvert(params: {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
   const safeFormat = sanitizeFormat(params.format);
-  console.log(`[cmd] startConvert: input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, devMode=${params.dev_mode}, useGpu=${params.use_gpu}`);
+  console.log(`[cmd] startConvert: id=${params.id}, input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, devMode=${params.dev_mode}, useGpu=${params.use_gpu}`);
   try {
     await invoke("start_convert", {
+      id: params.id,
       input: safeInput,
       output: safeOutput,
       format: safeFormat,
@@ -154,6 +160,7 @@ export async function startConvert(params: {
 }
 
 export async function startDownload(params: {
+  id: string;
   url: string;
   format_type: string;
   output_dir: string;
@@ -164,9 +171,10 @@ export async function startDownload(params: {
   const safeUrl = sanitizeUrl(params.url);
   const safeFormat = sanitizeFormat(params.format_type);
   const safeDir = sanitizePath(params.output_dir);
-  console.log(`[cmd] startDownload("${safeUrl.substring(0, 50)}", format=${safeFormat}, subs=${!!params.write_subtitles}, thumb=${!!params.write_thumbnail}, cookies=${!!params.use_browser_cookies})`);
+  console.log(`[cmd] startDownload: id=${params.id}, url="${safeUrl.substring(0, 50)}", format=${safeFormat}, subs=${!!params.write_subtitles}, thumb=${!!params.write_thumbnail}, cookies=${!!params.use_browser_cookies}`);
   try {
     await invoke("start_download", {
+      id: params.id,
       url: safeUrl,
       formatType: safeFormat,
       outputDir: safeDir,
@@ -181,15 +189,16 @@ export async function startDownload(params: {
   }
 }
 
-export async function startReduce(params: {
+export async function startTranscoder(params: {
+  id: string;
   input: string;
   output: string;
   quality: number;
   target_bytes?: number | null;
-  max_width: number | null;
   file_type: "video" | "photo" | "audio";
   use_gpu: boolean;
   preferred_encoder?: string;
+  selected_gpu?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
@@ -198,47 +207,52 @@ export async function startReduce(params: {
   if (targetBytes !== null && (!Number.isSafeInteger(targetBytes) || targetBytes < 1 || targetBytes > 10_000_000_000)) {
     throw new Error("Target size must be greater than zero and at most 10 GB");
   }
-  console.log(`[cmd] startReduce("${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu})`);
+  console.log(`[cmd] startTranscoder: id=${params.id}, "${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu}, selectedGpu="${params.selected_gpu || ""}"`);
   try {
-    await invoke("start_reduce", {
+    await invoke("start_transcoder", {
+      id: params.id,
       input: safeInput,
       output: safeOutput,
       quality,
       targetBytes,
-      maxWidth: params.max_width,
       fileType: params.file_type,
       useGpu: params.use_gpu,
       preferredEncoder: params.preferred_encoder ?? "",
+      selectedGpu: params.selected_gpu ?? "",
     });
-    console.log(`[cmd] startReduce => sent to engine`);
+    console.log(`[cmd] startTranscoder => sent to engine`);
   } catch (err) {
-    console.error(`[cmd] startReduce failed:`, err);
+    console.error(`[cmd] startTranscoder failed:`, err);
     throw err;
   }
 }
 
 export async function startUpscale(params: {
+  id: string;
   input: string;
   output: string;
   target: string;
   file_type: "video" | "photo";
   use_gpu: boolean;
   preferred_encoder?: string;
+  selected_gpu?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
   if (!["2k", "4k", "8k", "16k"].includes(params.target)) {
     throw new Error("Invalid upscale target");
   }
-  console.log(`[cmd] startUpscale("${safeInput.split(/[\\/]/).pop()}", target=${params.target.toUpperCase()}, useGpu=${params.use_gpu})`);
+  console.log(`[cmd] startUpscale: id=${params.id}, "${safeInput.split(/[\\/]/).pop()}", target=${params.target.toUpperCase()}, useGpu=${params.use_gpu}, selectedGpu="${params.selected_gpu || ""}"`);
   try {
     await invoke("start_upscale", {
+      id: params.id,
       input: safeInput,
       output: safeOutput,
       target: params.target,
       fileType: params.file_type,
       useGpu: params.use_gpu,
       preferredEncoder: params.preferred_encoder ?? "",
+      selectedGpu: params.selected_gpu ?? "",
     });
     console.log(`[cmd] startUpscale => sent to engine`);
   } catch (err) {
@@ -247,13 +261,66 @@ export async function startUpscale(params: {
   }
 }
 
+export async function startEnhance(params: {
+  id: string;
+  input: string;
+  output: string;
+  file_type: "video" | "photo";
+  model: string;
+  tile_size: number;
+  use_gpu: boolean;
+  selected_gpu?: string;
+}): Promise<void> {
+  const safeInput = sanitizePath(params.input);
+  const safeOutput = sanitizePath(params.output);
+  const validModels = ["realesrgan-x4plus", "realesrgan-x2plus", "realesr-general-x4v3"];
+  if (!validModels.includes(params.model)) {
+    throw new Error("Invalid enhancement model");
+  }
+  if (!["video", "photo"].includes(params.file_type)) {
+    throw new Error("Invalid file_type");
+  }
+  if (params.tile_size < 64 || params.tile_size > 512) {
+    throw new Error("tile_size must be between 64 and 512");
+  }
+  console.log(`[cmd] startEnhance: id=${params.id}, "${safeInput.split(/[\\/]/).pop()}", model=${params.model}, type=${params.file_type}, useGpu=${params.use_gpu}, selectedGpu=${params.selected_gpu || "auto"}`);
+  try {
+    await invoke("start_enhance", {
+      id: params.id,
+      input: safeInput,
+      output: safeOutput,
+      fileType: params.file_type,
+      model: params.model,
+      tileSize: params.tile_size,
+      useGpu: params.use_gpu,
+      selectedGpu: params.selected_gpu || "",
+    });
+    console.log(`[cmd] startEnhance => sent to engine`);
+  } catch (err) {
+    console.error(`[cmd] startEnhance failed:`, err);
+    throw err;
+  }
+}
+
 export async function cancelOperation(): Promise<void> {
   console.log(`[cmd] cancelOperation()`);
   try {
     await invoke("cancel_operation");
+    await invoke("cancel_cpp_operation");
     console.log(`[cmd] cancelOperation => done`);
   } catch (err) {
     console.error(`[cmd] cancelOperation failed:`, err);
+    throw err;
+  }
+}
+
+export async function cancelOperationById(id: string): Promise<void> {
+  console.log(`[cmd] cancelOperationById(${id})`);
+  try {
+    await invoke("cancel_operation_by_id", { id });
+    console.log(`[cmd] cancelOperationById => done`);
+  } catch (err) {
+    console.error(`[cmd] cancelOperationById failed:`, err);
     throw err;
   }
 }
@@ -265,6 +332,8 @@ export interface AppSettings {
   outputDir: string;
   useGpu: boolean;
   preferredEncoder: string;
+  autoDetectGpu: boolean;
+  selectedGpu: string;
 }
 
 export interface GpuInfo {
@@ -282,7 +351,7 @@ export async function getSettings(): Promise<AppSettings> {
   console.log(`[cmd] getSettings()`);
   try {
     const res = await invoke<AppSettings>("get_settings");
-    console.log(`[cmd] getSettings => downloadDir="${res.downloadDir}", outputDir="${res.outputDir}"`);
+    console.log(`[cmd] getSettings => downloadDir="${res.downloadDir}", outputDir="${res.outputDir}", useGpu=${res.useGpu}, autoDetectGpu=${res.autoDetectGpu}, selectedGpu="${res.selectedGpu}", preferredEncoder="${res.preferredEncoder}"`);
     return res;
   } catch (err) {
     console.error(`[cmd] getSettings failed:`, err);
@@ -300,6 +369,8 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
       outputDir: safeOutputDir,
       useGpu: settings.useGpu,
       preferredEncoder: settings.preferredEncoder,
+      autoDetectGpu: settings.autoDetectGpu,
+      selectedGpu: settings.selectedGpu,
     });
     console.log(`[cmd] saveSettings => ok`);
     return res;
@@ -342,12 +413,29 @@ export async function getDefaultOutputDir(): Promise<string> {
 // ===== CACHE =====
 
 export interface CacheStats {
-  urlHits: number;
-  urlMisses: number;
   gpuHits: number;
   gpuMisses: number;
-  urlEntries: number;
-  gpuCached: boolean;
+  gpuEntries: number;
+}
+
+export interface PersistentCacheStats {
+  totalEntries: number;
+  fileHits: number;
+  fileMisses: number;
+  encoderHits: number;
+  encoderMisses: number;
+}
+
+export async function getPersistentCacheStats(): Promise<PersistentCacheStats> {
+  try {
+    return await invoke<PersistentCacheStats>("get_persistent_cache_stats");
+  } catch {
+    return { totalEntries: 0, fileHits: 0, fileMisses: 0, encoderHits: 0, encoderMisses: 0 };
+  }
+}
+
+export async function clearPersistentCache(): Promise<void> {
+  await invoke("clear_persistent_cache");
 }
 
 export async function getCacheStats(): Promise<CacheStats> {
@@ -413,7 +501,16 @@ export async function probeFile(input: string): Promise<ProbeInfo> {
   }
 }
 
-export async function detectGpusNative(): Promise<GpuCapability[]> {
+let gpuDetection: Promise<GpuCapability[]> | null = null;
+
+export function detectGpusNative(): Promise<GpuCapability[]> {
+  if (!gpuDetection) {
+    gpuDetection = runGpuDetection().finally(() => { gpuDetection = null; });
+  }
+  return gpuDetection;
+}
+
+async function runGpuDetection(): Promise<GpuCapability[]> {
   console.log(`[cmd] detectGpusNative()`);
   try {
     const res = await invoke<GpuCapability[]>("detect_gpus_native");
@@ -425,26 +522,75 @@ export async function detectGpusNative(): Promise<GpuCapability[]> {
   }
 }
 
+// ===== CONCURRENCY =====
+
+export interface ConcurrencySnapshot {
+  download: number;
+  convert: number;
+  transcoder: number;
+  upscale: number;
+  activeDownload: number;
+  activeConvert: number;
+  activeTranscoder: number;
+  activeUpscale: number;
+}
+
+export async function getConcurrency(): Promise<ConcurrencySnapshot> {
+  console.log(`[cmd] getConcurrency()`);
+  try {
+    const res = await invoke<ConcurrencySnapshot>("get_concurrency");
+    console.log(`[cmd] getConcurrency => download=${res.download}, convert=${res.convert}, transcoder=${res.transcoder}, upscale=${res.upscale}`);
+    return res;
+  } catch (err) {
+    console.error(`[cmd] getConcurrency failed:`, err);
+    throw err;
+  }
+}
+
+export interface UpscaleCapability {
+  canUpscale: boolean;
+  target: string;
+  requiredRamGb: number;
+  availableRamGb: number;
+  message: string;
+}
+
+export async function checkUpscale(target: string): Promise<UpscaleCapability> {
+  console.log(`[cmd] checkUpscale(target=${target})`);
+  try {
+    const res = await invoke<UpscaleCapability>("check_upscale", { target });
+    console.log(`[cmd] checkUpscale => canUpscale=${res.canUpscale}, message=${res.message}`);
+    return res;
+  } catch (err) {
+    console.error(`[cmd] checkUpscale failed:`, err);
+    throw err;
+  }
+}
+
 export async function startConvertNative(params: {
+  id: string;
   input: string;
   output: string;
   format: string;
   dev_mode: boolean;
   use_gpu: boolean;
   preferred_encoder?: string;
+  selected_gpu?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
   const safeFormat = sanitizeFormat(params.format);
-  console.log(`[cmd] startConvertNative: input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, useGpu=${params.use_gpu}`);
+  console.log(`[cmd] startConvertNative: id=${params.id}, input="${safeInput}", output="${safeOutput}", format=${safeFormat.toUpperCase()}, useGpu=${params.use_gpu}, selectedGpu="${params.selected_gpu || ""}"`);
   try {
     await invoke("start_convert_native", {
+      id: params.id,
       input: safeInput,
       output: safeOutput,
       format: safeFormat,
       devMode: params.dev_mode,
       useGpu: params.use_gpu,
       preferredEncoder: params.preferred_encoder ?? "",
+      selectedGpu: params.selected_gpu ?? "",
     });
   } catch (err) {
     console.error(`[cmd] startConvertNative failed:`, err);
@@ -452,33 +598,35 @@ export async function startConvertNative(params: {
   }
 }
 
-export async function startReduceNative(params: {
+export async function startTranscoderNative(params: {
+  id: string;
   input: string;
   output: string;
   quality: number;
   target_bytes?: number | null;
-  max_width: number | null;
   file_type: "video" | "photo" | "audio";
   use_gpu: boolean;
   preferred_encoder?: string;
+  selected_gpu?: string;
 }): Promise<void> {
   const safeInput = sanitizePath(params.input);
   const safeOutput = sanitizePath(params.output);
   const quality = Math.max(1, Math.min(100, Math.round(params.quality)));
-  console.log(`[cmd] startReduceNative("${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu})`);
+  console.log(`[cmd] startTranscoderNative: id=${params.id}, "${safeInput.split(/[\\/]/).pop()}", quality=${quality}, type=${params.file_type}, useGpu=${params.use_gpu}, selectedGpu="${params.selected_gpu || ""}"`);
   try {
-    await invoke("start_reduce_native", {
+    await invoke("start_transcoder_native", {
+      id: params.id,
       input: safeInput,
       output: safeOutput,
       quality,
       targetBytes: params.target_bytes ?? null,
-      maxWidth: params.max_width,
       fileType: params.file_type,
       useGpu: params.use_gpu,
       preferredEncoder: params.preferred_encoder ?? "",
+      selectedGpu: params.selected_gpu ?? "",
     });
   } catch (err) {
-    console.error(`[cmd] startReduceNative failed:`, err);
+    console.error(`[cmd] startTranscoderNative failed:`, err);
     throw err;
   }
 }

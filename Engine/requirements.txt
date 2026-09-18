@@ -1,3 +1,0 @@
-yt-dlp[default]==2026.8.19
-deno==2.9.5
-vapoursynth>=70

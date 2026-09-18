@@ -6,6 +6,7 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 
 - Convert between video and image formats (MP4, MKV, JPG, PNG, WEBP, etc.)
 - Download videos/audio from YouTube and hundreds of sites via yt-dlp
+- TikTok links use a separate TikWM/HTTP engine with **Download** (watermarked) and **No Watermark Download** options. TikTok detection and downloading do not use yt-dlp. Links are sent to the third-party TikWM service, so availability depends on that service. Downloads retain queue progress and cancellation support.
 - Auto-detect GPU hardware encoders (NVIDIA, AMD, Intel)
 - Scale video resolution (1080p, 4K, or keep original)
 - Queue system with real-time progress tracking
@@ -18,7 +19,7 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 - [Rust](https://www.rust-lang.org/tools/install) 1.75+
 - [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
 - Python 3.11+ (to prepare the build runtime)
-- ffmpeg and ffprobe are included in `Engine/bin/`.
+- ffmpeg and ffprobe are included in `PyEngine/bin/`.
 - The Windows app includes private Python, yt-dlp, and vspipe runtimes.
 
 ## Setup
@@ -43,7 +44,7 @@ The runtime setup installs Python 3.12.10, VapourSynth R77, and yt-dlp
 `rust/src-tauri/bin/python/`. The private Deno runtime enables YouTube's
 JavaScript challenge support without requiring a system installation.
 Tauri copies the extracted tree
-to `Engine/bin/python/` in the app resources, including its standard library,
+to `PyEngine/bin/python/` in the app resources, including its standard library,
 native libraries, and Python packages. The application uses this interpreter
 before searching the system. Its installed users do not need Python or pip.
 CI and release workflows run the setup script before compiling. Generated
@@ -156,7 +157,7 @@ To test the update flow:
 
 ```
 Converter/
-├── Engine/               # Python backend (ffmpeg, yt-dlp)
+├── PyEngine/               # Python backend (ffmpeg, yt-dlp)
 │   ├── __main__.py       # JSON-RPC entry via stdin/stdout
 │   ├── core/             # IPC & config utilities
 │   ├── workers/          # Converter & downloader workers

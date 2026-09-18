@@ -2,7 +2,7 @@ import unittest
 import sys
 
 loader = unittest.TestLoader()
-suite = loader.discover('Engine/tests', top_level_dir='.')
+suite = loader.discover('PyEngine/tests', top_level_dir='.')
 result = unittest.TextTestRunner(verbosity=0).run(suite)
 
 print()

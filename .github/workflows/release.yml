@@ -61,7 +61,7 @@ jobs:
       - name: Test Python engine
         run: >-
           rust/src-tauri/bin/python/python.exe -B -c
-          "import runpy, sys; sys.path.insert(0, '.'); sys.argv = ['unittest', 'discover', '-s', 'Engine/tests', '-v']; runpy.run_module('unittest', run_name='__main__')"
+          "import runpy, sys; sys.path.insert(0, '.'); sys.argv = ['unittest', 'discover', '-s', 'PyEngine/tests', '-v']; runpy.run_module('unittest', run_name='__main__')"
       - name: Test Rust backend
         run: cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
       - name: Build signed installers

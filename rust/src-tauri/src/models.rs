@@ -23,6 +23,10 @@ pub struct UrlFormatQuality {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UrlFormat {
+    #[serde(default)]
+    pub available: Option<bool>,
+    #[serde(default)]
+    pub filesize: Option<u64>,
     pub label: String,
     pub value: String,
     pub desc: String,
@@ -51,6 +55,8 @@ pub struct AppSettingsResponse {
     pub output_dir: String,
     pub use_gpu: bool,
     pub preferred_encoder: String,
+    pub auto_detect_gpu: bool,
+    pub selected_gpu: String,
 }
 
 impl From<&AppSettings> for AppSettingsResponse {
@@ -60,6 +66,8 @@ impl From<&AppSettings> for AppSettingsResponse {
             output_dir: s.output_dir.clone(),
             use_gpu: s.use_gpu,
             preferred_encoder: s.preferred_encoder.clone(),
+            auto_detect_gpu: s.auto_detect_gpu,
+            selected_gpu: s.selected_gpu.clone(),
         }
     }
 }
@@ -71,6 +79,8 @@ impl From<AppSettings> for AppSettingsResponse {
             output_dir: s.output_dir,
             use_gpu: s.use_gpu,
             preferred_encoder: s.preferred_encoder,
+            auto_detect_gpu: s.auto_detect_gpu,
+            selected_gpu: s.selected_gpu,
         }
     }
 }
@@ -88,5 +98,15 @@ mod tests {
         let json = serde_json::to_value(AppSettingsResponse::from(settings)).unwrap();
         assert_eq!(json["preferredEncoder"], "hevc_nvenc");
         assert_eq!(json["useGpu"], false);
+    }
+
+    #[test]
+    fn settings_response_includes_gpu_fields() {
+        let mut settings = AppSettings::default();
+        settings.auto_detect_gpu = false;
+        settings.selected_gpu = "h264_amf".into();
+        let json = serde_json::to_value(AppSettingsResponse::from(&settings)).unwrap();
+        assert_eq!(json["autoDetectGpu"], false);
+        assert_eq!(json["selectedGpu"], "h264_amf");
     }
 }

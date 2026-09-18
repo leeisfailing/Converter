@@ -1,11 +1,14 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, Music, Film, Plus, ChevronDown, Loader2, Globe, Clock, Subtitles, Image, Cookie, Settings2 } from "lucide-react";
 import { detectUrl } from "../lib/tauri-commands";
 import type { UrlFormat } from "../lib/tauri-commands";
+import { isTikTokUrl } from "../lib/tiktok";
+import { normalizePastedUrl } from "../lib/pasted-url";
+import TikTokDownloadOptions from "./TikTokDownloadOptions";
 
 interface Props {
-  onAdd: (url: string, formatType: string, options?: { writeSubtitles?: boolean; writeThumbnail?: boolean; useBrowserCookies?: boolean }) => void;
+  onAdd: (url: string, formatType: string, options?: { writeSubtitles?: boolean; writeThumbnail?: boolean; useBrowserCookies?: boolean }) => void | Promise<void>;
   disabled: boolean;
 }
 
@@ -49,6 +52,9 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   const [useBrowserCookies, setUseBrowserCookies] = useState(false);
 
   const requestIdRef = useRef(0);
+  const addingRef = useRef(false);
+  const [pendingFormat, setPendingFormat] = useState("");
+  const [queueError, setQueueError] = useState("");
 
   const isValidUrl = (str: string): boolean => {
     try {
@@ -60,7 +66,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
   };
 
   const handleDetect = useCallback(async () => {
-    const trimmed = url.trim();
+    const trimmed = normalizePastedUrl(url);
     if (!trimmed) return;
 
     if (!isValidUrl(trimmed)) {
@@ -70,6 +76,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     }
 
     const thisRequest = ++requestIdRef.current;
+    setUrl(trimmed);
     setDetectState("detecting");
     setDetectError("");
     setDetectedInfo(null);
@@ -106,9 +113,24 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     }
   }, [url]);
 
-  const handleAdd = () => {
-    if (!detectedInfo || !selectedFormat) return;
-    onAdd(detectedInfo.webpage_url || url.trim(), selectedFormat, {
+  useEffect(() => {
+    if (disabled || detectState !== "idle" || !isTikTokUrl(url)) return;
+    const timer = window.setTimeout(() => { void handleDetect(); }, 500);
+    return () => window.clearTimeout(timer);
+  }, [url, disabled, detectState, handleDetect]);
+
+  useEffect(() => () => { ++requestIdRef.current; }, []);
+
+  const isTikTok = isTikTokUrl(url) || isTikTokUrl(detectedInfo?.webpage_url || "");
+
+  const handleAdd = async (format = selectedFormat) => {
+    if (!detectedInfo || !format || disabled || addingRef.current) return;
+    if (detectedInfo.formats.find(f => f.value === format)?.available === false) return;
+    addingRef.current = true;
+    setPendingFormat(format);
+    setQueueError("");
+    try {
+    await onAdd(detectedInfo.webpage_url || url.trim(), format, {
       writeSubtitles,
       writeThumbnail,
       useBrowserCookies,
@@ -124,9 +146,17 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setWriteSubtitles(false);
     setWriteThumbnail(false);
     setUseBrowserCookies(false);
+    } catch (error) {
+      setQueueError(error instanceof Error ? error.message : String(error));
+    } finally {
+      addingRef.current = false;
+      setPendingFormat("");
+    }
   };
 
   const handleReset = () => {
+    if (addingRef.current) return;
+    ++requestIdRef.current;
     setUrl("");
     setDetectState("idle");
     setDetectedInfo(null);
@@ -134,6 +164,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
     setSelectedFormatType("");
     setSelectedQuality("");
     setDetectError("");
+    setQueueError("");
     setQualityDropdownOpen(false);
     setOptionsOpen(false);
     setWriteSubtitles(false);
@@ -159,10 +190,16 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
             type="url"
+            aria-label="Video or file URL"
             className={`input flex-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}
             placeholder="Paste any URL — video, audio, file, etc."
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setDetectState("idle");
+              setDetectError("");
+              setQueueError("");
+            }}
             onKeyDown={(e) => e.key === "Enter" && (detectState === "idle" || detectState === "error") && handleDetect()}
             disabled={disabled || detectState === "detecting" || detectState === "done"}
           />
@@ -175,7 +212,7 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
               className="btn btn-primary px-5"
             >
               <Globe size={16} />
-              Detect
+              Search
             </motion.button>
           ) : detectState === "detecting" ? (
             <motion.button
@@ -183,14 +220,14 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
               className="btn btn-primary px-5 opacity-60"
             >
               <Loader2 size={16} className="animate-spin" />
-              Detecting...
+              Searching...
             </motion.button>
           ) : (
             <motion.button
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleReset}
-              disabled={disabled}
+              disabled={disabled || !!pendingFormat}
               className="btn px-5"
             >
               Reset
@@ -251,6 +288,11 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
               </div>
             </div>
 
+            {isTikTok ? (
+              <TikTokDownloadOptions formats={detectedInfo.formats} disabled={disabled}
+                pending={pendingFormat} onDownload={handleAdd} />
+            ) : (
+            <>
             {/* Format picker */}
             <div className="panel p-4">
               <div className="section-label mb-3">Pick format</div>
@@ -399,19 +441,22 @@ export default function URLDownloader({ onAdd, disabled }: Props) {
             <motion.button
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
-              onClick={handleAdd}
-              disabled={disabled || !selectedFormat}
+              onClick={() => handleAdd()}
+              disabled={disabled || !!pendingFormat || !selectedFormat}
               className="w-full btn btn-primary py-2.5"
             >
               <Plus size={16} />
               Add to queue
             </motion.button>
+            </>
+            )}
+            {queueError && <p role="alert" className="text-xs text-app-danger">Could not add to queue: {queueError}. Try again.</p>}
           </motion.div>
         )}
       </AnimatePresence>
 
       <p className="text-[11px] text-app-text-muted text-center">
-        Paste any URL, click Detect to see options, then add to queue.
+        TikTok links are detected automatically. For other links, click Search to see download options.
       </p>
     </motion.div>
   );

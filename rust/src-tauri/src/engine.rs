@@ -17,7 +17,34 @@ pub struct ActiveProcess {
 
 #[derive(Default)]
 pub struct PythonEngine {
-    active: Mutex<Option<ActiveProcess>>,
+    active: Mutex<std::collections::HashMap<String, ActiveProcess>>,
+}
+
+impl PythonEngine {
+    /// Kill any running Python engine process immediately.
+    /// Called on app shutdown to ensure all processes are terminated.
+    pub async fn shutdown(&self) {
+        let processes = std::mem::take(&mut *self.active.lock().await);
+        for (_, mut process) in processes {
+            log::info!("Killing active Python engine process");
+            drop(process.stdin);
+            let pid = process.child.id();
+            // On Windows, use taskkill to kill the entire process tree
+            #[cfg(windows)]
+            if let Some(pid) = pid {
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .creation_flags(0x08000000)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+            }
+            let _ = process.child.kill().await;
+            let _ = process.child.wait().await;
+            log::info!("Python engine process killed");
+        }
+    }
 }
 
 fn command(app: &AppHandle) -> Result<Command, String> {
@@ -29,12 +56,12 @@ fn command(app: &AppHandle) -> Result<Command, String> {
     if let Some(dir) = std::path::Path::new(&python).parent().filter(|dir| !dir.as_os_str().is_empty()) {
         search_dirs.push(dir.to_path_buf());
     }
-    search_dirs.push(resource_dir.join("Engine/bin"));
+    search_dirs.push(resource_dir.join("PyEngine/bin"));
     if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)) {
         search_dirs.push(dir);
     }
-    search_dirs.push(paths::project_root().join("Engine/bin"));
-    search_dirs.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("bin"));
+    search_dirs.push(paths::project_root().join("PyEngine/bin"));
+    search_dirs.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin"));
     if let Some(path) = std::env::var_os("PATH") { search_dirs.extend(std::env::split_paths(&path)); }
     command.env("PATH", std::env::join_paths(search_dirs).map_err(|e| e.to_string())?);
     command.args(["-u", "-B", "-X", "utf8"]).arg(path)
@@ -62,7 +89,6 @@ async fn stderr_tail(stderr: tokio::process::ChildStderr) -> String {
     let mut tail = VecDeque::with_capacity(MAX_STDERR_LINES);
     while let Ok(Some(line)) = lines.next_line().await {
         if tail.len() == MAX_STDERR_LINES { tail.pop_front(); }
-        // Truncate by bytes (safe since Python outputs UTF-8 with PYTHONIOENCODING=utf-8)
         let truncated = if line.len() > MAX_LINE_LENGTH {
             let end = line.floor_char_boundary(MAX_LINE_LENGTH);
             line[..end].to_string()
@@ -102,7 +128,6 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
     send(&mut stdin, &value).await?;
     drop(stdin);
 
-    // Read stdout and stderr concurrently to avoid blocking the tokio runtime
     let mut stdout_task = tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
         let mut result = Vec::new();
@@ -130,7 +155,6 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
         },
     };
 
-    // Parse response - break early once valid response is found (protocol guarantees first valid line)
     for line in &stdout_lines {
         if line.is_empty() { continue; }
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
@@ -146,23 +170,26 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
     Err(format!("Engine returned no valid response: {stderr}"))
 }
 
-pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, prefix: &str) -> Result<(), String> {
-    let operation = app.state::<crate::operations::Operations>().begin()?;
+/// Run an interactive command via the Python engine.
+/// `id` is a unique identifier echoed in all emitted events so the frontend
+/// can route progress/finished to the correct queue item.
+pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, prefix: &str, id: String) -> Result<(), String> {
+    let ops = app.state::<crate::operations::Operations>();
+    let op_type = match prefix {
+        "download" => crate::operations::OpType::Download,
+        "convert" => crate::operations::OpType::Convert,
+        "transcoder" => crate::operations::OpType::Transcoder,
+        "upscale" => crate::operations::OpType::Upscale,
+        _ => crate::operations::OpType::Convert,
+    };
+    let operation = ops.begin(op_type, id.clone()).await.map_err(|e| e.to_string())?;
     let state = app.state::<PythonEngine>();
-    {
-        let active = state.active.lock().await;
-        if active.is_some() { return Err("An operation is already in progress".into()); }
-    }
     let mut child = command(&app)?.spawn().map_err(|e| format!("Failed to start Python: {e}"))?;
     let mut stdin = child.stdin.take().ok_or("Missing engine stdin")?;
     let stdout = child.stdout.take().ok_or("Missing engine stdout")?;
     let stderr = child.stderr.take().ok_or("Missing engine stderr")?;
     send(&mut stdin, &value).await?;
-    let pid = child.id();
-    {
-        let mut active = state.active.lock().await;
-        *active = Some(ActiveProcess { child, stdin });
-    }
+    state.active.lock().await.insert(id.clone(), ActiveProcess { child, stdin });
 
     let errors = tokio::spawn(stderr_tail(stderr));
     let progress_event = format!("{prefix}-progress");
@@ -171,6 +198,9 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
     let mut lines = BufReader::new(stdout).lines();
     let mut last_progress = None;
     let result = loop {
+        if operation.is_cancelled() {
+            break Err("Operation was cancelled".to_string());
+        }
         match lines.next_line().await {
             Ok(Some(line)) => {
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
@@ -178,12 +208,13 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
                     Some("progress") => if let Some(percent) = value.get("percent").and_then(|v| v.as_i64()) {
                         let percent = percent.clamp(0, 100);
                         if last_progress != Some(percent) {
-                            let _ = app.emit(&progress_event, percent);
+                            let _ = app.emit(&progress_event, serde_json::json!({ "id": &id, "percent": percent }));
                             last_progress = Some(percent);
                         }
                     },
                     Some("download_status") => {
                         let status = serde_json::json!({
+                            "id": &id,
                             "percent": value.get("percent").and_then(|v| v.as_i64()).unwrap_or(0),
                             "speed": value.get("speed").and_then(|v| v.as_f64()).unwrap_or(0.0),
                             "eta": value.get("eta").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -202,27 +233,38 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
             Err(error) => break Err(format!("Engine output read error: {error}")),
         }
     };
-    {
-        let mut active = state.active.lock().await;
-        if active.as_ref().is_some_and(|process| process.child.id() == pid) {
-            if let Some(process) = active.take() { reap(process).await; }
-        }
-    }
+    let process = state.active.lock().await.remove(&id);
+    if let Some(process) = process { reap(process).await; }
+    ops.finish(&id);
     let stderr = errors.await.unwrap_or_default();
     let result = result.unwrap_or_else(|message| FinishedEvent {
         ok: false, message: if stderr.is_empty() { message } else { format!("{message}\n{stderr}") }, file_path: String::new(),
     });
-    let _ = app.emit(&finished_event, &result);
+    let finished = serde_json::json!({ "id": &id, "ok": result.ok, "message": result.message, "file_path": result.file_path });
+    let _ = app.emit(&finished_event, finished);
     drop(operation);
     if result.ok { Ok(()) } else { Err(result.message) }
 }
 
 #[tauri::command]
 pub async fn cancel_operation(app: AppHandle) -> Result<(), String> {
-    app.state::<crate::operations::Operations>().cancel();
+    app.state::<crate::operations::Operations>().cancel_all();
     let state = app.state::<PythonEngine>();
-    let mut active = state.active.lock().await;
-    if let Some(mut process) = active.take() {
+    let processes = std::mem::take(&mut *state.active.lock().await);
+    for (_, mut process) in processes {
+        let _ = send(&mut process.stdin, &serde_json::json!({ "cmd": "cancel" })).await;
+        reap(process).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_operation_by_id(app: AppHandle, id: String) -> Result<(), String> {
+    let ops = app.state::<crate::operations::Operations>();
+    ops.cancel(&id);
+    let state = app.state::<PythonEngine>();
+    let process = state.active.lock().await.remove(&id);
+    if let Some(mut process) = process {
         let _ = send(&mut process.stdin, &serde_json::json!({ "cmd": "cancel" })).await;
         reap(process).await;
     }

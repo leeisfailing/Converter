@@ -1,8 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { sanitizePath, sanitizeUrl, startDownload, startConvert, startReduce, saveSettings } from "../src/lib/tauri-commands";
+import { sanitizePath, sanitizeUrl, startDownload, startConvert, startTranscoder, saveSettings, detectGpusNative } from "../src/lib/tauri-commands";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+it('shares concurrent GPU discovery and allows retry after failure', async () => {
+  vi.clearAllMocks();
+  vi.mocked(invoke).mockRejectedValueOnce(new Error('probe failed')).mockResolvedValueOnce([]);
+  const first = detectGpusNative();
+  const duplicate = detectGpusNative();
+  expect(first).toBe(duplicate);
+  await expect(first).rejects.toThrow('probe failed');
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await expect(detectGpusNative()).resolves.toEqual([]);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
 
 describe("download path validation", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -40,6 +52,11 @@ describe("download path validation", () => {
 });
 
 describe("shared social links", () => {
+  it('unwraps Markdown while preserving the destination query', () => {
+    const url = 'https://www.tiktok.com/@ee.black9/video/7685223520632147220?_r=1&_t=abc';
+    expect(sanitizeUrl(`[${url}](${url})?`)).toBe(url);
+    expect(() => sanitizeUrl('[video](javascript:alert(1))')).toThrow();
+  });
   it.each([
     'https://www.tiktok.com/@example/video/123?_r=1&_t=abc',
     'https://www.instagram.com/reel/EXAMPLE/?igsh=abc&utm_source=share',
@@ -57,6 +74,6 @@ it('passes the manual encoder through settings and media commands', async () => 
   expect(invoke).toHaveBeenLastCalledWith('save_settings', { downloadDir: 'C:/Downloads', outputDir: 'C:/Output', useGpu: false, preferredEncoder });
   await startConvert({ input: 'C:/input.mp4', output: 'C:/output.mp4', format: 'mp4', dev_mode: false, use_gpu: false, preferred_encoder: preferredEncoder });
   expect(invoke).toHaveBeenLastCalledWith('start_convert', expect.objectContaining({ useGpu: false, preferredEncoder }));
-  await startReduce({ input: 'C:/input.mp4', output: 'C:/output.mp4', quality: 50, file_type: 'video', max_width: null, target_bytes: null, use_gpu: false, preferred_encoder: preferredEncoder });
-  expect(invoke).toHaveBeenLastCalledWith('start_reduce', expect.objectContaining({ useGpu: false, preferredEncoder }));
+  await startTranscoder({ input: 'C:/input.mp4', output: 'C:/output.mp4', quality: 50, file_type: 'video', max_width: null, target_bytes: null, use_gpu: false, preferred_encoder: preferredEncoder });
+  expect(invoke).toHaveBeenLastCalledWith('start_transcoder', expect.objectContaining({ useGpu: false, preferredEncoder }));
 });

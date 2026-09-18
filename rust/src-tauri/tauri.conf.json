@@ -23,8 +23,8 @@
         }
       ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' http://localhost:1420 https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' ipc: http://tauri.localhost https://tauri.localhost https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self' ipc: http://tauri.localhost https://tauri.localhost http://localhost:1420 https:; media-src 'self' blob:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     }
   },
   "bundle": {
@@ -43,14 +43,15 @@
       "bin/ffprobe"
     ],
     "resources": {
-      "../../Engine/__init__.py": "Engine/__init__.py",
-      "../../Engine/__main__.py": "Engine/__main__.py",
-      "../../Engine/core/*.py": "Engine/core/",
-      "../../Engine/handlers/*.py": "Engine/handlers/",
-      "../../Engine/workers/*.py": "Engine/workers/",
-      "../../Engine/formats/*.py": "Engine/formats/",
-      "../../Engine/bin/*": "Engine/bin/",
-      "bin/python/": "Engine/bin/python/"
+      "../../PyEngine/__init__.py": "PyEngine/__init__.py",
+      "../../PyEngine/__main__.py": "PyEngine/__main__.py",
+      "../../PyEngine/core/*.py": "PyEngine/core/",
+      "../../PyEngine/handlers/*.py": "PyEngine/handlers/",
+      "../../PyEngine/workers/*.py": "PyEngine/workers/",
+      "../../PyEngine/formats/*.py": "PyEngine/formats/",
+      "../../PyEngine/bin/*": "PyEngine/bin/",
+      "bin/python/": "PyEngine/bin/python/",
+      "../../cpp_engine/build/gpu_engine.exe": "gpu_engine.exe"
     }
   },
   "plugins": {

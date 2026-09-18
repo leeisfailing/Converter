@@ -1,4 +1,4 @@
-import Toggle from "./Toggle";
+import { parallelGpuEncoders } from "../lib/gpu-selection";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -10,8 +10,12 @@ import {
   getDefaultOutputDir,
   detectGpu,
   detectGpusNative,
+  getCacheStats,
+  clearCache,
+  getPersistentCacheStats,
+  clearPersistentCache,
 } from "../lib/tauri-commands";
-import type { AppSettings, GpuInfo, GpuCapability } from "../lib/tauri-commands";
+import type { AppSettings, GpuInfo, GpuCapability, CacheStats, PersistentCacheStats } from "../lib/tauri-commands";
 import {
   FolderOpen,
   Download,
@@ -21,6 +25,7 @@ import {
   AlertCircle,
   Info,
   Monitor,
+  HardDrive,
 } from "lucide-react";
 
 interface Props {
@@ -40,6 +45,8 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
     outputDir: "",
     useGpu: true,
     preferredEncoder: "",
+    autoDetectGpu: true,
+    selectedGpu: "",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -49,6 +56,10 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
   const [nativeGpus, setNativeGpus] = useState<GpuCapability[]>([]);
   const [gpuLoading, setGpuLoading] = useState(true);
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [persistentCacheStats, setPersistentCacheStats] = useState<PersistentCacheStats | null>(null);
+  const [persistentCacheClearing, setPersistentCacheClearing] = useState(false);
 
   const isBusy = saving || resetting;
 
@@ -62,6 +73,8 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
   useEffect(() => {
     loadSettings();
     detectGpuInfo();
+    loadCacheStats();
+    loadPersistentCacheStats();
     return () => clearMessageTimer();
   }, []);
 
@@ -69,7 +82,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
     try {
       const s = await getSettings();
       setSettings(s);
-      onSettingsChanged(s);
+      queueMicrotask(() => onSettingsChanged(s));
     } catch {
       let defaultDir = "";
       let defaultOutput = "";
@@ -85,9 +98,11 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
         outputDir: defaultOutput,
         useGpu: true,
         preferredEncoder: "",
+        autoDetectGpu: true,
+        selectedGpu: "",
       };
       setSettings(fallback);
-      onSettingsChanged(fallback);
+      queueMicrotask(() => onSettingsChanged(fallback));
     } finally {
       setLoading(false);
     }
@@ -106,6 +121,42 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
       setGpuInfo({ ok: false, available: false, encoder: null, vendor: null, hwaccel: null, name: null, allEncoders: [], message: "GPU detection failed" });
     } finally {
       setGpuLoading(false);
+    }
+  };
+
+  const loadCacheStats = async () => {
+    try {
+      setCacheStats(await getCacheStats());
+    } catch {
+      setCacheStats(null);
+    }
+  };
+
+  const loadPersistentCacheStats = async () => {
+    try {
+      setPersistentCacheStats(await getPersistentCacheStats());
+    } catch {
+      setPersistentCacheStats(null);
+    }
+  };
+
+  const handleClearCache = async () => {
+    setCacheClearing(true);
+    try {
+      await clearCache();
+      await loadCacheStats();
+    } finally {
+      setCacheClearing(false);
+    }
+  };
+
+  const handleClearPersistentCache = async () => {
+    setPersistentCacheClearing(true);
+    try {
+      await clearPersistentCache();
+      await loadPersistentCacheStats();
+    } finally {
+      setPersistentCacheClearing(false);
     }
   };
 
@@ -232,7 +283,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
           </span>
         </div>
         <p className="text-[11px] text-app-text-muted">
-          Where converted and reduced files are saved.
+          Where converted and transcoded files are saved.
         </p>
         <div className="flex gap-2">
           <input
@@ -274,62 +325,51 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
           </span>
         </div>
         <p className="text-[11px] text-app-text-muted">
-          Use GPU encoding for supported video formats. Target-size reduction uses CPU for precise sizing.
+          Video conversion, reduction, target-size reduction, and upscaling use hardware encoding. GPU mode never silently switches to a CPU video encoder.
         </p>
 
-        <div className="flex items-center justify-between">
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-app-text font-medium">Automatic GPU selection</p>
-            {gpuLoading ? (
-              <p className="text-[11px] text-app-text-muted">Detecting GPU...</p>
-            ) : gpuInfo?.available ? (
-              <p className="text-[11px] text-green-400 truncate">
-                {gpuInfo.name} ({gpuInfo.encoder})
-              </p>
-            ) : (
-              <p className="text-[11px] text-app-text-muted">
-                {gpuInfo?.message || "No hardware encoder detected"}
-              </p>
-            )}
-          </div>
-          <Toggle
-            label="Automatic GPU selection"
-            checked={settings.useGpu}
+        <div className="space-y-2">
+          <label htmlFor="gpu-selection" className="text-xs text-app-text font-medium">GPU for video tasks</label>
+          <select
+            id="gpu-selection"
+            aria-describedby="gpu-selection-help"
+            className="input w-full text-xs"
+            value={settings.autoDetectGpu ? "auto" : settings.useGpu && settings.selectedGpu !== "libx264" ? settings.selectedGpu : "cpu"}
             disabled={disabled || isBusy || gpuLoading}
-            onChange={(useGpu) => {
-              setSettings((prev) => {
-                const next = { ...prev, useGpu };
-                onSettingsChanged(next);
-                return next;
-              });
+            onChange={(event) => {
+              const value = event.target.value;
+              const next = {
+                ...settings,
+                autoDetectGpu: value === "auto",
+                useGpu: value !== "cpu",
+                selectedGpu: value === "auto" || value === "cpu" ? "" : value,
+                preferredEncoder: "",
+              };
+              setSettings(next);
+              onSettingsChanged(next);
             }}
-          />
+          >
+            <option value="auto">Automatic (Recommended GPU)</option>
+            <option value="parallel" disabled={parallelGpuEncoders(gpuInfo?.allEncoders ?? []).length < 2}>Both GPUs (parallel tasks)</option>
+            {(gpuInfo?.allEncoders ?? []).filter((encoder) => encoder.vendor !== "CPU" && encoder.id !== "libx264").map((encoder) => (
+              <option key={encoder.id} value={encoder.id}>{encoder.label}</option>
+            ))}
+            {settings.selectedGpu && settings.selectedGpu !== "libx264" && settings.selectedGpu !== "parallel" && !(gpuInfo?.allEncoders ?? []).some((encoder) => encoder.id === settings.selectedGpu) && (
+              <option value={settings.selectedGpu} disabled>{settings.selectedGpu} (unavailable)</option>
+            )}
+            <option value="cpu">CPU only (software encoding)</option>
+          </select>
+          <p id="gpu-selection-help" className="text-[11px] text-app-text-muted">
+            Both GPUs runs separate videos on available GPUs, one job per GPU. It requires two detected GPU vendors. Audio, images, and AI enhancement do not use this scheduling mode. Save Settings to keep your choice.
+          </p>
+          {gpuLoading ? (
+            <p className="text-[11px] text-app-text-muted">Detecting GPU...</p>
+          ) : gpuInfo?.available ? (
+            <p className="text-[11px] text-app-text-secondary">Recommended: {gpuInfo.name} ({gpuInfo.encoder})</p>
+          ) : (
+            <p className="text-[11px] text-app-text-muted">{gpuInfo?.message || "No hardware encoder detected"}</p>
+          )}
         </div>
-
-        {!settings.useGpu && (
-          <div className="space-y-2">
-            <label htmlFor="preferred-encoder" className="text-xs text-app-text font-medium">Video encoder</label>
-            <select
-              id="preferred-encoder"
-              className="input w-full text-xs"
-              value={settings.preferredEncoder || "libx264"}
-              disabled={disabled || isBusy || gpuLoading}
-              onChange={(event) => setSettings((prev) => {
-                const next = { ...prev, preferredEncoder: event.target.value };
-                onSettingsChanged(next);
-                return next;
-              })}
-            >
-              {(gpuInfo?.allEncoders?.length ? gpuInfo.allEncoders : [{ id: "libx264", vendor: "CPU", label: "Software H.264 (CPU)" }]).map((encoder) => (
-                <option key={encoder.id} value={encoder.id}>{encoder.label}</option>
-              ))}
-              {settings.preferredEncoder && !["libx264", ...(gpuInfo?.allEncoders ?? []).map((encoder) => encoder.id)].includes(settings.preferredEncoder) && (
-                <option value={settings.preferredEncoder}>{settings.preferredEncoder} (unavailable; uses CPU)</option>
-              )}
-            </select>
-            <p className="text-[11px] text-app-text-muted">Uses CPU when the selected encoder is unavailable or incompatible with the output format. Target-size reduction always uses CPU.</p>
-          </div>
-        )}
 
         {nativeGpus.length > 0 && (
           <div className="space-y-1 mt-2">
@@ -348,8 +388,58 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
 
         {!gpuInfo?.available && !gpuLoading && (
           <p className="text-[11px] text-app-text-muted italic">
-            Hardware encoding is not available on this system. Conversion will use CPU.
+            Hardware encoding is not available. Select CPU only above to use software video encoding.
           </p>
+        )}
+      </motion.div>
+
+      {/* Cache */}
+      <motion.div
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="panel p-4 space-y-3"
+      >
+        <div className="flex items-center gap-2">
+          <HardDrive size={14} className="text-app-accent" />
+          <span className="text-sm font-medium text-app-text">Cache</span>
+        </div>
+        <p className="text-[11px] text-app-text-muted">
+          GPU detection and file metadata are cached to avoid redundant probes.
+        </p>
+        {cacheStats && (
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-app-text-secondary">
+              Memory: {cacheStats.gpuEntries} GPU entry · {cacheStats.gpuHits} hit · {cacheStats.gpuMisses} miss
+            </span>
+            <motion.button
+              onClick={handleClearCache}
+              disabled={disabled || cacheClearing}
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
+              className="btn py-1.5 px-3 text-[11px]"
+            >
+              <RotateCcw size={12} />
+              {cacheClearing ? "Clearing..." : "Clear"}
+            </motion.button>
+          </div>
+        )}
+        {persistentCacheStats && (
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-app-text-secondary">
+              Disk: {persistentCacheStats.totalEntries} entries · {persistentCacheStats.encoderHits + persistentCacheStats.fileHits} hit · {persistentCacheStats.encoderMisses + persistentCacheStats.fileMisses} miss
+            </span>
+            <motion.button
+              onClick={handleClearPersistentCache}
+              disabled={disabled || persistentCacheClearing}
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
+              className="btn py-1.5 px-3 text-[11px]"
+            >
+              <RotateCcw size={12} />
+              {persistentCacheClearing ? "Clearing..." : "Clear"}
+            </motion.button>
+          </div>
         )}
       </motion.div>
 

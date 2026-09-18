@@ -1,19 +1,25 @@
+import { isParallelVideoTask } from "./gpu-selection";
 import { useState, useCallback, useRef } from "react";
 import { subscribeToEvent } from "./tauri-events";
 import type { QueueItem, QueueItemStatus } from "./queue-types";
-import type { FinishedEvent } from "./tauri-commands";
+import type { FinishedEvent, ConcurrencySnapshot } from "./tauri-commands";
 
-type QueueEventType = "download" | "convert" | "reduce";
+type QueueEventType = "download" | "convert" | "transcoder" | "upscale" | "enhance";
 interface QueueEventHandlers {
   onProgress: (id: string, progress: number) => void;
-  onDownloadStatus: (id: string, speed: number, eta: number, isLive: boolean) => void;
+  onDownloadStatus: (id: string, speed: number, eta: number, isLive: boolean, phase?: string) => void;
   onFinished: (id: string, ok: boolean, message: string, filePath: string) => void;
 }
 
 export function useQueue() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const queueRef = useRef<QueueItem[]>([]);
-  const processingRef = useRef(false);
+  const concurrencyRef = useRef<ConcurrencySnapshot>({
+    download: 1, convert: 1, transcoder: 1, upscale: 1,
+    activeDownload: 0, activeConvert: 0, activeTranscoder: 0, activeUpscale: 0,
+  });
+  const gpuReservations = useRef(new Map<string, string>());
+  const activeByType = useRef<Record<string, number>>({ download: 0, convert: 0, transcoder: 0, upscale: 0, enhance: 0 });
 
   const commit = useCallback((change: (items: QueueItem[]) => QueueItem[]) => {
     const next = change(queueRef.current);
@@ -34,60 +40,98 @@ export function useQueue() {
     });
   }, [commit]);
 
-  interface DownloadStatusPayload { percent: number; speed: number; eta: number; is_live: boolean; status: string; }
+  interface DownloadStatusPayload { id?: string; percent: number; speed: number; eta: number; is_live: boolean; status: string; }
 
   const registerListeners = useCallback((type: QueueEventType, handlers: QueueEventHandlers) => {
-    const active = () => queueRef.current.find((item) =>
-      item.status === "active" && item.type === type
-    );
-    const progress = subscribeToEvent<number>(`${type}-progress`, ({ payload }) => {
-      const item = active();
-      if (item && Number.isFinite(payload)) handlers.onProgress(item.id, payload);
+    const findItemById = (id: string) => queueRef.current.find((item) => item.id === id && item.type === type);
+    const progress = subscribeToEvent<{ id?: string; percent?: number } | number>(`${type}-progress`, ({ payload }) => {
+      let id: string | undefined;
+      let percent: number;
+      if (typeof payload === "number") {
+        percent = payload;
+      } else {
+        id = payload.id;
+        percent = payload.percent ?? 0;
+      }
+      if (!id) return;
+      if (Number.isFinite(percent)) handlers.onProgress(id, percent);
     });
     const status = subscribeToEvent<DownloadStatusPayload>(`${type}-status`, ({ payload }) => {
-      const item = active();
-      if (item) handlers.onDownloadStatus(item.id, payload.speed ?? 0, payload.eta ?? 0, payload.is_live ?? false);
+      const id = payload?.id;
+      if (!id) return;
+      handlers.onDownloadStatus(id, payload.speed ?? 0, payload.eta ?? 0, payload.is_live ?? false, payload.status);
     });
-    const finished = subscribeToEvent<FinishedEvent>(`${type}-finished`, ({ payload }) => {
-      const item = active();
-      if (item) handlers.onFinished(item.id, payload.ok, payload.message, payload.file_path);
+    const finished = subscribeToEvent<FinishedEvent & { id?: string }>(`${type}-finished`, ({ payload }) => {
+      const id = payload?.id;
+      if (!id) return;
+      handlers.onFinished(id, payload.ok, payload.message, payload.file_path);
     });
     return () => { progress(); status(); finished(); };
   }, []);
 
-  const processNext = useCallback((onProcess: (item: QueueItem) => Promise<void>) => {
-    if (processingRef.current) return;
-    const item = queueRef.current.find((entry) => entry.status === "pending");
-    if (!item) return;
-    processingRef.current = true;
-    updateItemStatus(item.id, "active", { progress: 0 });
-    void (async () => {
-      try {
-        await onProcess(item);
-        if (queueRef.current.find((entry) => entry.id === item.id)?.status === "active") {
-          updateItemStatus(item.id, "completed", { progress: 100, resultPath: item.outputPath });
+  const maxForType = useCallback((type: string): number => {
+    const snap = concurrencyRef.current;
+    switch (type) {
+      case "download": return snap.download;
+      case "convert": return snap.convert;
+      case "transcoder": return snap.transcoder;
+      case "upscale": return snap.upscale;
+      default: return 1;
+    }
+  }, []);
+
+  const processNextBatch = useCallback((onProcess: (item: QueueItem) => Promise<void>, gpuEncoders?: string[]) => {
+    const pending = queueRef.current.filter((entry) => entry.status === "pending");
+    for (const item of pending) {
+      const type = item.type;
+      const limit = maxForType(type);
+      const current = activeByType.current[type] ?? 0;
+      if (current >= limit) continue;
+      let assignedGpu: string | undefined;
+      if (gpuEncoders && isParallelVideoTask(item)) {
+        if (!gpuEncoders.length) {
+          updateItemStatus(item.id, "failed", { error: "No working GPU is available for parallel tasks. Choose another mode in Settings." });
+          continue;
         }
-      } catch (error) {
-        if (queueRef.current.find((entry) => entry.id === item.id)?.status === "active") {
-          updateItemStatus(item.id, "failed", { error: String(error) });
-        }
-      } finally {
-        // Commands resolve after their child processes are reaped. Cancellation must
-        // retain this lock until then so an old job cannot overlap the next one.
-        processingRef.current = false;
-        commit((items) => [...items]);
+        assignedGpu = gpuEncoders.find(encoder => ![...gpuReservations.current.values()].includes(encoder));
+        if (!assignedGpu) continue;
+        gpuReservations.current.set(item.id, assignedGpu);
       }
-    })();
-  }, [commit, updateItemStatus]);
+      activeByType.current[type] = current + 1;
+      updateItemStatus(item.id, "active", { progress: 0, assignedGpu });
+      void (async () => {
+        try {
+          await onProcess({ ...item, assignedGpu });
+          if (queueRef.current.find((entry) => entry.id === item.id)?.status === "active") {
+            updateItemStatus(item.id, "completed", { progress: 100, resultPath: item.outputPath });
+          }
+        } catch (error) {
+          if (queueRef.current.find((entry) => entry.id === item.id)?.status === "active") {
+            updateItemStatus(item.id, "failed", { error: String(error) });
+          }
+        } finally {
+          gpuReservations.current.delete(item.id);
+          activeByType.current[type] = Math.max(0, (activeByType.current[type] ?? 1) - 1);
+          commit((items) => [...items]);
+        }
+      })();
+    }
+  }, [commit, updateItemStatus, maxForType]);
+
+  const setConcurrency = useCallback((snapshot: ConcurrencySnapshot) => {
+    concurrencyRef.current = snapshot;
+    commit((items) => [...items]);
+  }, [commit]);
 
   const enqueue = useCallback((item: QueueItem) => commit((items) => [...items, item]), [commit]);
   const removeItem = useCallback((id: string) => commit((items) => items.filter((item) => item.id !== id || item.status === "active")), [commit]);
   const clearCompleted = useCallback(() => commit((items) => items.filter((item) => item.status === "pending" || item.status === "active")), [commit]);
   const cancelActive = useCallback(() => commit((items) => items.map((item) => item.status === "active" ? { ...item, status: "cancelled" } : item)), [commit]);
+  const cancelItem = useCallback((id: string) => commit((items) => items.map((item) => item.id === id && item.status === "active" ? { ...item, status: "cancelled" } : item)), [commit]);
 
   return {
-    queue, queueRef, processingRef, processNext, enqueue, removeItem, clearCompleted,
-    cancelActive, updateItemStatus, registerListeners,
+    queue, queueRef, processNextBatch, enqueue, removeItem, clearCompleted,
+    cancelActive, cancelItem, updateItemStatus, registerListeners, setConcurrency, concurrencyRef,
     isProcessing: queue.some((item) => item.status === "active"),
     hasQueue: queue.length > 0,
   };

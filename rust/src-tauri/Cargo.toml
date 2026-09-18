@@ -37,11 +37,5 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
-[profile.dev]
-panic = "abort"
-
 [dev-dependencies]
 tokio-test = "0.4"
-
-[profile.test]
-panic = "abort"

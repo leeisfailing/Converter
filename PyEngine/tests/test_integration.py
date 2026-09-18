@@ -179,13 +179,16 @@ class MediaIntegrationTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         messages = queue.Queue()
+        stderr_lines = []
         reader = threading.Thread(target=lambda: [messages.put(line) for line in process.stdout], daemon=True)
+        drain = threading.Thread(target=lambda: stderr_lines.extend(process.stderr.readlines()), daemon=True)
         reader.start()
+        drain.start()
         try:
             for index, (source, fmt) in enumerate([(self.audio, 'flac'), (self.audio, 'm4a'), (self.audio, 'opus'), (self.photo, 'webp'), (self.video, 'gif')]):
                 output = self.directory / f"sequential-{index}.{fmt}"
                 process.stdin.write(json.dumps({"cmd": "start_convert", "input": str(source),
-                                               "output": str(output), "format": fmt}) + "\n")
+                                                "output": str(output), "format": fmt}) + "\n")
                 process.stdin.flush()
                 deadline = time.monotonic() + 60
                 while True:
@@ -195,8 +198,9 @@ class MediaIntegrationTests(unittest.TestCase):
                         self.assertEqual(Path(message["file_path"]).resolve(), output.resolve())
                         break
             process.stdin.close()
+            drain.join(30)
             process.wait(timeout=10)
-            self.assertEqual(process.returncode, 0, process.stderr.read())
+            self.assertEqual(process.returncode, 0, "".join(stderr_lines))
         finally:
             if process.poll() is None:
                 process.kill()

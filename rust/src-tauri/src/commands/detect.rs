@@ -41,6 +41,10 @@ pub struct GpuInfo {
     pub all_encoders: Vec<EncoderInfo>,
 }
 
+fn detection_cache_key(path: &str, dev_mode: bool) -> String {
+    format!("detect:{dev_mode}:{path}")
+}
+
 #[tauri::command]
 pub async fn detect_file(app: AppHandle, path: String, dev_mode: bool) -> Result<DetectFileResponse, String> {
     validation::validate_file_exists(&path, "path")?;
@@ -50,7 +54,7 @@ pub async fn detect_file(app: AppHandle, path: String, dev_mode: bool) -> Result
         .ok()
         .map(|m| (Some(m.len()), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))))
         .unwrap_or((None, None));
-    let cache_key = format!("detect:{path}");
+    let cache_key = detection_cache_key(&path, dev_mode);
     let pc = crate::persistent_cache::PersistentCache::global();
     if let Some(cached) = pc.get_file(&cache_key, size, mtime).await {
         return serde_json::from_value(cached).map_err(|e| e.to_string());
@@ -94,6 +98,11 @@ pub async fn detect_gpu(app: AppHandle, cache: tauri::State<'_, AppCache>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detection_cache_separates_developer_format_choices() {
+        assert_ne!(detection_cache_key("video.mp4", false), detection_cache_key("video.mp4", true));
+        assert_ne!(detection_cache_key("video.mp4", false), detection_cache_key("other.mp4", false));
+    }
     #[test]
     fn encoder_list_crosses_python_and_frontend_naming_conventions() {
         let info: GpuInfo = serde_json::from_value(serde_json::json!({

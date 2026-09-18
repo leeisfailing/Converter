@@ -51,6 +51,7 @@
       "../../PyEngine/formats/*.py": "PyEngine/formats/",
       "../../PyEngine/bin/*": "PyEngine/bin/",
       "bin/python/": "PyEngine/bin/python/",
+      "bin/plugins/": "PyEngine/bin/plugins/",
       "../../cpp_engine/build/gpu_engine.exe": "gpu_engine.exe"
     }
   },

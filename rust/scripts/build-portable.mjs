@@ -1,68 +1,32 @@
 #!/usr/bin/env node
-import { cpSync, mkdirSync, existsSync, rmSync } from "fs";
-import { join } from "path";
-import { execSync } from "child_process";
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, mkdtempSync, renameSync } from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { resourcePlan, copyResources } from './bundle-resources.mjs';
 
-const ROOT = join(import.meta.dirname, "..");
-const SRC_TAURI = join(ROOT, "src-tauri");
-const RELEASE = join(SRC_TAURI, "target", "release");
-const DIST = join(ROOT, "dist", "portable");
-const ENGINE_SRC = join(ROOT, "..", "PyEngine");
-const ENGINE_DST = join(DIST, "PyEngine");
+const ROOT = path.resolve(import.meta.dirname, '..');
+const DIST_ROOT = path.join(ROOT, 'dist');
+const DIST = path.join(DIST_ROOT, 'portable');
+const executable = path.join(ROOT, 'src-tauri', 'target', 'release', 'converter.exe');
+const config = JSON.parse(readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
 
-console.log("Creating portable build...\n");
-
+// Validate every input before replacing an existing portable distribution.
+if (!existsSync(executable)) throw new Error('Missing release converter.exe. Build the app first.');
+const plan = resourcePlan(path.join(ROOT, 'src-tauri'), config);
+mkdirSync(DIST_ROOT, { recursive: true });
+const staging = mkdtempSync(path.join(DIST_ROOT, 'portable-staging-'));
+copyResources(plan, staging);
+cpSync(executable, path.join(staging, 'converter.exe'));
+if (path.dirname(path.resolve(DIST)) !== DIST_ROOT) throw new Error('Portable output must stay inside dist.');
 if (existsSync(DIST)) rmSync(DIST, { recursive: true, force: true });
-mkdirSync(DIST, { recursive: true });
+renameSync(staging, DIST);
 
-cpSync(join(RELEASE, "converter.exe"), join(DIST, "converter.exe"));
-console.log("  converter.exe");
-
-for (const name of ["ffmpeg", "ffprobe"]) {
-  const suffixed = join(RELEASE, `${name}-x86_64-pc-windows-msvc.exe`);
-  const plain = join(RELEASE, `${name}.exe`);
-  const src = existsSync(plain) ? plain : suffixed;
-  if (existsSync(src)) {
-    const dstName = `${name}.exe`;
-    cpSync(src, join(DIST, dstName));
-    console.log(`  ${dstName}`);
-  } else {
-    console.warn(`  WARNING: ${name} sidecar not found`);
-  }
-}
-
-for (const item of ["__init__.py", "__main__.py"]) {
-  const src = join(ENGINE_SRC, item);
-  if (existsSync(src)) cpSync(src, join(ENGINE_DST, item));
-}
-for (const dir of ["core", "handlers", "workers", "formats"]) {
-  const src = join(ENGINE_SRC, dir);
-  if (existsSync(src)) cpSync(src, join(ENGINE_DST, dir), { recursive: true });
-}
-console.log("  PyEngine scripts");
-
-const pythonSrc = join(SRC_TAURI, "bin", "python");
-const pythonDst = join(ENGINE_DST, "bin", "python");
-if (existsSync(pythonSrc)) {
-  cpSync(pythonSrc, pythonDst, { recursive: true });
-  console.log("  Python runtime");
-}
-
-const pluginsSrc = join(SRC_TAURI, "bin", "plugins");
-if (existsSync(pluginsSrc)) {
-  cpSync(pluginsSrc, join(ENGINE_DST, "bin", "plugins"), { recursive: true });
-  console.log("  VapourSynth plugins");
-}
-
-const zipPath = join(ROOT, "dist", "Converter-portable.zip");
+const zipPath = path.join(DIST_ROOT, 'Converter-portable.zip');
 try {
   if (existsSync(zipPath)) rmSync(zipPath);
-  execSync(
-    `tar -a -cf "${zipPath}" -C "${DIST}" .`,
-    { stdio: "inherit" },
-  );
-  console.log(`\nPortable build: ${zipPath}`);
+  execFileSync('tar', ['-a', '-cf', zipPath, '-C', DIST, '.'], { stdio: 'inherit' });
+  console.log(`Portable build: ${zipPath}`);
 } catch {
-  console.log(`\nPortable build directory: ${DIST}`);
-  console.log("(zip creation skipped - zip the folder manually)");
+  console.log(`Portable build directory: ${DIST}`);
+  console.log('(zip creation skipped - zip the folder manually)');
 }

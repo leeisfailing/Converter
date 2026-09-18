@@ -89,7 +89,15 @@ def main():
         assert response["ok"], response
 
         script = installed / "blank.vpy"
-        script.write_text("import vapoursynth as vs\nvs.core.std.BlankClip(width=16, height=16, length=1).set_output()\n")
+        plugin = installed / 'PyEngine/bin/plugins/LSMASHSource.dll'
+        assert_installed_tool(str(plugin), installed)
+        script.write_text(
+            "import vapoursynth as vs\n"
+            f"vs.core.std.LoadPlugin(path={str(plugin)!r})\n"
+            "assert hasattr(vs.core.lsmas, 'LWLibavSource')\n"
+            "vs.core.std.BlankClip(width=16, height=16, length=1).set_output()\n",
+            encoding='utf-8',
+        )
         vspipe = Path(details["tools"]["vspipe"])
         environment["VSSCRIPT_PATH"] = str(vspipe.with_name("vsscript.dll"))
         run([str(vspipe), "--info", str(script), "-"])

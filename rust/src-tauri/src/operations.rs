@@ -33,14 +33,16 @@ pub struct Operation {
     pub id: String,
     pub op_type: OpType,
     cancelled: Arc<AtomicBool>,
-    _permit: OwnedSemaphorePermit,
+    _permit: Option<OwnedSemaphorePermit>,
     active_count: Arc<std::sync::atomic::AtomicUsize>,
     active_ops: Arc<Mutex<std::collections::HashMap<String, OpEntry>>>,
 }
 
 impl Drop for Operation {
     fn drop(&mut self) {
-        self.active_count.fetch_sub(1, Ordering::Relaxed);
+        if self._permit.is_some() {
+            self.active_count.fetch_sub(1, Ordering::Relaxed);
+        }
         if let Ok(mut entries) = self.active_ops.lock() {
             entries.remove(&self.id);
         }
@@ -54,6 +56,13 @@ impl Operation {
 
     pub fn cancelled_flag(&self) -> Arc<AtomicBool> {
         self.cancelled.clone()
+    }
+
+    /// Also wakes idle sidecars which are not currently emitting progress.
+    pub async fn wait_cancelled(&self) {
+        while !self.is_cancelled() {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
     }
 }
 
@@ -94,6 +103,7 @@ impl Operations {
             (OpType::Upscale, limits.upscale),
         ];
         for &(t, limit) in pairs {
+            let limit = limit.max(1);
             semaphores.insert(t, Arc::new(Semaphore::new(limit)));
             limit_map.insert(t, limit);
             active_counts.insert(t, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
@@ -110,18 +120,28 @@ impl Operations {
     pub async fn begin(&self, op_type: OpType, id: String) -> Result<Operation, String> {
         let sem = self.semaphores.get(&op_type)
             .ok_or_else(|| format!("Unknown operation type: {}", op_type.as_str()))?;
-        let permit = Arc::clone(sem)
-            .acquire_owned()
-            .await
-            .map_err(|e| format!("Semaphore closed: {e}"))?;
-        if let Some(c) = self.active_counts.get(&op_type) {
-            c.fetch_add(1, Ordering::Relaxed);
-        }
         let cancelled = Arc::new(AtomicBool::new(false));
-        if let Ok(mut ops) = self.active_ops.lock() {
+        {
+            let mut ops = self.active_ops.lock().map_err(|_| "Operation tracking lock poisoned")?;
+            if ops.contains_key(&id) {
+                return Err(format!("Operation ID is already in use: {id}"));
+            }
             ops.insert(id.clone(), OpEntry { cancelled: cancelled.clone() });
         }
-        Ok(Operation { id, op_type, cancelled, _permit: permit, active_count: self.active_counts[&op_type].clone(), active_ops: self.active_ops.clone() })
+        // Register before waiting, and remove registration even if this future
+        // is dropped. Otherwise a queued cancellation can start work later.
+        let mut operation = Operation { id, op_type, cancelled, _permit: None, active_count: self.active_counts[&op_type].clone(), active_ops: self.active_ops.clone() };
+        let permit = tokio::select! {
+            biased;
+            _ = operation.wait_cancelled() => return Err("Operation was cancelled".into()),
+            result = Arc::clone(sem).acquire_owned() => result.map_err(|e| format!("Semaphore closed: {e}"))?,
+        };
+        if operation.is_cancelled() {
+            return Err("Operation was cancelled".into());
+        }
+        operation.active_count.fetch_add(1, Ordering::Relaxed);
+        operation._permit = Some(permit);
+        Ok(operation)
     }
 
     /// Cancel a running operation by id. Returns true if found and cancelled.
@@ -141,13 +161,6 @@ impl Operations {
             for entry in ops.values() {
                 entry.cancelled.store(true, Ordering::Release);
             }
-        }
-    }
-
-    /// Remove an operation from tracking (called on drop).
-    pub fn finish(&self, id: &str) {
-        if let Ok(mut ops) = self.active_ops.lock() {
-            ops.remove(id);
         }
     }
 
@@ -247,5 +260,46 @@ mod tests {
         assert!(ops.cancel("test-1"));
         assert!(cancelled.load(Ordering::Acquire));
         assert!(!ops.cancel("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn waiting_operations_can_be_cancelled_without_freeing_a_permit() {
+        let ops = Operations::default();
+        let running = ops.begin(OpType::Convert, "running".into()).await.unwrap();
+        let pending = ops.begin(OpType::Convert, "pending".into());
+        tokio::pin!(pending);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), &mut pending).await.is_err());
+        assert!(ops.cancel("pending"));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), &mut pending).await.unwrap();
+        assert!(result.is_err());
+        assert!(!ops.cancel("pending"));
+        assert!(!running.is_cancelled());
+        assert_eq!(ops.active_count(OpType::Convert), 1);
+    }
+
+    #[tokio::test]
+    async fn dropped_waiter_cleans_registration_and_duplicate_ids_are_rejected() {
+        let ops = Operations::default();
+        let running = ops.begin(OpType::Convert, "running".into()).await.unwrap();
+        assert!(ops.begin(OpType::Download, "running".into()).await.is_err());
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10),
+            ops.begin(OpType::Convert, "pending".into())).await.is_err());
+        assert!(!ops.cancel("pending"));
+        assert!(ops.cancel("running"));
+        assert!(running.is_cancelled());
+        assert_eq!(ops.active_count(OpType::Convert), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_wakes_a_silent_operation() {
+        let ops = Operations::default();
+        let operation = ops.begin(OpType::Convert, "silent".into()).await.unwrap();
+        let cancelled = async {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            ops.cancel_all();
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(operation.wait_cancelled(), cancelled);
+        }).await.expect("cancellation should not depend on engine output");
     }
 }

@@ -20,9 +20,17 @@ class TikTokDownloadWorker:
         self.on_download_status = None
         self.on_finished = None
         self._cancelled = threading.Event()
+        self._completed = False
         self._thread = None
 
+    def _finish(self, ok, message, path):
+        # The client can enqueue its next job before this callback returns.
+        self._completed = True
+        if self.on_finished:
+            self.on_finished(ok, message, path)
+
     def start(self):
+        self._completed = False
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
@@ -46,13 +54,11 @@ class TikTokDownloadWorker:
                     self._cancelled.wait(attempt + 1)
                     continue
                 message = 'Download was cancelled' if self._cancelled.is_set() else f'TikTok download failed: {exc}'
-                if self.on_finished:
-                    self.on_finished(False, message, '')
+                self._finish(False, message, '')
                 return
             if self.on_progress:
                 self.on_progress(100)
-            if self.on_finished:
-                self.on_finished(True, '', str(target))
+            self._finish(True, '', str(target))
             return
 
     def _download_once(self, prefer_hd=True):

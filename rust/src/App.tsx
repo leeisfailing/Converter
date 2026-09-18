@@ -259,7 +259,7 @@ export default function App() {
     { key: "d", ctrl: true, shift: true, action: () => setShowConsole((prev) => !prev) },
     { key: "q", ctrl: true, action: () => {
       const active = queue.queueRef.current.find((i) => i.status === "active");
-      if (active) cancelOperation().then(() => queue.cancelActive());
+      if (active) void queue.requestCancel(cancelOperation).catch((err) => toast.addToast("error", "Cancellation failed", String(err)));
     }},
     { key: "Escape", action: () => {
       if (showSettings) setShowSettings(false);
@@ -419,21 +419,21 @@ export default function App() {
 
     const handleCancel = useCallback(async () => {
     try {
-      await cancelOperation();
-      queue.cancelActive();
+      await queue.requestCancel(cancelOperation);
       toast.addToast("warning", "Cancelled", "Current operation stopped");
     } catch (err) {
       console.error(err);
+      toast.addToast("error", "Cancellation failed", String(err));
     }
   }, [queue]);
 
   const handleCancelItem = useCallback(async (id: string) => {
     try {
-      await cancelOperationById(id);
-      queue.cancelItem(id);
+      await queue.requestCancel(() => cancelOperationById(id), id);
       toast.addToast("warning", "Cancelled", "Operation stopped");
     } catch (err) {
       console.error(err);
+      toast.addToast("error", "Cancellation failed", String(err));
     }
   }, [queue]);
 

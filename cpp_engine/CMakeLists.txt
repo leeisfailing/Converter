@@ -39,4 +39,8 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME worker_lifecycle COMMAND worker_tests)
     set_tests_properties(worker_lifecycle PROPERTIES TIMEOUT 30)
+    add_test(NAME ipc_invalid_commands COMMAND ${CMAKE_COMMAND}
+        -DENGINE=$<TARGET_FILE:gpu_engine>
+        -DREQUESTS=${CMAKE_CURRENT_SOURCE_DIR}/tests/ipc_requests.jsonl
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ipc_tests.cmake)
 endif()

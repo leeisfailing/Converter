@@ -43,27 +43,28 @@ export function useQueue() {
   interface DownloadStatusPayload { id?: string; percent: number; speed: number; eta: number; is_live: boolean; status: string; }
 
   const registerListeners = useCallback((type: QueueEventType, handlers: QueueEventHandlers) => {
-    const findItemById = (id: string) => queueRef.current.find((item) => item.id === id && item.type === type);
+    // Native events may arrive after cancellation or command completion.
+    const isActiveItem = (id: string) => queueRef.current.some((item) => item.id === id && item.type === type && item.status === "active");
     const progress = subscribeToEvent<{ id?: string; percent?: number } | number>(`${type}-progress`, ({ payload }) => {
       let id: string | undefined;
       let percent: number;
       if (typeof payload === "number") {
         percent = payload;
       } else {
-        id = payload.id;
-        percent = payload.percent ?? 0;
+        id = payload?.id;
+        percent = payload?.percent ?? 0;
       }
-      if (!id) return;
+      if (!id || !isActiveItem(id)) return;
       if (Number.isFinite(percent)) handlers.onProgress(id, percent);
     });
     const status = subscribeToEvent<DownloadStatusPayload>(`${type}-status`, ({ payload }) => {
       const id = payload?.id;
-      if (!id) return;
+      if (!id || !isActiveItem(id)) return;
       handlers.onDownloadStatus(id, payload.speed ?? 0, payload.eta ?? 0, payload.is_live ?? false, payload.status);
     });
     const finished = subscribeToEvent<FinishedEvent & { id?: string }>(`${type}-finished`, ({ payload }) => {
       const id = payload?.id;
-      if (!id) return;
+      if (!id || !isActiveItem(id)) return;
       handlers.onFinished(id, payload.ok, payload.message, payload.file_path);
     });
     return () => { progress(); status(); finished(); };
@@ -128,11 +129,17 @@ export function useQueue() {
   const clearCompleted = useCallback(() => commit((items) => items.filter((item) => item.status === "pending" || item.status === "active")), [commit]);
   const cancelActive = useCallback(() => commit((items) => items.map((item) => item.status === "active" ? { ...item, status: "cancelled" } : item)), [commit]);
   const cancelItem = useCallback((id: string) => commit((items) => items.map((item) => item.id === id && item.status === "active" ? { ...item, status: "cancelled" } : item)), [commit]);
+  const requestCancel = useCallback(async (cancel: () => Promise<void>, id?: string) => {
+    // Record user intent before native cleanup emits its terminal events.
+    if (id === undefined) cancelActive();
+    else cancelItem(id);
+    await cancel();
+  }, [cancelActive, cancelItem]);
 
   return {
     queue, queueRef, processNextBatch, enqueue, removeItem, clearCompleted,
-    cancelActive, cancelItem, updateItemStatus, registerListeners, setConcurrency, concurrencyRef,
-    isProcessing: queue.some((item) => item.status === "active"),
+    cancelActive, cancelItem, requestCancel, updateItemStatus, registerListeners, setConcurrency, concurrencyRef,
+    isProcessing: queue.some((item) => item.status === "active") || Object.values(activeByType.current).some((count) => count > 0),
     hasQueue: queue.length > 0,
   };
 }

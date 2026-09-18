@@ -41,7 +41,9 @@ export interface DownloadProgressEvent {
 
 function loadInstalledFlag(): boolean {
   try {
-    return typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === "true";
+    // The marker belongs to the app version that installed the update. A new
+    // version must be able to check again after the application restarts.
+    return typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === version;
   } catch {
     return false;
   }
@@ -50,7 +52,7 @@ function loadInstalledFlag(): boolean {
 function saveInstalledFlag(value: boolean) {
   try {
     if (typeof localStorage !== "undefined") {
-      if (value) localStorage.setItem(STORAGE_KEY, "true");
+      if (value) localStorage.setItem(STORAGE_KEY, state.currentVersion);
       else localStorage.removeItem(STORAGE_KEY);
     }
   } catch {}
@@ -171,7 +173,7 @@ export async function downloadAndInstallUpdate() {
           break;
       }
     }, { timeout: 600_000 });
-    setState({ downloaded: true });
+    setState({ downloaded: true, status: "idle" });
     saveInstalledFlag(true);
   } catch (error) {
     fail("install", error);

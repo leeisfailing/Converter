@@ -1,0 +1,10 @@
+execute_process(COMMAND "${ENGINE}" INPUT_FILE "${REQUESTS}"
+    OUTPUT_VARIABLE responses ERROR_VARIABLE errors RESULT_VARIABLE status TIMEOUT 10)
+if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Engine crashed on invalid commands: ${status} ${errors}")
+endif()
+string(REGEX MATCHALL "Command name must be a string" invalid_responses "${responses}")
+list(LENGTH invalid_responses invalid_count)
+if(NOT invalid_count EQUAL 3 OR NOT responses MATCHES "Unknown command: unknown_after_invalid")
+    message(FATAL_ERROR "Engine did not recover after invalid commands: ${responses}")
+endif()

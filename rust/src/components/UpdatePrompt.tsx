@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
+import { useState } from "react";
 import { Download, X } from "lucide-react";
 import { useUpdater } from "../lib/updater";
 
@@ -30,11 +31,14 @@ interface Props {
 
 export default function UpdatePrompt({ onOpenAbout }: Props) {
   const update = useUpdater();
-  const dismissed = getDismissedVersion();
+  const [dismissed, setDismissed] = useState(getDismissedVersion);
   const shouldShow = update.status === "update_available" && update.version && dismissed !== update.version;
 
   function handleDismiss() {
-    if (update.version) saveDismissedVersion(update.version);
+    if (update.version) {
+      saveDismissedVersion(update.version);
+      setDismissed(update.version);
+    }
   }
 
   function handleUpdate() {

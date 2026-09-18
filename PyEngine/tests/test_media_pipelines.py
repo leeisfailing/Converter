@@ -73,8 +73,10 @@ class PipelineTests(unittest.TestCase):
     def test_photo_upscale_with_gpu_setting_and_rgb_video_conversion(self):
         self.check_worker(UpscalerWorker(str(self.photo), str(self.root / 'photo-2k.png'),
                                          '2k', file_type='photo', use_gpu=True), 2560, 1440)
-        self.check_worker(ConverterWorker(str(self.photo), str(self.root / 'photo-video.mp4'),
-                                          'mp4', use_gpu=True), 320, 240)
+        for use_gpu in ([False, True] if detect_gpu()['available'] else [False]):
+            with self.subTest(use_gpu=use_gpu):
+                self.check_worker(ConverterWorker(str(self.photo), str(self.root / f'photo-video-{use_gpu}.mp4'),
+                                                  'mp4', use_gpu=use_gpu), 320, 240)
 
     def test_copy_preserves_video_packets_and_converts_incompatible_audio(self):
         source = self.root / 'flac-source.mkv'
@@ -94,9 +96,34 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(packet_hashes(source), packet_hashes(output))
 
     def test_resize_disables_copy(self):
-        worker = ConverterWorker(str(self.source), str(self.root / 'resized.mp4'), 'mp4', use_gpu=True)
-        worker.max_width = 160
-        self.check_worker(worker, 160, 120)
+        for use_gpu in ([False, True] if detect_gpu()['available'] else [False]):
+            with self.subTest(use_gpu=use_gpu):
+                worker = ConverterWorker(str(self.source), str(self.root / f'resized-{use_gpu}.mp4'),
+                                         'mp4', use_gpu=use_gpu)
+                worker.max_width = 160
+                args = worker._build_command()
+                self.assertNotEqual(args[args.index('-c:v') + 1], 'copy')
+                self.check_worker(worker, 160, 120)
+
+    def test_missing_gpu_rejects_video_jobs_without_creating_output(self):
+        from PyEngine.core import gpu
+        output = self.root / 'missing-gpu.mp4'
+        workers = [
+            ConverterWorker(str(self.photo), str(output), 'mp4', use_gpu=True),
+            ConverterWorker(str(self.source), str(output), 'mp4', use_gpu=True),
+            ReducerWorker(str(self.source), str(output), use_gpu=True),
+            UpscalerWorker(str(self.source), str(output), '2k', use_gpu=True),
+        ]
+        workers[1].max_width = 160
+        with patch.object(gpu, '_encoder_works', return_value=False):
+            for worker in workers:
+                with self.subTest(worker=type(worker).__name__, source=worker.input_path):
+                    with patch.object(worker, '_execute') as execute:
+                        ok, message, _ = run_worker(worker)
+                    self.assertFalse(ok)
+                    self.assertIn('No working GPU', message)
+                    execute.assert_not_called()
+                    self.assertFalse(output.exists())
 
     def test_hardware_failure_never_switches_to_cpu(self):
         from PyEngine.workers.ffmpeg import FfmpegError

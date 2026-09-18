@@ -15,11 +15,12 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://www.rust-lang.org/tools/install) 1.75+
+- [Node.js](https://nodejs.org/) 22.12+ (CI uses Node 24)
+- Current stable [Rust](https://www.rust-lang.org/tools/install) with the Windows MSVC toolchain
+- Visual Studio C++ build tools and CMake 3.20+ for the native media engine
 - [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
 - Python 3.11+ (to prepare the build runtime)
-- ffmpeg and ffprobe are included in `PyEngine/bin/`.
+- ffmpeg and ffprobe are downloaded by the runtime setup script.
 - The Windows app includes private Python, yt-dlp, and vspipe runtimes.
 
 ## Setup
@@ -28,9 +29,12 @@ A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + Re
 # Assemble the Windows x64 runtime (pinned downloads with SHA-256 checks)
 python scripts/bundle_runtime.py
 
+# Build and test the native engine required by the app bundle (PowerShell)
+./scripts/build_cpp_engine.ps1
+
 # Install frontend dependencies
 cd rust
-npm install
+npm ci
 
 # Run in development
 npm run tauri dev
@@ -70,16 +74,17 @@ Converter uses **GitHub Releases** and the **Tauri 2 Updater** plugin for automa
 
 ### Versioning
 
-Converter uses **semantic versioning** (e.g., `3.0.0`, `3.0.1`, `3.1.0`). The version is defined in three places and must stay synchronized:
+Converter uses **semantic versioning** (e.g., `3.0.0`, `3.0.1`, `3.1.0`). Keep these version fields synchronized:
 
 - `rust/src-tauri/Cargo.toml` — `version = "3.0.0"`
 - `rust/src-tauri/tauri.conf.json` — `"version": "3.0.0"`
 - `rust/package.json` — `"version": "3.0.0"`
-- `rust/src/App.tsx` — `v3.0` badge
+- `rust/package-lock.json` — root package version fields
+- `rust/src-tauri/Cargo.lock` — the `converter` package version
 
 ### Creating a Release
 
-1. Update the version in all four files listed above
+1. Update the version in the files listed above and run `npm run release:check` from `rust/`
 2. Commit the changes
 3. Tag the release:
    ```bash
@@ -90,7 +95,7 @@ Converter uses **semantic versioning** (e.g., `3.0.0`, `3.0.1`, `3.1.0`). The ve
    - Build the frontend
    - Build the Tauri application
    - Sign the updater artifacts
-   - Create a GitHub Release with all artifacts
+   - Create a **draft** GitHub Release with all artifacts (publish it after verification)
    - Upload the `latest.json` metadata for the updater
 
 ### Required GitHub Actions Secrets
@@ -99,40 +104,41 @@ The following secrets must be configured in **Settings → Secrets and variables
 
 | Secret Name | Description |
 |---|---|
-| `TAURI_PRIVATE_KEY` | The private signing key (PEM format) for signing updater artifacts |
-| `TAURI_PRIVATE_KEY_PASSWORD` | Password protecting the private signing key |
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the encrypted Tauri updater signing key |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password protecting the private signing key |
 
 ### Generating Signing Keys
 
-Run the following command to generate a new signing key pair:
+For a new application only, the helper generates an encrypted signing key pair and embeds its public key. This repository already has a public key: keep the matching original private key for routine releases. Rotating it prevents existing installations from trusting new updates.
 
 ```bash
 cd rust
-npx tauri signer generate
+npm run signer:generate
 ```
 
 This creates:
-- `src-tauri/public_key.pem` — The **public key** (committed to the repo, also in `tauri.conf.json`)
-- `src-tauri/private_key.pem` — The **private key** (NEVER committed; add to GitHub Actions secrets)
+- `src-tauri/updater.key.pub` — The **public key** (committed, also embedded in `tauri.conf.json`)
+- `src-tauri/updater.key` — The encrypted **private key** (NEVER committed; add its contents to GitHub Actions secrets)
+- `src-tauri/updater.key.password` — The private key password (NEVER committed)
 
-**Important:** The `private_key.pem` and `private_key_hex.txt` are excluded via `.gitignore`. Never commit signing keys to the repository.
+The private key and password are excluded via `.gitignore`; `release:check` rejects tracked private signing material.
 
 ### How Update Signing Works
 
 1. The updater generates an ED25519 public/private key pair
 2. The public key is embedded in `tauri.conf.json` (`plugins.updater.pubkey`)
 3. During a release, `tauri-action` signs the updater artifacts with the private key
-4. The `latest.json` metadata is signed
-5. When the app checks for updates, it downloads the `latest.json`
-6. The app verifies the signature using the embedded public key before installing
+4. `latest.json` contains download links and artifact signatures
+5. When the app checks for updates, it downloads `latest.json`
+6. The app verifies the downloaded artifact using the embedded public key before installing
 7. **Unsigned or tampered updates are rejected**
 
 ### Testing Updates
 
 To test the update flow:
 
-1. **Build v1.0.0**: Set version to `3.0.0`, build and install
-2. **Create v1.0.1 release**: Bump version to `3.0.1`, push tag
+1. **Build v3.0.0**: Set version to `3.0.0`, build and install
+2. **Create v3.0.1 release**: Bump version to `3.0.1`, push the tag, verify and publish the draft
 3. **Check for updates**: Open Converter → Settings → About → "Check for Updates"
 4. **Install**: Click "Update Now" and verify the app restarts with the new version
 
@@ -167,8 +173,8 @@ Converter/
 ├── rust/                 # Tauri 2.0 + React frontend
 │   ├── src-tauri/        # Rust backend
 │   │   ├── src/          # Rust modules (settings, etc.)
-│   │   ├── public_key.pem    # Updater public key (committed)
-│   │   ├── private_key.pem   # Updater private key (NEVER committed)
+│   │   ├── updater.key.pub   # Updater public key (committed)
+│   │   ├── updater.key       # Updater private key (NEVER committed)
 │   │   └── tauri.conf.json   # Includes updater config
 │   ├── src/              # React + TypeScript UI
 │   │   ├── components/

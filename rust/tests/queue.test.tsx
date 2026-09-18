@@ -22,10 +22,73 @@ afterEach(cleanup);
 beforeEach(() => { events.handlers.clear(); events.cleanups.length = 0; });
 
 describe("media queue", () => {
+  it.each([undefined, "one"])("records cancellation before native cleanup emits events (%s)", async (id) => {
+    const notify = vi.fn();
+    const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, notify); return queue; });
+    await act(async () => {});
+    act(() => {
+      view.result.current.enqueue(item("one"));
+      view.result.current.enqueue(item("two", "download"));
+      view.result.current.updateItemStatus("one", "active");
+      view.result.current.updateItemStatus("two", "active");
+    });
+    const nativeCancel = vi.fn(async () => {
+      expect(view.result.current.queueRef.current[0].status).toBe("cancelled");
+      events.handlers.get("convert-finished")!({ payload: { id: "one", ok: false, message: "Cancelled", file_path: "" } });
+    });
+    await act(async () => view.result.current.requestCancel(nativeCancel, id));
+    expect(nativeCancel).toHaveBeenCalledOnce();
+    expect(view.result.current.queue[0].status).toBe("cancelled");
+    expect(view.result.current.queue[1].status).toBe(id ? "active" : "cancelled");
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it.each(["cancelled", "completed", "failed"] as const)("ignores late events for %s jobs", async (status) => {
+    const notify = vi.fn();
+    const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, notify); return queue; });
+    await act(async () => {});
+    act(() => {
+      view.result.current.enqueue(item("job", "download"));
+      view.result.current.updateItemStatus("job", status, { progress: 42 });
+    });
+    const before = view.result.current.queue;
+    act(() => {
+      events.handlers.get("download-progress")!({ payload: { id: "job", percent: 90 } });
+      events.handlers.get("download-status")!({ payload: { id: "job", status: "downloading", speed: 100 } });
+      events.handlers.get("download-finished")!({ payload: { id: "job", ok: true, message: "Done", file_path: "out.mp4" } });
+    });
+    expect(view.result.current.queue).toBe(before);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("ignores events for another engine or unknown jobs and duplicate completions", async () => {
+    const notify = vi.fn();
+    const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, notify); return queue; });
+    await act(async () => {});
+    act(() => {
+      view.result.current.enqueue(item("job"));
+      view.result.current.updateItemStatus("job", "active");
+    });
+    const finished = { id: "job", ok: true, message: "Done", file_path: "out.mp4" };
+    act(() => {
+      events.handlers.get("download-finished")!({ payload: finished });
+      events.handlers.get("convert-finished")!({ payload: { ...finished, id: "unknown" } });
+    });
+    expect(view.result.current.queue[0].status).toBe("active");
+    expect(notify).not.toHaveBeenCalled();
+    act(() => {
+      events.handlers.get("convert-finished")!({ payload: finished });
+      events.handlers.get("convert-finished")!({ payload: finished });
+    });
+    expect(view.result.current.queue[0].status).toBe("completed");
+    expect(notify).toHaveBeenCalledOnce();
+  });
+
   it("keeps download resolve and retry phases visible to the queue", async () => {
     const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, vi.fn()); return queue; });
     await act(async () => {});
     act(() => view.result.current.enqueue(item("tiktok", "download")));
+    act(() => view.result.current.updateItemStatus("tiktok", "active"));
     for (const phase of ["resolving", "retrying", "downloading"]) {
       act(() => events.handlers.get('download-status')!({ payload: { id: 'tiktok', status: phase } }));
       expect(view.result.current.queue[0].downloadPhase).toBe(phase);
@@ -64,8 +127,10 @@ describe("media queue", () => {
     act(() => { view.result.current.enqueue(item("one")); view.result.current.enqueue(item("two")); view.result.current.processNextBatch(process); });
     act(() => { view.result.current.cancelActive(); view.result.current.processNextBatch(process); });
     expect(process).toHaveBeenCalledOnce();
+    expect(view.result.current.isProcessing).toBe(true);
     await act(async () => { finish(); });
     expect(view.result.current.queue[0].status).toBe("cancelled");
+    expect(view.result.current.isProcessing).toBe(false);
     await act(async () => { view.result.current.processNextBatch(async () => {}); });
     expect(view.result.current.queue[1].status).toBe("completed");
   });

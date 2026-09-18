@@ -75,7 +75,7 @@ class GpuTests(unittest.TestCase):
         self.assertNotIn("-preset", gpu.video_encoding_args("h264_amf"))
 
     def test_worker_commands_use_safe_decoding_and_correct_codecs(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(gpu, "detect_gpu", return_value={"available": True, "encoder": "h264_nvenc", "hwaccel": "cuda"}):
+        with tempfile.TemporaryDirectory() as folder, patch.object(gpu, "_encoder_works", side_effect=lambda enc: enc == "h264_nvenc"):
             source = Path(folder) / "source.mp4"
             source.touch()
             for fmt, codec in [("gif", "gif"), ("mp4", "h264_nvenc")]:

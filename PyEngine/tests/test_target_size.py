@@ -21,7 +21,7 @@ class TargetSizeTests(unittest.TestCase):
             for kind, ext, args, target in cases:
                 with self.subTest(kind=kind):
                     source = Path(folder) / (kind + ('.wav' if kind == 'audio' else '.png' if kind == 'photo' else '.mp4'))
-                    output = Path(folder) / ('reduced-' + kind + ext)
+                    output = (Path(folder) / ('reduced-' + kind + ext)).resolve()
                     subprocess.run([find_binary('ffmpeg'), '-v', 'error', '-y', *args, str(source)], check=True, timeout=30)
                     original = source.read_bytes()
                     results = []

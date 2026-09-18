@@ -4,6 +4,7 @@ import re
 import urllib.parse
 import urllib.request
 import threading
+import tempfile
 import time
 from PyEngine.core.config import find_binary
 from PyEngine.core.ytdlp_options import javascript_options
@@ -44,6 +45,7 @@ class DownloadWorker:
         self.write_thumbnail = write_thumbnail
         self.use_browser_cookies = use_browser_cookies
         self._is_running = True
+        self._completed = False
         self._thread: Optional[threading.Thread] = None
         self._last_progress = None
         self._last_progress_time: float = 0.0
@@ -52,14 +54,20 @@ class DownloadWorker:
         self.on_download_status: Optional[Callable[[dict], None]] = None
         self.on_finished: Optional[Callable[[bool, str, str], None]] = None
 
+    def _finish(self, ok, message, path):
+        # The client can enqueue its next job before this callback returns.
+        self._completed = True
+        if self.on_finished:
+            self.on_finished(ok, message, path)
+
     def start(self):
+        self._completed = False
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
     def _run(self):
         if not self._is_running:
-            if self.on_finished:
-                self.on_finished(False, "Download was cancelled", "")
+            self._finish(False, "Download was cancelled", "")
             return
 
         if yt_dlp is not None:
@@ -68,33 +76,28 @@ class DownloadWorker:
                 return
             except Exception as e:
                 if not self._is_running:
-                    if self.on_finished:
-                        self.on_finished(False, "Download was cancelled", "")
+                    self._finish(False, "Download was cancelled", "")
                     return
                 # A failed media extraction must not become a successful HTML
                 # download, or bypass a requested format conversion.
                 if self.format_type not in ("original", "bestvideo+bestaudio/best"):
-                    if self.on_finished:
-                        self.on_finished(False, f"Download failed: {str(e)}", "")
+                    self._finish(False, f"Download failed: {str(e)}", "")
                     return
                 try:
                     self._download_http_fallback()
                     return
                 except Exception as fallback_e:
-                    if self.on_finished:
-                        self.on_finished(False, f"Download failed: {str(e)}\nFallback also failed: {str(fallback_e)}", "")
+                    self._finish(False, f"Download failed: {str(e)}\nFallback also failed: {str(fallback_e)}", "")
                     return
         else:
             if self.format_type not in ("original", "bestvideo+bestaudio/best"):
-                if self.on_finished:
-                    self.on_finished(False, "yt-dlp is required for the requested media format", "")
+                self._finish(False, "yt-dlp is required for the requested media format", "")
                 return
             try:
                 self._download_http_fallback()
                 return
             except Exception as e:
-                if self.on_finished:
-                    self.on_finished(False, f"Download failed: {str(e)}", "")
+                self._finish(False, f"Download failed: {str(e)}", "")
 
     def _download_with_ytdlp(self):
         from PyEngine.core.config import resource_path
@@ -281,8 +284,7 @@ class DownloadWorker:
             info = ydl.extract_info(self.url, download=True)
 
         if not self._is_running:
-            if self.on_finished:
-                self.on_finished(False, "Download was cancelled", "")
+            self._finish(False, "Download was cancelled", "")
             return
 
         candidates = [info.get('filepath')] if info else []
@@ -295,8 +297,7 @@ class DownloadWorker:
 
         if self.on_progress:
             self.on_progress(100)
-        if self.on_finished:
-            self.on_finished(True, "", str(final_path))
+        self._finish(True, "", str(final_path))
 
     def _download_http_fallback(self):
         parsed = urllib.parse.urlparse(self.url)
@@ -305,7 +306,7 @@ class DownloadWorker:
             filename = "downloaded_file"
 
         final_path = _find_unique_path(self.output_dir, filename)
-        temp_path = final_path.with_suffix(final_path.suffix + '.part')
+        temp_path = None
 
         try:
             req = urllib.request.Request(self.url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -320,7 +321,6 @@ class DownloadWorker:
                         filename = os.path.basename(match.group(1))
                         if filename:
                             final_path = _find_unique_path(self.output_dir, filename)
-                        temp_path = final_path.with_suffix(final_path.suffix + '.part')
 
                 blocksize = 131072
                 read_so_far = 0
@@ -333,7 +333,12 @@ class DownloadWorker:
                 last_read_so_far = 0
                 last_speed_time = status_change_time
                 current_speed = 0.0
-                with open(temp_path, 'wb') as out_file:
+                # Own a unique partial file so retries and failures never
+                # truncate or delete another download's existing .part file.
+                with tempfile.NamedTemporaryFile(mode='wb', prefix='.download-',
+                                                 suffix='.part', dir=self.output_dir,
+                                                 delete=False) as out_file:
+                    temp_path = Path(out_file.name)
                     while self._is_running:
                         buffer = response.read(blocksize)
                         if not buffer:
@@ -368,8 +373,7 @@ class DownloadWorker:
                     os.remove(temp_path)
                 except OSError:
                     pass
-                if self.on_finished:
-                    self.on_finished(False, "Download was cancelled", "")
+                self._finish(False, "Download was cancelled", "")
                 return
 
             if totalsize >= 0 and read_so_far != totalsize:
@@ -378,11 +382,11 @@ class DownloadWorker:
 
             if self.on_progress:
                 self.on_progress(100)
-            if self.on_finished:
-                self.on_finished(True, "", str(final_path))
+            self._finish(True, "", str(final_path))
         except Exception:
             try:
-                os.remove(temp_path)
+                if temp_path is not None:
+                    os.remove(temp_path)
             except OSError:
                 pass
             raise

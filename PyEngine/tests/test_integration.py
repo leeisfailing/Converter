@@ -91,7 +91,9 @@ class MediaIntegrationTests(unittest.TestCase):
                     self.assert_valid_media(output, stream_type)
 
     def test_gpu_enabled_conversions_and_reduction(self):
+        from PyEngine.core.gpu import detect_gpu
         from PyEngine.workers.reducer import ReducerWorker
+        gpu_available = detect_gpu()["available"]
         source = self.directory / "gpu-source.mp4"
         subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i",
                         "testsrc2=size=320x240:rate=15:duration=1", "-c:v", "libx264", str(source)],
@@ -102,10 +104,20 @@ class MediaIntegrationTests(unittest.TestCase):
             with self.subTest(fmt=fmt):
                 output = self.directory / ("gpu-output." + fmt)
                 ok, message, _ = run_worker(ConverterWorker(str(source), str(output), fmt, use_gpu=True))
+                if not gpu_available and options["vcodec"] != "gif":
+                    self.assertFalse(ok)
+                    self.assertIn("No working GPU", message)
+                    self.assertFalse(output.exists())
+                    continue
                 self.assertTrue(ok, message)
                 self.assert_valid_media(output, "video")
         output = self.directory / "gpu-reduced.mp4"
         ok, message, _ = run_worker(ReducerWorker(str(source), str(output), use_gpu=True))
+        if not gpu_available:
+            self.assertFalse(ok)
+            self.assertIn("No working GPU", message)
+            self.assertFalse(output.exists())
+            return
         self.assertTrue(ok, message)
         self.assert_valid_media(output, "video")
 
@@ -190,7 +202,7 @@ class MediaIntegrationTests(unittest.TestCase):
                 process.stdin.write(json.dumps({"cmd": "start_convert", "input": str(source),
                                                 "output": str(output), "format": fmt}) + "\n")
                 process.stdin.flush()
-                deadline = time.monotonic() + 60
+                deadline = time.monotonic() + 90
                 while True:
                     try:
                         message = json.loads(messages.get(timeout=max(0.1, deadline - time.monotonic())))

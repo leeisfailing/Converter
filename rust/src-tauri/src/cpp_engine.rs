@@ -252,7 +252,12 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
         if operation.is_cancelled() {
             break Err("Operation was cancelled".to_string());
         }
-        match lines.next_line().await {
+        let next = tokio::select! {
+            biased;
+            _ = operation.wait_cancelled() => break Err("Operation was cancelled".to_string()),
+            next = lines.next_line() => next,
+        };
+        match next {
             Ok(Some(line)) => {
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
                 match value.get("type").and_then(|v| v.as_str()) {
@@ -285,8 +290,12 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
         }
     };
     let process = state.active.lock().await.remove(&id);
-    if let Some(process) = process { reap(process).await; }
-    ops.finish(&id);
+    if let Some(mut process) = process {
+        if operation.is_cancelled() {
+            let _ = send(&mut process.stdin, &serde_json::json!({ "cmd": "cancel" })).await;
+        }
+        reap(process).await;
+    }
     let stderr = errors.await.unwrap_or_default();
     let result = result.unwrap_or_else(|message| FinishedEvent {
         ok: false, message: if stderr.is_empty() { message } else { format!("{message}\n{stderr}") }, file_path: String::new(),

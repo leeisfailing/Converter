@@ -37,7 +37,13 @@ int main() {
             continue;
         }
 
-        std::string cmd = msg.value("cmd", "");
+        const auto command = msg.find("cmd");
+        if (command == msg.end() || !command->is_string()) {
+            engine::Ipc::instance().send_response(
+                nlohmann::json({{"ok", false}, {"error", "Command name must be a string"}}).dump());
+            continue;
+        }
+        const auto cmd = command->get<std::string>();
 
         if (cmd == "cancel") {
             engine::cancel_all();

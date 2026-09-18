@@ -8,6 +8,7 @@ Three-layer cache:
 import hashlib
 import json
 import os
+import shutil
 import sys
 import threading
 import urllib.request
@@ -225,7 +226,7 @@ def _evict_old_entries(index: dict):
         entry = index.pop(k, None)
         if entry and entry.get("path"):
             try:
-                Path(entry["path"]).unlink(missing_ok=True)
+                _remove_cached_file(entry["path"])
             except OSError:
                 pass
 
@@ -234,7 +235,7 @@ def _evict_old_entries(index: dict):
         entry = index.pop(oldest_key, None)
         if entry and entry.get("path"):
             try:
-                Path(entry["path"]).unlink(missing_ok=True)
+                _remove_cached_file(entry["path"])
             except OSError:
                 pass
 
@@ -244,7 +245,6 @@ def _content_hash(file_path: str, extra: str = "") -> str:
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             sha.update(chunk)
-            break
     size = os.path.getsize(file_path)
     sha.update(str(size).encode())
     if extra:
@@ -252,25 +252,43 @@ def _content_hash(file_path: str, extra: str = "") -> str:
     return sha.hexdigest()
 
 
-def get_cached_result(input_path: str, model_name: str, tile_size: int) -> str | None:
-    key = _content_hash(input_path, f"{model_name}:{tile_size}")
+def _remove_cached_file(path: str):
+    # Older indexes point at user outputs. They must never be deleted.
+    candidate = Path(path).resolve()
+    if candidate.parent == _RESULT_CACHE_DIR.resolve() and candidate.name != _RESULT_CACHE_INDEX.name:
+        candidate.unlink(missing_ok=True)
+
+
+def get_cached_result(input_path: str, model_name: str, tile_size: int, output_format: str = "") -> str | None:
+    key = _content_hash(input_path, f"v2:{model_name}:{tile_size}:{output_format.lower()}")
     with _result_cache_lock:
         index = _load_result_index()
         entry = index.get(key)
         if entry and entry.get("path"):
             result_path = Path(entry["path"])
-            if result_path.exists() and result_path.stat().st_size > 0:
+            if (result_path.resolve().parent == _RESULT_CACHE_DIR.resolve()
+                    and result_path.is_file() and result_path.stat().st_size > 0):
                 if time.time() - entry.get("ts", 0) < _RESULT_CACHE_TTL_SECS:
                     return str(result_path)
     return None
 
 
 def store_result(input_path: str, output_path: str, model_name: str, tile_size: int):
-    key = _content_hash(input_path, f"{model_name}:{tile_size}")
+    suffix = Path(output_path).suffix.lower()
+    key = _content_hash(input_path, f"v2:{model_name}:{tile_size}:{suffix}")
     with _result_cache_lock:
+        _RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cached = _RESULT_CACHE_DIR / f"{key}{suffix}"
+        with tempfile.NamedTemporaryFile(dir=_RESULT_CACHE_DIR, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            shutil.copyfile(output_path, temporary_path)
+            os.replace(temporary_path, cached)
+        finally:
+            temporary_path.unlink(missing_ok=True)
         index = _load_result_index()
         index[key] = {
-            "path": output_path,
+            "path": str(cached),
             "ts": time.time(),
             "model": model_name,
             "tile": tile_size,
@@ -285,7 +303,7 @@ def clear_result_cache():
         for entry in index.values():
             if entry.get("path"):
                 try:
-                    Path(entry["path"]).unlink(missing_ok=True)
+                    _remove_cached_file(entry["path"])
                 except OSError:
                     pass
         _save_result_index({})

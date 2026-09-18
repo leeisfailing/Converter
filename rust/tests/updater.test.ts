@@ -14,11 +14,18 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.isTauri.mockReturnValue(true);
   mocks.getVersion.mockResolvedValue("3.0.0");
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
   originalUA = navigator.userAgent;
   Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", configurable: true });
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   Object.defineProperty(navigator, "userAgent", { value: originalUA, configurable: true });
 });
 
@@ -27,6 +34,39 @@ function update() {
 }
 
 describe("updater lifecycle", () => {
+  it.each(["2.9.0", "true"])("allows checks after replacing an older installed marker (%s)", async (marker) => {
+    localStorage.setItem("converter-update-installed", marker);
+    mocks.check.mockResolvedValue(null);
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().downloaded).toBe(false);
+    expect(mocks.check).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a pending restart across a reload of the same version", async () => {
+    localStorage.setItem("converter-update-installed", "3.0.0");
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().downloaded).toBe(true);
+    expect(mocks.check).not.toHaveBeenCalled();
+    await store.restartAfterUpdate();
+    expect(mocks.relaunch).toHaveBeenCalledOnce();
+  });
+
+  it("allows retrying a failed restart without reinstalling", async () => {
+    const available = update();
+    mocks.check.mockResolvedValue(available);
+    available.downloadAndInstall.mockResolvedValue(undefined);
+    mocks.relaunch.mockRejectedValueOnce(new Error("Restart failed")).mockResolvedValueOnce(undefined);
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    await store.downloadAndInstallUpdate();
+    expect(store.getUpdaterState()).toMatchObject({ status: "error", failedAction: "restart", downloaded: true });
+    await store.restartAfterUpdate();
+    expect(mocks.relaunch).toHaveBeenCalledTimes(2);
+    expect(available.downloadAndInstall).toHaveBeenCalledOnce();
+  });
+
   it("checks once for concurrent requests and reports no update", async () => {
     let complete!: (result: null) => void;
     mocks.check.mockReturnValue(new Promise((resolve) => { complete = resolve; }));
@@ -108,11 +148,11 @@ describe("updater lifecycle", () => {
     expect(store.getUpdaterState().downloaded).toBe(false);
     await store.downloadAndInstallUpdate();
     expect(store.getUpdaterState().downloaded).toBe(true);
-    expect(store.getUpdaterState().status).toBe("installing");
-    expect(mocks.relaunch).not.toHaveBeenCalled();
+    expect(store.getUpdaterState().status).toBe("restarting");
+    expect(mocks.relaunch).toHaveBeenCalledOnce();
   });
 
-  it("prevents restart and re-download after a successful install", async () => {
+  it("restarts once and prevents re-download after a successful install", async () => {
     const available = update();
     mocks.check.mockResolvedValue(available);
     available.downloadAndInstall.mockImplementation(async (progress: (event: DownloadEvent) => void) => {
@@ -123,9 +163,9 @@ describe("updater lifecycle", () => {
     await store.checkForUpdate();
     await store.downloadAndInstallUpdate();
     expect(store.getUpdaterState()).toMatchObject({ downloaded: true });
-    expect(store.getUpdaterState().status).toBe("installing");
+    expect(store.getUpdaterState().status).toBe("restarting");
     await store.restartAfterUpdate();
-    expect(mocks.relaunch).not.toHaveBeenCalled();
+    expect(mocks.relaunch).toHaveBeenCalledOnce();
     await store.checkForUpdate();
     expect(mocks.check).toHaveBeenCalledTimes(1);
     await store.downloadAndInstallUpdate();

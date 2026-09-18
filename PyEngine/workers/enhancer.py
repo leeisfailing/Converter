@@ -10,6 +10,7 @@ Features:
 import gc
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,7 @@ class EnhancerWorker:
         self.selected_gpu = selected_gpu
 
         self._is_running = True
+        self._completed = False
         self._thread: threading.Thread | None = None
         self._process: subprocess.Popen | None = None
         self.on_progress = None
@@ -90,6 +92,7 @@ class EnhancerWorker:
     # ------------------------------------------------------------------
 
     def start(self):
+        self._completed = False
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._thread.start()
 
@@ -457,29 +460,45 @@ class EnhancerWorker:
                 raise ValueError("Output must be different from the original file")
 
             cached = get_cached_result(
-                self.input_path, self.model_name, self.tile_size
+                self.input_path, self.model_name, self.tile_size, Path(self.output_path).suffix
             )
-            if cached and os.path.exists(cached):
-                os.makedirs(os.path.dirname(self.output_path) or ".", exist_ok=True)
-                os.replace(cached, self.output_path)
-                if self.on_progress:
-                    self.on_progress(100)
-                result = (True, "Enhanced (cached)", self.output_path)
-            else:
-                self._perform()
-                store_result(
-                    self.input_path, self.output_path,
-                    self.model_name, self.tile_size,
-                )
-                if self.on_progress:
-                    self.on_progress(100)
-                result = (True, "", self.output_path)
+            destination = self.output_path
+            os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
+            # Encode and restore cache hits on the destination filesystem.
+            # Failures must preserve any existing user output.
+            with tempfile.TemporaryDirectory(prefix=".enhance-", dir=Path(destination).parent) as folder:
+                candidate = Path(folder) / Path(destination).name
+                if cached:
+                    shutil.copyfile(cached, candidate)
+                else:
+                    self.output_path = str(candidate)
+                    try:
+                        self._perform()
+                    finally:
+                        self.output_path = destination
+                self._check_cancelled()
+                if not candidate.is_file() or candidate.stat().st_size == 0:
+                    raise EnhancerError("Enhancement produced no output")
+                os.replace(candidate, destination)
+            if not cached:
+                # Cache availability must not turn a completed job into failure.
+                try:
+                    store_result(
+                        self.input_path, self.output_path,
+                        self.model_name, self.tile_size,
+                    )
+                except OSError:
+                    pass
+            if self.on_progress:
+                self.on_progress(100)
+            result = (True, "Enhanced (cached)" if cached else "", self.output_path)
 
         except FileNotFoundError as exc:
             result = (False, f"{self.operation} failed: {exc}", "")
         except Exception as exc:
             message = str(exc) if self._is_running else f"{self.operation} was cancelled"
             result = (False, message, "")
+        self._completed = True
         if self.on_finished:
             self.on_finished(*result)
 

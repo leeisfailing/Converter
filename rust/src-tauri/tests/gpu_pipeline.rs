@@ -5,13 +5,17 @@ use std::{
 };
 
 fn tool(name: &str) -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    root.join("PyEngine/bin").join(format!("{name}.exe"))
+    // Test the pinned Windows x64 sidecars assembled by bundle_runtime.py.
+    // PyEngine/bin may contain different developer binaries and is absent in CI.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bin")
+        .join(format!("{name}-x86_64-pc-windows-msvc.exe"));
+    assert!(
+        path.is_file(),
+        "Bundled tool missing: {}. Run python scripts/bundle_runtime.py first.",
+        path.display()
+    );
+    path
 }
 
 fn ffmpeg(args: &[&str]) -> Output {

@@ -7,7 +7,8 @@ permissions:
   contents: read
 concurrency:
   group: checks-${{ github.ref }}
-  cancel-in-progress: true
+  # Let active checks finish when another push or rerun is queued.
+  cancel-in-progress: false
 jobs:
   test:
     runs-on: windows-latest

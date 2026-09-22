@@ -941,7 +941,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_media_conversion_formats_and_gpu_reduction() {
+    async fn real_media_conversion_formats_on_cpu() {
         let folder = tempfile::tempdir().unwrap();
         let source = folder
             .path()
@@ -983,7 +983,9 @@ mod tests {
                 input: source.clone(),
                 output: output.clone(),
                 format: Some(format.into()),
-                use_gpu: Some(!matches!(format, "webm" | "wmv" | "mpg" | "mpeg" | "vob")),
+                // Format coverage must run on hosts without hardware encoders.
+                // Hardware conversion and reduction have separate capability-gated tests.
+                use_gpu: Some(false),
                 ..Default::default()
             };
             execute(&NativeEngine::build_convert_args(&req).await.unwrap()).await;

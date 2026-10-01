@@ -23,6 +23,10 @@ add_executable(gpu_engine
 )
 
 target_include_directories(gpu_engine PRIVATE include)
+if(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(gpu_engine PRIVATE Threads::Threads)
+endif()
 
 
 if(WIN32)
@@ -34,6 +38,9 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(worker_tests tests/worker_tests.cpp src/ffmpeg_worker.cpp)
     target_include_directories(worker_tests PRIVATE include)
+    if(UNIX)
+        target_link_libraries(worker_tests PRIVATE Threads::Threads)
+    endif()
     if(WIN32)
         target_compile_definitions(worker_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()

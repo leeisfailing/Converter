@@ -49,7 +49,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // The desktop event callback is outside Tokio. Keep the window
+                // alive until its engines have been reaped and the cache flushed.
+                api.prevent_close();
                 log::info!("Window close requested — cancelling all operations");
                 // Cancel all operation flags immediately
                 if let Some(ops) = window.try_state::<operations::Operations>() {
@@ -58,7 +61,8 @@ pub fn run() {
                 }
                 // Kill any running engine processes
                 let handle = window.app_handle().clone();
-                tokio::spawn(async move {
+                let closing_window = window.clone();
+                tauri::async_runtime::spawn(async move {
                     // Kill Python engine process
                     if let Some(py_engine) = handle.try_state::<engine::PythonEngine>() {
                         py_engine.shutdown().await;
@@ -70,6 +74,7 @@ pub fn run() {
                     // Flush persistent cache to disk
                     persistent_cache::PersistentCache::global().flush().await;
                     log::info!("All engine processes killed, cache flushed");
+                    let _ = closing_window.destroy();
                 });
             }
         })

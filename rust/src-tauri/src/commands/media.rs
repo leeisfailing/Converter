@@ -105,7 +105,7 @@ pub async fn start_convert(
     let (use_gpu, preferred_encoder) = sidecar_encoder_selection(use_gpu, preferred_encoder, &gpu_str);
     let req = ConvertRequest { id: &id, cmd: "start_convert", input: &input, output: &output, format: &format, dev_mode, use_gpu, preferred_encoder, selected_gpu: &gpu_str };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    if cpp_engine::binary_path().is_some() {
+    if cpp_engine::binary_path_for_app(&app).is_some() {
         cpp_engine::run_interactive_command(app, cmd_json, "convert", id).await
     } else {
         engine::run_interactive_command(app, cmd_json, "convert", id).await
@@ -170,7 +170,7 @@ pub async fn start_transcoder(
     let (use_gpu, preferred_encoder) = sidecar_encoder_selection(use_gpu, preferred_encoder, &gpu_str);
     let req = TranscoderRequest { id: &id, cmd: "start_transcoder", input: &input, output: &output, quality, target_bytes, file_type: &file_type, use_gpu, preferred_encoder, selected_gpu: &gpu_str };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    if target_bytes.is_none() && cpp_engine::binary_path().is_some() {
+    if target_bytes.is_none() && cpp_engine::binary_path_for_app(&app).is_some() {
         cpp_engine::run_interactive_command(app, cmd_json, "transcoder", id).await
     } else {
         engine::run_interactive_command(app, cmd_json, "transcoder", id).await
@@ -202,7 +202,7 @@ pub async fn start_upscale(
     let (use_gpu, preferred_encoder) = sidecar_encoder_selection(use_gpu, preferred_encoder, &gpu_str);
     let req = UpscaleRequest { id: &id, cmd: "start_upscale", input: &input, output: &output, target: &target, file_type: &file_type, use_gpu, preferred_encoder, selected_gpu: &gpu_str };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    if cpp_engine::binary_path().is_some() {
+    if cpp_engine::binary_path_for_app(&app).is_some() {
         cpp_engine::run_interactive_command(app, cmd_json, "upscale", id).await
     } else {
         engine::run_interactive_command(app, cmd_json, "upscale", id).await

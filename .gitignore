@@ -35,6 +35,11 @@ ffmpeg2pass-0.log*
 .runtime-downloads/
 rust/src-tauri/bin/python/
 
+# Linux runtime and native build (generated locally)
+cpp_engine/build-linux/
+rust/src-tauri/bin/linux/
+rust/src-tauri/bin/*-unknown-linux-gnu
+
 # OS files
 .DS_Store
 Thumbs.db

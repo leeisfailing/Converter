@@ -1,6 +1,7 @@
 #include "formats.h"
 #include <fstream>
 #include <algorithm>
+#include <cstdint>
 
 namespace engine {
 

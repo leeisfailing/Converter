@@ -37,6 +37,11 @@ impl CancellableCommand for Command {
             use std::os::windows::process::CommandExt;
             self.creation_flags(0x08000000);
         }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+            self.process_group(0);
+        }
         let mut child = self.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
         let errors = capture_tail(child.stderr.take().expect("piped stderr"));
 
@@ -63,7 +68,7 @@ fn wait_for_child(child: &mut Child, operation: &Operation) -> io::Result<std::p
     }
 }
 
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -74,7 +79,13 @@ fn kill_tree(pid: u32) {
             .stderr(Stdio::null())
             .status();
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = Command::new("kill")
             .args(["-9", &pid.to_string()])
@@ -115,5 +126,35 @@ mod tests {
         operation.cancelled_flag().store(true, std::sync::atomic::Ordering::Release);
         let error = Command::new("this-command-must-not-run").output_cancellable(&operation).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_cancellation_terminates_descendant_processes() {
+        let folder = tempfile::tempdir().unwrap();
+        let child_pid_file = folder.path().join("child.pid");
+        let state = crate::operations::Operations::default();
+        let operation = std::sync::Arc::new(tokio_test::block_on(state.begin(
+            crate::operations::OpType::Convert, "test-linux-process-tree".into())).unwrap());
+        let running = operation.clone();
+        let pid_file = child_pid_file.clone();
+        let worker = thread::spawn(move || {
+            Command::new(crate::paths::python()).args([
+                "-c",
+                "import pathlib, subprocess, sys, time; child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(30)",
+            ]).arg(pid_file).output_cancellable(&running)
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !child_pid_file.is_file() {
+            assert!(std::time::Instant::now() < deadline, "Child did not start");
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let pid = std::fs::read_to_string(&child_pid_file).unwrap();
+        operation.cancelled_flag().store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(worker.join().unwrap().unwrap_err().kind(), io::ErrorKind::Interrupted);
+        // A killed child can briefly be a zombie until the system reaps it.
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        assert!(stat.is_empty() || stat.split_once(") ").unwrap().1.starts_with('Z'),
+                "Descendant was left running: {stat}");
     }
 }

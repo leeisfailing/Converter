@@ -2,6 +2,7 @@
 #include "temp_output.h"
 #include "reducer.h"
 #include "config.h"
+#include "process_pipe.h"
 #include "gpu.h"
 #include "media.h"
 #include <nlohmann/json.hpp>
@@ -25,17 +26,21 @@ static std::string exec_cmd_output(const std::vector<std::string>& args) {
     std::string cmd;
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) cmd += " ";
+#ifdef _WIN32
         if (args[i].find(' ') != std::string::npos) cmd += "\"" + args[i] + "\"";
         else cmd += args[i];
+#else
+        cmd += quote_process_arg(args[i]);
+#endif
     }
     cmd += " 2>&1";
 
     std::string result;
-    FILE* pipe = _popen(cmd.c_str(), "r");
+    FILE* pipe = open_process_pipe(cmd);
     if (!pipe) return result;
     char buf[4096];
     while (fgets(buf, sizeof(buf), pipe)) result += buf;
-    _pclose(pipe);
+    close_process_pipe(pipe);
     return result;
 }
 

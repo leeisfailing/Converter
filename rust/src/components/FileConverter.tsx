@@ -1,3 +1,4 @@
+import { splitMediaPath } from "../lib/media-paths";
 import Toggle from "./Toggle";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -136,8 +137,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
 
   const getOutputPath = useCallback(() => {
     if (!filePath) return "";
-    const lastDot = filePath.lastIndexOf(".");
-    const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
+    const { base } = splitMediaPath(filePath);
     let outputPath = `${base}_converted.${selectedFormat}`;
 
     if (usedOutputPaths.current.has(outputPath)) {

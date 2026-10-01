@@ -28,6 +28,7 @@ impl PythonEngine {
         for (_, mut process) in processes {
             log::info!("Killing active Python engine process");
             drop(process.stdin);
+            #[cfg(windows)]
             let pid = process.child.id();
             // On Windows, use taskkill to kill the entire process tree
             #[cfg(windows)]
@@ -40,6 +41,8 @@ impl PythonEngine {
                     .status()
                     .await;
             }
+            #[cfg(target_os = "linux")]
+            if let Some(pid) = process.child.id() { crate::process_output::kill_tree(pid); }
             let _ = process.child.kill().await;
             let _ = process.child.wait().await;
             log::info!("Python engine process killed");
@@ -64,6 +67,8 @@ fn command(app: &AppHandle) -> Result<Command, String> {
     search_dirs.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin"));
     if let Some(path) = std::env::var_os("PATH") { search_dirs.extend(std::env::split_paths(&path)); }
     command.env("PATH", std::env::join_paths(search_dirs).map_err(|e| e.to_string())?);
+    #[cfg(target_os = "linux")]
+    command.env_remove("PYTHONHOME").env_remove("PYTHONPATH");
     command.args(["-u", "-B", "-X", "utf8"]).arg(path)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8")
@@ -74,6 +79,8 @@ fn command(app: &AppHandle) -> Result<Command, String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    #[cfg(target_os = "linux")]
+    command.process_group(0);
     Ok(command)
 }
 
@@ -115,6 +122,8 @@ async fn reap(mut process: ActiveProcess) {
             let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])
                 .creation_flags(0x08000000).stdout(Stdio::null()).stderr(Stdio::null()).status().await;
         }
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = process.child.id() { crate::process_output::kill_tree(pid); }
         let _ = process.child.kill().await;
         let _ = process.child.wait().await;
     }
@@ -147,6 +156,8 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
         Ok(Ok(lines)) => lines,
         Ok(Err(e)) => return Err(format!("Engine output read error: {e}")),
         Err(_) => {
+            #[cfg(target_os = "linux")]
+            if let Some(pid) = child.id() { crate::process_output::kill_tree(pid); }
             let _ = child.kill().await;
             let _ = child.wait().await;
             stdout_task.abort();

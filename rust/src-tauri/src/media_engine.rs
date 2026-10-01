@@ -12,6 +12,16 @@ use tokio::{
     sync::Semaphore,
 };
 
+// Console suppression is a Windows option; Linux uses normal subprocesses.
+fn media_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    #[cfg(target_os = "linux")]
+    command.process_group(0);
+    command
+}
+
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const PROGRESS_THROTTLE_MS: u64 = 100;
@@ -132,7 +142,7 @@ pub struct NativeEngine;
 impl NativeEngine {
     /// Probe a media file and return metadata.
     pub async fn probe(input: &str) -> Result<ProbeInfo, String> {
-        let output = tokio::time::timeout(Duration::from_secs(10), Command::new(paths::ffprobe())
+        let output = tokio::time::timeout(Duration::from_secs(10), media_command(paths::ffprobe())
             .args([
                 "-v",
                 "error",
@@ -144,7 +154,6 @@ impl NativeEngine {
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .creation_flags(0x08000000)
             .kill_on_drop(true)
             .output()).await.map_err(|_| "ffprobe timed out".to_string())?
             .map_err(|e| format!("ffprobe failed: {e}"))?;
@@ -201,11 +210,10 @@ impl NativeEngine {
 
     /// Detect available GPU encoders by probing ffmpeg.
     pub async fn detect_gpus() -> Result<Vec<GpuCapability>, String> {
-        let output = Command::new(paths::ffmpeg())
+        let output = media_command(paths::ffmpeg())
             .args(["-hide_banner", "-encoders"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .creation_flags(0x08000000)
             .output()
             .await
             .map_err(|e| format!("ffmpeg failed: {e}"))?;
@@ -264,7 +272,7 @@ impl NativeEngine {
         }
         let works = tokio::time::timeout(
             Duration::from_secs(8),
-            Command::new(paths::ffmpeg())
+            media_command(paths::ffmpeg())
                 .args([
                     "-v",
                     "error",
@@ -285,7 +293,6 @@ impl NativeEngine {
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .creation_flags(0x08000000)
                 .kill_on_drop(true)
                 .status(),
         )
@@ -377,12 +384,11 @@ impl NativeEngine {
         if operation.is_cancelled() {
             return Err("Operation was cancelled".into());
         }
-        let mut child = Command::new(paths::ffmpeg())
+        let mut child = media_command(paths::ffmpeg())
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .creation_flags(0x08000000)
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("Failed to start ffmpeg: {e}"))?;

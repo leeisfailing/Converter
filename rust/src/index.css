@@ -23,6 +23,7 @@
 .update-progress { accent-color: var(--accent); }
 
 :root {
+  color-scheme: dark;
   --bg: #0F1117;
   --bg-secondary: #14161E;
   --surface: #181B23;
@@ -51,6 +52,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg: #F8FAFC;
   --bg-secondary: #F1F5F9;
   --surface: #FFFFFF;
@@ -210,6 +212,13 @@ body {
   background: var(--select-bg);
   color: var(--select-text);
 }
+
+/* All native selectors share theme, focus, and disabled behavior. */
+.input:hover, .select:hover { border-color: var(--border-hover); }
+.input:disabled, .select:disabled { opacity: 0.45; cursor: not-allowed; }
+.select { -webkit-appearance: none; min-width: 0; }
+.select option:disabled { color: var(--text-muted); }
+.select.size-unit-select { width: 88px; flex: 0 0 88px; }
 
 /* Button */
 .btn {
@@ -1259,61 +1268,6 @@ input[type="range"]:hover::-moz-range-thumb {
 .toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-/* ===== Input Enhanced ===== */
-.input {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: var(--text);
-  font-size: 14px;
-  outline: none;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  width: 100%;
-}
-
-.input:hover {
-  border-color: var(--border-hover);
-}
-
-.input:focus {
-  border-color: var(--accent);
-  background: var(--surface-elevated);
-  box-shadow: 0 0 0 3px var(--accent-dim);
-}
-
-.input::placeholder {
-  color: var(--text-muted);
-}
-
-/* ===== Select Enhanced ===== */
-.select {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: var(--text);
-  font-size: 14px;
-  outline: none;
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 36px;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  width: 100%;
-}
-
-.select:hover {
-  border-color: var(--border-hover);
-}
-
-.select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 /* ===== Progress Track Enhanced ===== */

@@ -1,3 +1,4 @@
+import { formatFileSize } from "./lib/file-size";
 import { gpuSelection, gpuStatus, parallelGpuEncoders } from "./lib/gpu-selection";
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -101,11 +102,6 @@ function getInitialTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 let nextId = 0;
 function genId(): string {
@@ -327,7 +323,7 @@ export default function App() {
     const fileName = safeInput.split(/[\\/]/).pop() || safeInput;
     const finalOutputPath = appSettings.outputDir
       ? `${appSettings.outputDir}${sep()}${safeOutput.split(/[\\/]/).pop()}` : safeOutput;
-    const modeLabel = mode === "reduce" ? `under ${(targetBytes! / 1_000_000).toLocaleString()} MB` : `${quality}% quality`;
+    const modeLabel = mode === "reduce" ? `under ${formatFileSize(targetBytes!)}` : `${quality}% quality`;
     addToQueue({
       id: genId(),
       type: "transcoder",

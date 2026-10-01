@@ -26,6 +26,8 @@ def find_binary(name: str) -> str:
         if sys.platform == "win32" and not name.lower().endswith(".exe")
         else (name,)
     )
+    if sys.platform == "linux" and name in ("ffmpeg", "ffprobe"):
+        names = (f"converter-{name}", name)
     exe_dir = Path(sys.executable).parent
 
     # Tauri strips the build target suffix from externalBin sidecars when
@@ -56,4 +58,6 @@ def find_binary(name: str) -> str:
         sidecar = base.parent / 'rust/src-tauri/bin' / f'{stem}-x86_64-pc-windows-msvc.exe'
         if sidecar.is_file():
             return str(sidecar)
+    if sys.platform == "linux" and name in ("ffmpeg", "ffprobe"):
+        return shutil.which(f"converter-{name}") or shutil.which(name) or name
     return shutil.which(name) or name

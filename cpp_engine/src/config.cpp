@@ -1,6 +1,7 @@
 #include "config.h"
 #include <cstdlib>
 #include <vector>
+#include <sstream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -59,6 +60,25 @@ std::string find_binary(const std::string& name) {
         base.parent_path(),
         exe_dir,
     };
+
+#ifdef __linux__
+    // Avoid overwriting the distribution's /usr/bin/ffmpeg when installing.
+    if (name == "ffmpeg" || name == "ffprobe") {
+        const auto bundled_name = "converter-" + name;
+        for (const auto& dir : search_dirs) {
+            const auto path = dir / bundled_name;
+            if (std::filesystem::is_regular_file(path)) return path.string();
+        }
+        if (const auto* path = getenv("PATH")) {
+            std::istringstream dirs(path);
+            std::string dir;
+            while (std::getline(dirs, dir, ':')) {
+                const auto candidate = std::filesystem::path(dir) / bundled_name;
+                if (std::filesystem::is_regular_file(candidate)) return candidate.string();
+            }
+        }
+    }
+#endif
 
     for (auto& dir : search_dirs) {
         auto path = dir / exe_name;

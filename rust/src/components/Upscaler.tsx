@@ -1,3 +1,4 @@
+import { splitMediaPath } from "../lib/media-paths";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -133,12 +134,9 @@ export default function Upscaler({ onAdd, disabled }: Props) {
 
   const getOutputPath = useCallback(() => {
     if (!filePath) return "";
-    const lastDot = filePath.lastIndexOf(".");
-    const hasExtension = lastDot > Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-    const inputExt = hasExtension ? filePath.substring(lastDot).toLowerCase() : "";
+    const { base, extension: inputExt } = splitMediaPath(filePath);
     const ext = detectedFileType === "video" ? ".mp4" :
       [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".tif", ".avif"].includes(inputExt) ? inputExt : ".png";
-    const base = hasExtension ? filePath.substring(0, lastDot) : filePath;
     return `${base}_${target.toUpperCase()}${ext}`;
   }, [filePath, target, detectedFileType]);
 

@@ -1,193 +1,303 @@
 # Converter
 
-A desktop media converter and URL downloader built with **Tauri 2.0** (Rust + React) and a **Python engine** powered by ffmpeg and yt-dlp.
+A desktop app for downloading, converting, compressing, and enhancing media.
+Built with React, TypeScript, Tauri, Rust, and C++/Python media engines powered
+by FFmpeg, yt-dlp, and ONNX Runtime.
 
 ## Features
 
-- Convert between video and image formats (MP4, MKV, JPG, PNG, WEBP, etc.)
-- Download videos/audio from YouTube and hundreds of sites via yt-dlp
-- TikTok links use a separate TikWM/HTTP engine with **Download** (watermarked) and **No Watermark Download** options. TikTok detection and downloading do not use yt-dlp. Links are sent to the third-party TikWM service, so availability depends on that service. Downloads retain queue progress and cancellation support.
-- Auto-detect GPU hardware encoders (NVIDIA, AMD, Intel)
-- Scale video resolution (1080p, 4K, or keep original)
-- Queue system with real-time progress tracking
-- Liquid glass dark UI
-- **Auto-Updates** — automatic updates via GitHub Releases with signature verification
+| Tool | What it does |
+| --- | --- |
+| Download | Save video or audio from supported URLs with format and quality choices. |
+| Convert | Convert video, audio, and images between supported formats. |
+| Transcoder | Compress by quality or reduce to a target size in KB, MB, or GB. |
+| Upscale | Increase video and image resolution with hardware-aware processing. |
+| Enhance | Apply Real-ESRGAN 2× or 4× AI enhancement to photos and videos. |
 
-## Prerequisites
+Jobs run through a queue with progress, cancellation, and configurable output
+folders. Settings include GPU selection, light and dark themes, and a debug
+console. Video tasks can use NVIDIA NVENC, AMD AMF, or Intel Quick Sync when the
+installed drivers and FFmpeg build support them.
 
-- [Node.js](https://nodejs.org/) 22.12+ (CI uses Node 24)
-- Current stable [Rust](https://www.rust-lang.org/tools/install) with the Windows MSVC toolchain
-- Visual Studio C++ build tools and CMake 3.20+ for the native media engine
-- [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
-- Python 3.11+ (to prepare the build runtime)
-- ffmpeg and ffprobe are downloaded by the runtime setup script.
-- The Windows app includes private Python, yt-dlp, and vspipe runtimes.
+TikTok links use a separate TikWM/HTTP downloader with watermarked and
+no-watermark options. These links are sent to the third-party TikWM service;
+availability depends on that service. Other supported sites use yt-dlp.
 
-## Setup
+## Platform support
+
+| Platform | Run from source | Production build |
+| --- | --- | --- |
+| Windows x64 | Supported | Existing installer and portable build workflows |
+| Linux with glibc | x86_64 and aarch64 runtime setup | App executable; installer generation disabled |
+
+Linux has been tested locally on Arch Linux x86_64 with NVIDIA hardware,
+including conversion, reduction, upscaling, AI enhancement, and clean shutdown.
+Hardware acceleration depends on the machine and its drivers.
+
+## Get started
 
 ```bash
-# Assemble the Windows x64 runtime (pinned downloads with SHA-256 checks)
-python scripts/bundle_runtime.py
+git clone https://github.com/leeisfailing/Converter.git
+cd Converter
+```
 
-# Build and test the native engine required by the app bundle (PowerShell)
-./scripts/build_cpp_engine.ps1
+Use Node.js 24, which is also used by CI. The frontend requires Node.js 22.12 or
+newer. Building requires a current stable Rust/Cargo toolchain, Python 3.11 or
+newer, and CMake 3.20 or newer. Tauri's CLI is included in the npm dependencies.
+Complete the platform setup below before starting the app.
 
-# Install frontend dependencies
+## Linux
+
+### Native dependencies
+
+WebKitGTK is required to display the application; npm does not install it.
+These commands include [Tauri's Linux prerequisites](https://v2.tauri.app/start/prerequisites/)
+and the tools used by Converter's media engines.
+
+**Arch Linux**
+
+```bash
+sudo pacman -Syu
+sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
+  appmenu-gtk-module libappindicator-gtk3 librsvg xdotool \
+  cmake python ffmpeg pciutils patchelf
+```
+
+Install Node.js and Rust/Cargo separately if needed. Arch's `rust` package is
+supported, as is a stable toolchain installed with [rustup](https://rustup.rs/).
+
+**Ubuntu 24.04 / Debian**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  cmake python3 ffmpeg pciutils patchelf
+```
+
+Install Node.js and stable Rust/Cargo separately if needed. Other distributions
+need equivalent packages and glibc; this project's runtime setup does not target
+musl.
+
+### Run in development
+
+From the project root:
+
+```bash
 cd rust
-npm ci
-
-# Run in development
+npm ci --include=optional
 npm run tauri dev
-
-# Build for production
-npm run tauri build
 ```
 
-The runtime setup installs Python 3.12.10, VapourSynth R77, and yt-dlp
-2026.08.19 with yt-dlp-ejs 0.8.0 and Deno 2.9.5 into
-`rust/src-tauri/bin/python/`. The private Deno runtime enables YouTube's
-JavaScript challenge support without requiring a system installation.
-Tauri copies the extracted tree
-to `PyEngine/bin/python/` in the app resources, including its standard library,
-native libraries, and Python packages. The application uses this interpreter
-before searching the system. Its installed users do not need Python or pip.
-CI and release workflows run the setup script before compiling. Generated
-FFmpeg 9.0.1 and FFprobe sidecars are also downloaded with a pinned SHA-256
-checksum into `rust/src-tauri/bin/` using Tauri's Windows x64 filenames.
-They do not need to be committed to Git. Generated
-runtime files and cached downloads are ignored by Git; rerun setup after a
-fresh checkout. Earlier runtime contents are retained in `.runtime-downloads/`.
-Run `python scripts/verify_bundled_runtime.py` to exercise a temporary installed
-layout with system Python and media tools removed from its PATH. This checks
-imports, engine IPC, ffmpeg/ffprobe, audio encoding, Deno, and vspipe.
+Tauri automatically applies
+[`tauri.linux.conf.json`](rust/src-tauri/tauri.linux.conf.json). Its startup hook
+runs `npm run setup:linux` to prepare:
 
-## Automatic Updates
+- Private, SHA-256-verified Python in `rust/src-tauri/bin/linux/python/`.
+- yt-dlp, Deno, ONNX Runtime, OpenCV, and NumPy inside that runtime.
+- Linux FFmpeg and FFprobe sidecars copied from the system installation.
+- The native C++ engine in `cpp_engine/build-linux/`.
 
-Converter uses **GitHub Releases** and the **Tauri 2 Updater** plugin for automatic updates. All updates are signed and verified before installation.
+The first run needs internet access. Later runs reuse the runtime and incremental
+C++ build. System Python is not modified, and Linux runtime files are kept
+separate from Windows runtime files. Run `npm run setup:linux` from `rust/` to
+prepare or diagnose the runtime independently.
 
-### How It Works
+### Build and run the executable
 
-1. The app checks for updates against GitHub Releases
-2. If a newer version is found, the user is notified
-3. The update is downloaded and signature-verified
-4. The app installs and restarts automatically
-
-### Versioning
-
-Converter uses **semantic versioning** (e.g., `3.0.0`, `3.0.1`, `3.1.0`). Keep these version fields synchronized:
-
-- `rust/src-tauri/Cargo.toml` — `version = "3.0.0"`
-- `rust/src-tauri/tauri.conf.json` — `"version": "3.0.0"`
-- `rust/package.json` — `"version": "3.0.0"`
-- `rust/package-lock.json` — root package version fields
-- `rust/src-tauri/Cargo.lock` — the `converter` package version
-
-### Creating a Release
-
-1. Update the version in the files listed above and run `npm run release:check` from `rust/`
-2. Commit the changes
-3. Tag the release:
-   ```bash
-   git tag v3.1.0
-   git push origin v3.1.0
-   ```
-4. The GitHub Actions workflow will automatically:
-   - Build the frontend
-   - Build the Tauri application
-   - Sign the updater artifacts
-   - Create a **draft** GitHub Release with all artifacts (publish it after verification)
-   - Upload the `latest.json` metadata for the updater
-
-### Required GitHub Actions Secrets
-
-The following secrets must be configured in **Settings → Secrets and variables → Actions** for the `leeisfailing/Converter` repository:
-
-| Secret Name | Description |
-|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the encrypted Tauri updater signing key |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password protecting the private signing key |
-
-### Generating Signing Keys
-
-For a new application only, the helper generates an encrypted signing key pair and embeds its public key. This repository already has a public key: keep the matching original private key for routine releases. Rotating it prevents existing installations from trusting new updates.
+From `rust/`:
 
 ```bash
+npm run build:linux
+./src-tauri/target/release/converter
+```
+
+The default output is `rust/src-tauri/target/release/converter`. If
+`CARGO_TARGET_DIR` is set, the executable is written under that directory instead.
+The Linux build produces no installer, AppImage, DEB, or RPM.
+
+Keep the source checkout, prepared runtime, FFmpeg, and WebKitGTK dependencies
+available when running this executable. It is not a standalone portable bundle.
+Build on the distribution where you intend to run it: newer system libraries
+on the build machine may not be available on an older distribution.
+
+### GPU and AI behavior
+
+Select a working hardware encoder in Settings, or choose CPU for software
+encoding. GPU video mode reports hardware errors rather than silently changing
+to a CPU video encoder. Available encoders are probed before selection.
+
+AI enhancement uses ONNX Runtime on CPU by default. A compatible GPU execution
+provider can accelerate inference; this is separate from FFmpeg hardware
+encoding. Model files are downloaded when first needed. All three configured
+models support photo and video enhancement.
+
+Optional VapourSynth tooling must come from the Linux distribution. Linux does
+not load the bundled Windows DLLs.
+
+## Windows
+
+### Prepare and run
+
+Install Node.js, stable Rust with the Windows MSVC toolchain, Python, and CMake.
+The native engine requires Visual Studio C++ build tools. Follow
+[Tauri's Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows)
+for the C++ tools and WebView2 runtime.
+
+Run these commands in PowerShell from the project root:
+
+```powershell
+python scripts/bundle_runtime.py
+./scripts/build_cpp_engine.ps1
 cd rust
-npm run signer:generate
+npm ci --include=optional
+npm run tauri dev
 ```
 
-This creates:
-- `src-tauri/updater.key.pub` — The **public key** (committed, also embedded in `tauri.conf.json`)
-- `src-tauri/updater.key` — The encrypted **private key** (NEVER committed; add its contents to GitHub Actions secrets)
-- `src-tauri/updater.key.password` — The private key password (NEVER committed)
+The setup prepares private Python, yt-dlp, Deno, VapourSynth, and media tools
+using pinned downloads. Installed Windows users do not need their own Python
+or pip.
 
-The private key and password are excluded via `.gitignore`; `release:check` rejects tracked private signing material.
+### Build
 
-### How Update Signing Works
+After setup, run the desired command from `rust/`:
 
-1. The updater generates an ED25519 public/private key pair
-2. The public key is embedded in `tauri.conf.json` (`plugins.updater.pubkey`)
-3. During a release, `tauri-action` signs the updater artifacts with the private key
-4. `latest.json` contains download links and artifact signatures
-5. When the app checks for updates, it downloads `latest.json`
-6. The app verifies the downloaded artifact using the embedded public key before installing
-7. **Unsigned or tampered updates are rejected**
+```powershell
+# Windows NSIS installer
+npm run build:installer
 
-### Testing Updates
-
-To test the update flow:
-
-1. **Build v3.0.0**: Set version to `3.0.0`, build and install
-2. **Create v3.0.1 release**: Bump version to `3.0.1`, push the tag, verify and publish the draft
-3. **Check for updates**: Open Converter → Settings → About → "Check for Updates"
-4. **Install**: Click "Update Now" and verify the app restarts with the new version
-
-### Update UI
-
-- **Settings → About** button triggers manual update check
-- Update notifications appear in a dedicated overlay with:
-  - Version comparison
-  - Release notes (from GitHub)
-  - Update Now / Later options
-  - Progress indicators for download and install
-  - Error handling for offline/timeout scenarios
-
-### Auto-Check Behavior
-
-- Updates are checked on-demand (user-initiated)
-- The app does not check on every startup
-- If GitHub is unavailable, the app continues normally without interruption
-- The last check result is cached in-app
-
-## Project Structure
-
+# Windows portable distribution
+npm run build:portable
 ```
+
+Installer output is under `rust/src-tauri/target/release/bundle/`. The portable
+build creates `rust/dist/portable/` and `rust/dist/Converter-portable.zip`.
+
+## Troubleshooting
+
+### Missing Tauri or Rollup native binding
+
+For errors such as `Cannot find module '@tauri-apps/cli-linux-x64-gnu'`, run this
+from `rust/`:
+
+```bash
+npm ci --include=optional
+```
+
+Keep `package-lock.json`. Do not reuse a Windows `node_modules` directory on
+Linux or share one across operating systems. npm's
+[optional dependency issue](https://github.com/npm/cli/issues/4828) can leave
+native bindings missing.
+
+### Missing WebKitGTK or build tools
+
+Install the platform dependencies above, then run `npm run tauri -- info` from
+`rust/`. An Arch system using the distribution's Rust package can report that
+`rustup` is absent; a working `rustc` and `cargo` are sufficient for this build.
+
+### Frontend tests fail on Node.js 26
+
+If jsdom tests report unavailable `localStorage`, run this from `rust/` on Linux:
+
+```bash
+NODE_OPTIONS=--no-experimental-webstorage npm test
+```
+
+CI uses Node.js 24.
+
+### Downloads or media jobs fail
+
+Open the debug console with `Ctrl+Shift+D` and inspect the operation's error.
+Website availability, authentication, drivers, supported codecs, and achievable
+target sizes vary. For hardware encoder errors, verify the driver and FFmpeg
+support or select CPU in Settings.
+
+The About dialog can save a bug report as a text file. Attach it to a
+[GitHub issue](https://github.com/leeisfailing/Converter/issues); saving the report
+does not submit it automatically.
+
+## Development checks
+
+Run the frontend checks from `rust/`:
+
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+Run the Linux backend checks from the project root after runtime setup:
+
+```bash
+ctest --test-dir cpp_engine/build-linux --output-on-failure
+python3 scripts/verify_linux_runtime.py
+rust/src-tauri/bin/linux/python/bin/python3 -B -m unittest discover -s PyEngine/tests -v
+cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
+```
+
+The detached-runtime check copies the engines and dependencies into a temporary
+directory, then tests tool lookup, conversion, and reduction without system
+tools on its `PATH`. The Windows equivalent is:
+
+```powershell
+python scripts/verify_bundled_runtime.py
+rust/src-tauri/bin/python/python.exe -B -c "import runpy, sys; sys.path.insert(0, '.'); sys.argv = ['unittest', 'discover', '-s', 'PyEngine/tests', '-v']; runpy.run_module('unittest', run_name='__main__')"
+cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
+```
+
+The [Linux workflow](.github/workflows/linux.yml) tests on Ubuntu 24.04 and builds
+the app executable. The [Windows checks](.github/workflows/ci.yml) prepare and
+test the Windows runtime and native engine.
+
+## Updates and Windows releases
+
+The Windows release workflow builds signed updater artifacts for GitHub
+Releases. The app checks shortly after startup and supports manual checks
+through About & Updates. Installing an update requires a published release with
+matching signed artifacts and `latest.json`. Linux installer distribution and
+automatic-update artifacts are not configured by this development setup.
+
+For a Windows release:
+
+1. Synchronize versions in `rust/package.json`, `rust/package-lock.json`,
+   `rust/src-tauri/Cargo.toml`, `rust/src-tauri/Cargo.lock`, and
+   `rust/src-tauri/tauri.conf.json`.
+2. Run `npm run release:check` from `rust/`.
+3. Commit the release changes and push a matching `v<version>` tag.
+4. Verify the artifacts from the [release workflow](.github/workflows/release.yml),
+   then publish its draft.
+
+GitHub Actions requires `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the original private key matching the
+public key embedded in the app; changing it breaks trust for existing installs.
+Private signing material must not be committed. `npm run signer:generate` is
+available for initial key creation, not routine releases.
+
+## Project layout
+
+```text
 Converter/
-├── PyEngine/               # Python backend (ffmpeg, yt-dlp)
-│   ├── __main__.py       # JSON-RPC entry via stdin/stdout
-│   ├── core/             # IPC & config utilities
-│   ├── workers/          # Converter & downloader workers
-│   ├── handlers/         # Command handlers
-│   ├── formats/          # Format definitions & detection
-│   └── requirements.txt
-├── rust/                 # Tauri 2.0 + React frontend
-│   ├── src-tauri/        # Rust backend
-│   │   ├── src/          # Rust modules (settings, etc.)
-│   │   ├── updater.key.pub   # Updater public key (committed)
-│   │   ├── updater.key       # Updater private key (NEVER committed)
-│   │   └── tauri.conf.json   # Includes updater config
-│   ├── src/              # React + TypeScript UI
-│   │   ├── components/
-│   │   │   ├── About.tsx       # Update UI & About screen
-│   │   │   └── Settings.tsx    # Updated with About button
-│   │   └── lib/
-│   │       ├── updater.ts      # Updater state management
-│   │       └── tauri-commands.ts
-│   └── package.json
-├── .github/workflows/
-│   └── release.yml     # GitHub Actions release pipeline
-└── .gitignore           # Excludes private signing keys
+├── rust/
+│   ├── src/                    React interface and shared UI helpers
+│   ├── tests/                  Frontend regression tests
+│   ├── src-tauri/
+│   │   ├── src/                Rust commands, processes, settings, and caches
+│   │   ├── tauri.conf.json     Shared configuration and Windows build settings
+│   │   └── tauri.linux.conf.json
+│   └── scripts/                Frontend and release utilities
+├── PyEngine/
+│   ├── __main__.py             JSON-lines engine entry point
+│   ├── core/                   Tool lookup, GPU detection, and AI models
+│   ├── handlers/               Command dispatch
+│   ├── workers/                Media, download, and enhancement operations
+│   └── tests/                  Python unit and integration tests
+├── cpp_engine/                 Native media engine and lifecycle tests
+├── scripts/                    Runtime setup and verification
+└── .github/workflows/          Windows, Linux, and release automation
 ```
+
+Generated runtimes, Linux build output, and download caches are ignored by Git.
+Prepare them again after a fresh checkout.
 
 ## License
 

@@ -95,6 +95,22 @@ class BundledConfigTests(unittest.TestCase):
         with patch.object(sys, "platform", "linux"):
             self.assertEqual(self.config.find_binary("ffmpeg"), str(expected))
 
+    def test_linux_prefers_private_sidecar_and_falls_back_to_system_tool(self):
+        for name in ("ffmpeg", "ffprobe"):
+            self.config.find_binary.cache_clear()
+            private = self.root / f"converter-{name}"
+            private.touch()
+            (self.root / name).touch()
+            with patch.object(sys, "platform", "linux"):
+                self.assertEqual(self.config.find_binary(name), str(private))
+            self.config.shutil.which.assert_not_called()
+        self.config.find_binary.cache_clear()
+        self.config.shutil.which.side_effect = lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None
+        for path in (self.root / "converter-ffmpeg", self.root / "ffmpeg"):
+            path.unlink()
+        with patch.object(sys, "platform", "linux"):
+            self.assertEqual(self.config.find_binary("ffmpeg"), "/usr/bin/ffmpeg")
+
 
 if __name__ == "__main__":
     unittest.main()

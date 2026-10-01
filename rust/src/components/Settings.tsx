@@ -1,3 +1,4 @@
+import Select from "./Select";
 import { parallelGpuEncoders } from "../lib/gpu-selection";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
@@ -330,10 +331,10 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
 
         <div className="space-y-2">
           <label htmlFor="gpu-selection" className="text-xs text-app-text font-medium">GPU for video tasks</label>
-          <select
+          <Select
             id="gpu-selection"
             aria-describedby="gpu-selection-help"
-            className="input w-full text-xs"
+            className="w-full text-xs"
             value={settings.autoDetectGpu ? "auto" : settings.useGpu && settings.selectedGpu !== "libx264" ? settings.selectedGpu : "cpu"}
             disabled={disabled || isBusy || gpuLoading}
             onChange={(event) => {
@@ -358,7 +359,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
               <option value={settings.selectedGpu} disabled>{settings.selectedGpu} (unavailable)</option>
             )}
             <option value="cpu">CPU only (software encoding)</option>
-          </select>
+          </Select>
           <p id="gpu-selection-help" className="text-[11px] text-app-text-muted">
             Both GPUs runs separate videos on available GPUs, one job per GPU. It requires two detected GPU vendors. Audio, images, and AI enhancement do not use this scheduling mode. Save Settings to keep your choice.
           </p>

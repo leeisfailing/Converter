@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeDevCommand": "npm run setup:linux && npm run dev",
+    "beforeBuildCommand": "npm run setup:linux && npm run build"
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "createUpdaterArtifacts": false,
+    "externalBin": [
+      "bin/converter-ffmpeg",
+      "bin/converter-ffprobe"
+    ],
+    "resources": {
+      "../../PyEngine/bin/*": null,
+      "bin/python/": null,
+      "bin/plugins/": null,
+      "../../cpp_engine/build/gpu_engine.exe": null,
+      "bin/linux/python/": "PyEngine/bin/python/",
+      "../../cpp_engine/build-linux/gpu_engine": "gpu_engine"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Converter by Lee",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "dragDropEnabled": true,
+        "center": true,
+        "decorations": false,
+        "transparent": false
+      }
+    ]
+  }
+}

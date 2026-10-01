@@ -1,4 +1,5 @@
 //! Bundled CUDA capability and real decode/scale/encode regression checks.
+#![cfg(windows)]
 use std::{
     path::PathBuf,
     process::{Command, Output},

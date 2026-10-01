@@ -1,5 +1,6 @@
 #include "media.h"
 #include "config.h"
+#include "process_pipe.h"
 #include <sstream>
 #include <regex>
 #include <fstream>
@@ -9,23 +10,23 @@ namespace engine {
 
 static std::string exec_cmd(const std::string& cmd) {
     std::string result;
-    FILE* pipe = _popen(cmd.c_str(), "r");
+    FILE* pipe = open_process_pipe(cmd);
     if (!pipe) return result;
     char buf[4096];
     while (fgets(buf, sizeof(buf), pipe)) {
         result += buf;
     }
-    _pclose(pipe);
+    close_process_pipe(pipe);
     return result;
 }
 
 MediaMetadata probe_media(const std::string& path) {
     MediaMetadata meta;
     auto ffprobe = find_binary("ffprobe");
-    std::string cmd = ffprobe + " -v error -show_entries"
+    std::string cmd = quote_process_arg(ffprobe) + " -v error -show_entries"
         " stream=index,codec_type,codec_name,width,height,pix_fmt"
         ":stream_disposition=attached_pic:format=duration"
-        " -of json \"" + path + "\" 2>&1";
+        " -of json " + quote_process_arg(path) + " 2>&1";
 
     std::string output = exec_cmd(cmd);
     if (output.empty()) return meta;

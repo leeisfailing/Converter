@@ -51,6 +51,8 @@ fn tool_roots() -> &'static [PathBuf] {
             roots.push(dir.join("resources/PyEngine/bin"));
         }
         roots.push(project_root().join("PyEngine/bin"));
+        #[cfg(target_os = "linux")]
+        roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("bin/linux"));
         roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("bin"));
         roots
     })
@@ -68,6 +70,12 @@ fn resolve(name: &str) -> String {
     let mut roots = tool_roots().to_vec();
     if let Some(path) = std::env::var_os("PATH") {
         roots.extend(std::env::split_paths(&path));
+    }
+    #[cfg(target_os = "linux")]
+    if matches!(name, "ffmpeg" | "ffprobe") {
+        if let Some(path) = find_in_roots(&format!("converter-{name}"), &roots) {
+            return path.to_string_lossy().into_owned();
+        }
     }
     find_in_roots(name, &roots)
         .map(|p| p.to_string_lossy().into_owned())
@@ -115,7 +123,12 @@ pub fn python() -> &'static str {
 }
 
 fn find_bundled_python(roots: &[PathBuf]) -> Option<PathBuf> {
-    roots.iter().map(|root| root.join("python").join(executable("python").as_ref()))
+    roots.iter().map(|root| {
+        #[cfg(target_os = "linux")]
+        { root.join("python/bin/python3") }
+        #[cfg(not(target_os = "linux"))]
+        { root.join("python").join(executable("python").as_ref()) }
+    })
         .find(|path| path.is_file())
 }
 
@@ -131,7 +144,8 @@ pub fn python_in(resource_dir: &Path) -> String {
 pub fn engine_runtime(resource_dir: &Path, project: &Path, development: bool) -> (PathBuf, String) {
     let source = project.join("PyEngine/__main__.py");
     if development && source.is_file() {
-        let runtime = find_bundled_python(&[project.join("rust/src-tauri/bin")]);
+        let runtime_root = if cfg!(target_os = "linux") { "rust/src-tauri/bin/linux" } else { "rust/src-tauri/bin" };
+        let runtime = find_bundled_python(&[project.join(runtime_root)]);
         return (source, runtime.map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| python().to_string()));
     }
@@ -149,8 +163,9 @@ mod tests {
         let resources = tempfile::tempdir().unwrap();
         let source = project.path().join("PyEngine/__main__.py");
         let copied = resources.path().join("PyEngine/__main__.py");
-        let dev_python = project.path().join("rust/src-tauri/bin/python").join(executable("python").as_ref());
-        let bundled_python = resources.path().join("PyEngine/bin/python").join(executable("python").as_ref());
+        let runtime = if cfg!(target_os = "linux") { "rust/src-tauri/bin/linux/python" } else { "rust/src-tauri/bin/python" };
+        let dev_python = project.path().join(runtime).join(if cfg!(target_os = "linux") { "bin/python3".to_string() } else { executable("python").into_owned() });
+        let bundled_python = resources.path().join("PyEngine/bin/python").join(if cfg!(target_os = "linux") { "bin/python3".to_string() } else { executable("python").into_owned() });
         for file in [&source, &copied, &dev_python, &bundled_python] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, []).unwrap();
@@ -189,7 +204,7 @@ mod tests {
     #[test]
     fn python_uses_tauri_resource_directory_even_when_system_python_exists() {
         let resources = tempfile::tempdir().unwrap();
-        let bundled = resources.path().join("PyEngine/bin/python").join(executable("python").as_ref());
+        let bundled = resources.path().join("PyEngine/bin/python").join(if cfg!(target_os = "linux") { "bin/python3".to_string() } else { executable("python").into_owned() });
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         std::fs::write(&bundled, []).unwrap();
         assert_eq!(PathBuf::from(python_in(resources.path())), bundled);

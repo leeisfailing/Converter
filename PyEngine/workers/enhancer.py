@@ -360,15 +360,17 @@ class EnhancerWorker:
         if rc != 0:
             raise EnhancerError(f"Video reassembly failed (rc={rc}): {stderr.decode(errors='replace')[:500]}")
 
-    def _process_frame(self, frame_path: str, out_path: str, session, input_name: str, out_scale: int):
+    def _process_frame(self, frame_path: str, out_path: str):
         if not self._is_running:
             raise RuntimeError(f"{self.operation} was cancelled")
         img = cv2.imread(frame_path, cv2.IMREAD_UNCHANGED)
         if img is None:
-            return
-        result = self._infer_tile(img, session, input_name, out_scale)
+            raise EnhancerError(f"Cannot read frame: {frame_path}")
+        # Photos and video frames need the same tiling and fixed-input resizing.
+        result = self._enhance_image(img)
         del img
-        cv2.imwrite(out_path, result)
+        if not cv2.imwrite(out_path, result):
+            raise EnhancerError(f"Cannot write enhanced frame: {out_path}")
         del result
 
     def _enhance_video(self):
@@ -383,15 +385,8 @@ class EnhancerWorker:
                 raise EnhancerError("No frames extracted from video")
             self._emit_progress(20)
 
-            session = self._get_session()
-            input_meta = session.get_inputs()[0]
-            input_name = input_meta.name
-            try:
-                out_shape = session.get_outputs()[0].shape
-                in_shape = input_meta.shape
-                out_scale = out_shape[2] // in_shape[2] if len(out_shape) >= 4 and len(in_shape) >= 4 else 4
-            except Exception:
-                out_scale = 4
+            # Prepare the shared session before starting frame workers.
+            self._get_session()
 
             enhanced_dir = os.path.join(tmpdir, "enhanced")
             os.makedirs(enhanced_dir, exist_ok=True)
@@ -403,7 +398,7 @@ class EnhancerWorker:
                 futures = []
                 for i, fp in enumerate(frame_paths):
                     out = os.path.join(enhanced_dir, f"enhanced_{i:06d}.png")
-                    futures.append(pool.submit(self._process_frame, fp, out, session, input_name, out_scale))
+                    futures.append(pool.submit(self._process_frame, fp, out))
                 del frame_paths
                 gc.collect()
 

@@ -14,6 +14,7 @@ import {
   Check,
 } from "lucide-react";
 import type { LogEntry, LogLevel } from "../hooks/useDebugConsole";
+import { copyText } from "../lib/clipboard";
 
 interface Props {
   logs: LogEntry[];
@@ -98,42 +99,25 @@ export default memo(function DebugConsole({
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 30);
   }, []);
 
-  const copyToClipboard = useCallback(async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      return true;
-    }
-  }, []);
-
   const handleCopyLog = useCallback(async (log: LogEntry) => {
     const text = formatLogForCopy(log);
-    const ok = await copyToClipboard(text);
+    const ok = await copyText(text);
     if (ok) {
       if (copiedIdTimeoutRef.current) clearTimeout(copiedIdTimeoutRef.current);
       setCopiedId(log.id);
       copiedIdTimeoutRef.current = setTimeout(() => setCopiedId(null), 1500);
     }
-  }, [copyToClipboard]);
+  }, []);
 
   const handleCopyAll = useCallback(async () => {
     const text = filteredLogs.map(formatLogForCopy).join("\n");
-    const ok = await copyToClipboard(text);
+    const ok = await copyText(text);
     if (ok) {
       if (copiedAllTimeoutRef.current) clearTimeout(copiedAllTimeoutRef.current);
       setCopiedAll(true);
       copiedAllTimeoutRef.current = setTimeout(() => setCopiedAll(false), 1500);
     }
-  }, [filteredLogs, copyToClipboard]);
+  }, [filteredLogs]);
 
   return (
     <motion.div

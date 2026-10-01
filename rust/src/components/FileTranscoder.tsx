@@ -3,6 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { detectFile } from "../lib/tauri-commands";
+import { splitMediaPath, transcodeExtension } from "../lib/media-paths";
+import { formatFileSize } from "../lib/file-size";
+import Select from "./Select";
 import {
   FolderOpen,
   FileVideo,
@@ -34,13 +37,6 @@ function getQualityLabel(q: number): string {
   if (q <= 60) return "Medium quality";
   if (q <= 85) return "High quality";
   return "Maximum quality";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
-  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)} KB`;
-  return `${bytes} B`;
 }
 
 const MODE_OPTIONS: { id: TranscoderMode; label: string; icon: typeof Shrink; description: string }[] = [
@@ -126,12 +122,12 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
 
   const getOutputPath = useCallback(() => {
     if (!filePath) return "";
-    const lastDot = filePath.lastIndexOf(".");
-    const ext = lastDot > 0 ? filePath.substring(lastDot) : "";
-    const base = lastDot > 0 ? filePath.substring(0, lastDot) : filePath;
+    if (!detectedFileType) return "";
+    const { base } = splitMediaPath(filePath);
+    const ext = transcodeExtension(filePath, detectedFileType, mode);
     const suffix = mode === "reduce" ? "_reduced" : "_compressed";
     return `${base}${suffix}${ext}`;
-  }, [filePath, mode]);
+  }, [filePath, mode, detectedFileType]);
 
   const handleAdd = () => {
     if (!filePath || !detectedFileType) return;
@@ -155,12 +151,12 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
     setTargetSize("10");
   };
 
-  const isVideoOrPhoto = detectedFileType === "video" || detectedFileType === "photo";
-  const outputFileType = detectedFileType === "video" ? "MP4" : detectedFileType === "audio" ? "MP3" : "WebP";
+  const outputFileType = filePath && detectedFileType
+    ? transcodeExtension(filePath, detectedFileType, mode).slice(1).toUpperCase() : "";
 
   const buttonLabel = (() => {
     if (mode === "reduce") {
-      return `under ${formatBytes(targetBytes)}`;
+      return `under ${formatFileSize(targetBytes)}`;
     }
     return `${quality}% quality`;
   })();
@@ -308,16 +304,16 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
                       disabled={disabled} onChange={(e) => setTargetSize(e.target.value)}
                       aria-invalid={!validTarget} aria-describedby="transcoder-target-help"
                       aria-label="Target file size"
-                      className="flex-1 min-w-0 rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text" />
-                    <select aria-label="Size unit" value={targetUnit} disabled={disabled}
+                      className="input flex-1 min-w-0" />
+                    <Select aria-label="Size unit" value={targetUnit} disabled={disabled}
                       onChange={(e) => setTargetUnit(e.target.value as typeof targetUnit)}
-                      className="rounded-lg border border-app-border bg-app-surface px-3 py-2 text-app-text">
-                      <option>KB</option><option>MB</option><option>GB</option>
-                    </select>
+                      className="size-unit-select">
+                      <option value="KB">KB</option><option value="MB">MB</option><option value="GB">GB</option>
+                    </Select>
                   </div>
                   <p id="transcoder-target-help" className={`text-xs ${validTarget ? "text-app-text-muted" : "text-app-danger"}`}>
                     {validTarget
-                      ? `Output: ${outputFileType}. The file will be re-encoded to fit within ${formatBytes(targetBytes)}. Quality is adjusted automatically.`
+                      ? `Output: ${outputFileType}. The file will be re-encoded to fit within ${formatFileSize(targetBytes)}. Quality is adjusted automatically.`
                       : "Enter a size greater than zero, up to 10 GB."}
                   </p>
                 </motion.div>
@@ -335,7 +331,7 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
               className="w-full btn btn-primary py-3 mt-3"
             >
               <Plus size={16} />
-              Add to Queue \u2014 {buttonLabel}
+              Add to Queue — {buttonLabel}
             </motion.button>
           </motion.div>
         )}

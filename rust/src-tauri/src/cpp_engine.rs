@@ -29,6 +29,7 @@ impl CppEngine {
         for (_, mut process) in processes {
             log::info!("Killing active C++ engine process");
             drop(process.stdin);
+            #[cfg(windows)]
             let pid = process.child.id();
             // On Windows, use taskkill to kill the entire process tree
             #[cfg(windows)]
@@ -41,6 +42,8 @@ impl CppEngine {
                     .status()
                     .await;
             }
+            #[cfg(target_os = "linux")]
+            if let Some(pid) = process.child.id() { crate::process_output::kill_tree(pid); }
             let _ = process.child.kill().await;
             let _ = process.child.wait().await;
             log::info!("C++ engine process killed");
@@ -53,8 +56,21 @@ pub fn binary_path() -> Option<String> {
     binary_path_in(None)
 }
 
+/// Linux package resources are not necessarily beside the application binary.
+pub fn binary_path_for_app(app: &AppHandle) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    { binary_path_in(app.path().resource_dir().ok().as_deref()) }
+    #[cfg(not(target_os = "linux"))]
+    { let _ = app; binary_path() }
+}
+
 /// Resolve the C++ engine binary path, optionally checking a resource directory.
 pub fn binary_path_in(resource_dir: Option<&std::path::Path>) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = resource_dir {
+        let binary = dir.join("gpu_engine");
+        if binary.is_file() { return Some(binary.to_string_lossy().into_owned()); }
+    }
     let mut roots: Vec<std::path::PathBuf> = Vec::with_capacity(8);
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -66,6 +82,8 @@ pub fn binary_path_in(resource_dir: Option<&std::path::Path>) -> Option<String> 
         roots.push(dir.to_path_buf());
         roots.push(dir.join("PyEngine/bin"));
     }
+    #[cfg(target_os = "linux")]
+    roots.push(paths::project_root().join("cpp_engine/build-linux"));
     roots.push(paths::project_root().join("cpp_engine/build"));
     roots.push(paths::project_root().join("cpp_engine"));
     roots.push(paths::project_root().join("PyEngine/bin"));
@@ -106,7 +124,7 @@ fn sidecar_triple() -> Option<String> {
 }
 
 fn command(app: &AppHandle) -> Result<Command, String> {
-    let bin = binary_path().ok_or("C++ engine (gpu_engine) not found")?;
+    let bin = binary_path_for_app(app).ok_or("C++ engine (gpu_engine) not found")?;
     let mut command = Command::new(&bin);
     let mut search_dirs = Vec::with_capacity(16);
     if let Some(dir) = std::path::Path::new(&bin).parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -128,6 +146,8 @@ fn command(app: &AppHandle) -> Result<Command, String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    #[cfg(target_os = "linux")]
+    command.process_group(0);
     Ok(command)
 }
 
@@ -167,6 +187,8 @@ async fn reap(mut process: ActiveCppProcess) {
             let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])
                 .creation_flags(0x08000000).stdout(Stdio::null()).stderr(Stdio::null()).status().await;
         }
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = process.child.id() { crate::process_output::kill_tree(pid); }
         let _ = process.child.kill().await;
         let _ = process.child.wait().await;
     }
@@ -198,6 +220,8 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
         Ok(Ok(lines)) => lines,
         Ok(Err(e)) => return Err(format!("C++ engine output read error: {e}")),
         Err(_) => {
+            #[cfg(target_os = "linux")]
+            if let Some(pid) = child.id() { crate::process_output::kill_tree(pid); }
             let _ = child.kill().await;
             let _ = child.wait().await;
             stdout_task.abort();
@@ -316,4 +340,17 @@ pub async fn cancel_cpp_operation(app: AppHandle) -> Result<(), String> {
         reap(process).await;
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    #[test]
+    fn installed_resource_engine_wins_over_development_binary() {
+        let resources = tempfile::tempdir().unwrap();
+        let installed = resources.path().join("gpu_engine");
+        std::fs::write(&installed, []).unwrap();
+        assert_eq!(binary_path_in(Some(resources.path())), Some(installed.to_string_lossy().into_owned()));
+    }
 }

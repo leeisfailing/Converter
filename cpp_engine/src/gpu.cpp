@@ -1,5 +1,6 @@
 #include "gpu.h"
 #include "config.h"
+#include "process_pipe.h"
 #include <array>
 #include <iostream>
 #include <sstream>
@@ -110,9 +111,9 @@ static std::vector<std::string> get_system_gpu_names() {
 static std::unordered_set<std::string> probe_ffmpeg_encoders() {
     std::unordered_set<std::string> encoders;
     auto ffmpeg = find_binary("ffmpeg");
-    std::string cmd = ffmpeg + " -hide_banner -encoders 2>&1";
+    std::string cmd = quote_process_arg(ffmpeg) + " -hide_banner -encoders 2>&1";
 
-    FILE* pipe = _popen(cmd.c_str(), "r");
+    FILE* pipe = open_process_pipe(cmd);
     if (!pipe) return encoders;
 
     char buf[4096];
@@ -126,7 +127,7 @@ static std::unordered_set<std::string> probe_ffmpeg_encoders() {
             encoders.insert(parts[1]);
         }
     }
-    _pclose(pipe);
+    close_process_pipe(pipe);
     return encoders;
 }
 
@@ -136,15 +137,15 @@ static bool encoder_works_cached(const std::string& encoder) {
     if (it != cache.end()) return it->second;
 
     auto ffmpeg = find_binary("ffmpeg");
-    std::string cmd = ffmpeg + " -v error -nostdin -f lavfi -i color=c=black:s=256x256:r=1:d=0.1"
+    std::string cmd = quote_process_arg(ffmpeg) + " -v error -nostdin -f lavfi -i color=c=black:s=256x256:r=1:d=0.1"
                       " -frames:v 1 -c:v " + encoder + " -pix_fmt yuv420p -f null - 2>&1";
 
-    FILE* pipe = _popen(cmd.c_str(), "r");
+    FILE* pipe = open_process_pipe(cmd);
     bool works = false;
     if (pipe) {
         char buf[256];
         while (fgets(buf, sizeof(buf), pipe)) {}
-        int rc = _pclose(pipe);
+        int rc = close_process_pipe(pipe);
         works = (rc == 0);
     }
 

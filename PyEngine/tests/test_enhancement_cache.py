@@ -16,7 +16,10 @@ for _name in ('cv2', 'numpy'):
         _stubs[_name] = types.ModuleType(_name)
 if 'numpy' in _stubs:
     _stubs['numpy'].ndarray = object
-with patch.dict(sys.modules, _stubs):
+if _stubs:
+    with patch.dict(sys.modules, _stubs):
+        from PyEngine.workers import enhancer
+else:
     from PyEngine.workers import enhancer
 EnhancerWorker = enhancer.EnhancerWorker
 

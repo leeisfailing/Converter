@@ -127,6 +127,7 @@
   flex-shrink: 0;
   padding: 0 24px;
   height: 56px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }

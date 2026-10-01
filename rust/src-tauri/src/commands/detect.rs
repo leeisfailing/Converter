@@ -86,7 +86,7 @@ pub async fn detect_gpu(app: AppHandle, cache: tauri::State<'_, AppCache>) -> Re
     }
     let req = DetectGpuRequest { cmd: "detect_gpu" };
     let cmd_json = serde_json::to_value(req).map_err(|e| e.to_string())?;
-    let response: GpuInfo = if cpp_engine::binary_path().is_some() {
+    let response: GpuInfo = if cpp_engine::binary_path_for_app(&app).is_some() {
         cpp_engine::request(&app, cmd_json).await?
     } else {
         engine::request(&app, cmd_json).await?

@@ -21,33 +21,116 @@ from pathlib import Path
 # Directories
 # ---------------------------------------------------------------------------
 
-_MODELS_DIR = Path(tempfile.gettempdir()) / "converter_ai_models"
-_RESULT_CACHE_DIR = Path(tempfile.gettempdir()) / "converter_ai_results"
-_RESULT_CACHE_INDEX = _RESULT_CACHE_DIR / "_index.json"
+# Both caches live under the *user's* cache root.  A predictable path inside
+# the shared temp directory can be pre-created (or symlinked elsewhere) by
+# another local account, which would make this process write to an arbitrary
+# file.
+_CACHE_APP_DIRNAME = "Converter"
+_MODEL_DIR_NAME = "ai_models"
+_RESULT_DIR_NAME = "ai_results"
+# Owner-only permissions for the cache leaf directories on POSIX systems.
+_CACHE_DIR_MODE = 0o700
+# A stalled download must not block every thread waiting on the model lock.
+_DOWNLOAD_TIMEOUT_SECS = 30  # matches workers/downloader.py
+
+_RESULT_CACHE_INDEX_NAME = "_index.json"
 _MAX_RESULT_CACHE_ENTRIES = 64
 _RESULT_CACHE_TTL_SECS = 7 * 24 * 3600  # 7 days
+
+
+def _account_tag() -> str:
+    """Identifier that scopes a temp path to the current account."""
+    if hasattr(os, "getuid"):
+        return str(os.getuid())
+    return os.environ.get("USERNAME") or "user"
+
+
+def _cache_roots() -> list:
+    """Candidate per-user cache roots, most specific first."""
+    roots = []
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if local:
+            roots.append(Path(local))
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", "").strip()
+        if xdg:
+            roots.append(Path(xdg).expanduser())
+    try:
+        home = Path.home()
+    except (OSError, RuntimeError):
+        home = None
+    if home is not None:
+        roots.append(home / ".cache")
+    # Last resort: a directory scoped to this account inside the shared temp
+    # root (the Windows temp directory is already per-user).
+    roots.append(Path(tempfile.gettempdir()) / f"converter_{_account_tag()}")
+    return roots
+
+
+def _prepare_cache_dir(path: Path) -> bool:
+    """Create path with owner-only permissions, refusing anything unowned.
+
+    Returns False instead of raising so callers can fall back to the next
+    candidate location rather than trusting a directory another account
+    created on our behalf.
+    """
+    try:
+        if path.is_symlink():
+            return False
+        path.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            if path.stat().st_uid != os.getuid():
+                return False
+            os.chmod(path, _CACHE_DIR_MODE)
+    except OSError:
+        return False
+    return True
+
+
+def _resolve_cache_dir(path: Path, name: str) -> Path:
+    """Create path, falling back to the remaining per-user candidates."""
+    if _prepare_cache_dir(path):
+        return path
+    for root in _cache_roots():
+        candidate = root / _CACHE_APP_DIRNAME / name
+        if _prepare_cache_dir(candidate):
+            return candidate
+    tried = ", ".join(str(root / _CACHE_APP_DIRNAME / name) for root in _cache_roots())
+    raise RuntimeError(f"No usable cache directory for {name}; tried: {tried}")
+
+
+_MODEL_CACHE_ROOT = _cache_roots()[0]
+_MODELS_DIR = _MODEL_CACHE_ROOT / _CACHE_APP_DIRNAME / _MODEL_DIR_NAME
+_RESULT_CACHE_DIR = _MODEL_CACHE_ROOT / _CACHE_APP_DIRNAME / _RESULT_DIR_NAME
+_RESULT_CACHE_INDEX = _RESULT_CACHE_DIR / _RESULT_CACHE_INDEX_NAME
 
 # ---------------------------------------------------------------------------
 # Model registry
 # ---------------------------------------------------------------------------
 
+# sha256 values are the Git LFS object digests read from each source
+# repository's API (tree entry "lfs.oid", cross-checked against the raw LFS
+# pointer file) on 2026-10-03; the models themselves were not downloaded.
+# Two URLs track a mutable branch: a future upstream replacement fails closed
+# with a SHA256 mismatch until the digest is refreshed here.
 MODEL_REGISTRY = {
     "realesrgan-x4plus": {
         "url": "https://huggingface.co/qualcomm/Real-ESRGAN-x4plus/resolve/01179a4da7bf5ac91faca650e6afbf282ac93933/Real-ESRGAN-x4plus.onnx",
         "filename": "RealESRGAN_x4plus.onnx",
-        "sha256": "",
+        "sha256": "4e1ae0e47f80d9f4aa2a317c24fde2cb3e49a5381eed6e1d509b4001a4b97ad2",
         "scale": 4,
     },
     "realesrgan-x2plus": {
         "url": "https://huggingface.co/tidus2102/Real-ESRGAN/resolve/main/Real-ESRGAN_x2plus.onnx",
         "filename": "RealESRGAN_x2plus.onnx",
-        "sha256": "",
+        "sha256": "735f42fd172779c9776606298b9f744d9d488f8aa1fe90fe6c6470186020a754",
         "scale": 2,
     },
     "realesr-general-x4v3": {
         "url": "https://huggingface.co/Heliosoph/realesrgan-onnx/resolve/main/realesr-general-x4v3.onnx",
         "filename": "realesr-general-x4v3.onnx",
-        "sha256": "",
+        "sha256": "09b757accd747d7e423c1d352b3e8f23e77cc5742d04bae958d4eb8082b76fa4",
         "scale": 4,
     },
 }
@@ -57,7 +140,9 @@ MODEL_REGISTRY = {
 # ---------------------------------------------------------------------------
 
 def get_models_dir() -> Path:
-    _MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    """Return the model cache directory, creating it on first use."""
+    global _MODELS_DIR
+    _MODELS_DIR = _resolve_cache_dir(_MODELS_DIR, _MODEL_DIR_NAME)
     return _MODELS_DIR
 
 
@@ -72,7 +157,22 @@ def is_model_downloaded(model_name: str) -> bool:
     return path.exists() and path.stat().st_size > 1024 * 1024
 
 
+_download_locks = {name: threading.Lock() for name in MODEL_REGISTRY}
+
+
 def download_model(model_name: str, on_progress=None) -> Path:
+    if model_name not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown model: {model_name}")
+    with _download_locks[model_name]:
+        return _download_model(model_name, on_progress)
+
+
+def _is_sha256_hex(value: str) -> bool:
+    """True when value is a lowercase 64-character hex SHA256 digest."""
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def _download_model(model_name: str, on_progress=None) -> Path:
     if model_name not in MODEL_REGISTRY:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -84,42 +184,56 @@ def download_model(model_name: str, on_progress=None) -> Path:
             on_progress(100)
         return dest
 
-    tmp_path = dest.with_suffix(".tmp")
+    expected = str(info.get("sha256", "")).strip().lower()
+    if not expected:
+        # An unpinned digest must not break model loading, but it must never
+        # look like verification happened either.
+        print(f"[model] WARNING: no SHA256 digest pinned for {model_name}; "
+              f"downloaded bytes cannot be verified", file=sys.stderr, flush=True)
+    elif not _is_sha256_hex(expected):
+        # A digest that is present but malformed must fail closed: accepting
+        # it would silently disable the check it was meant to provide.
+        raise RuntimeError(f"Model {model_name} has an invalid pinned SHA256: {expected!r}")
+
     ctx = ssl.create_default_context()
     req = urllib.request.Request(info["url"], headers={"User-Agent": "Converter/1.0"})
-
+    # A random, exclusively created file inside the per-user cache directory
+    # cannot be planted as a symlink by another local account, unlike a
+    # predictable "<name>.tmp" path.
+    temporary = None
+    sha = hashlib.sha256()
     try:
-        with urllib.request.urlopen(req, context=ctx) as resp:
-            total = int(resp.headers.get("Content-Length", 0))
-            downloaded = 0
-            sha = hashlib.sha256()
-            with open(tmp_path, "wb") as f:
+        with tempfile.NamedTemporaryFile(dir=dest.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            with urllib.request.urlopen(req, context=ctx,
+                                        timeout=_DOWNLOAD_TIMEOUT_SECS) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
                 while True:
                     chunk = resp.read(65536)
                     if not chunk:
                         break
-                    f.write(chunk)
+                    handle.write(chunk)
                     sha.update(chunk)
                     downloaded += len(chunk)
                     if on_progress and total > 0:
                         on_progress(min(100.0, downloaded * 100.0 / total))
 
         file_hash = sha.hexdigest()
-        expected = info.get("sha256", "")
-        if expected and len(expected) == 64 and all(c in "0123456789abcdef" for c in expected):
-            if file_hash != expected:
-                tmp_path.unlink(missing_ok=True)
-                raise RuntimeError(
-                    f"Model {model_name} SHA256 mismatch: expected {expected}, got {file_hash}"
-                )
+        if expected and file_hash != expected:
+            raise RuntimeError(
+                f"Model {model_name} SHA256 mismatch: expected {expected}, got {file_hash}"
+            )
 
-        tmp_path.rename(dest)
+        os.replace(temporary, dest)
         print(f"\n  Model saved: {dest}", file=sys.stderr, flush=True)
         return dest
 
     except Exception as e:
-        tmp_path.unlink(missing_ok=True)
         raise RuntimeError(f"Failed to download model {model_name}: {e}") from e
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def ensure_model(model_name: str, on_progress=None) -> Path:
@@ -148,6 +262,7 @@ def list_available_models() -> list:
 
 _session_lock = threading.Lock()
 _sessions: dict = {}
+_session_build_locks: dict = {}
 
 
 def get_session(model_name: str, use_gpu: bool = False, selected_gpu: str = ""):
@@ -177,14 +292,19 @@ def get_session(model_name: str, use_gpu: bool = False, selected_gpu: str = ""):
         if session is not None:
             return session
 
-    model_path = ensure_model(model_name)
-    session = ort.InferenceSession(str(model_path), providers=providers)
-
+    # Serialize expensive construction per key while allowing unrelated models
+    # to initialize concurrently. Waiting callers reuse the first session.
     with _session_lock:
-        existing = _sessions.get(cache_key)
-        if existing is not None:
-            return existing
-        _sessions[cache_key] = session
+        build_lock = _session_build_locks.setdefault(cache_key, threading.Lock())
+    with build_lock:
+        with _session_lock:
+            session = _sessions.get(cache_key)
+            if session is not None:
+                return session
+        model_path = ensure_model(model_name)
+        session = ort.InferenceSession(str(model_path), providers=providers)
+        with _session_lock:
+            _sessions[cache_key] = session
         return session
 
 
@@ -200,23 +320,50 @@ def clear_sessions():
 _result_cache_lock = threading.Lock()
 
 
+def _result_cache_dir() -> Path:
+    """Create and return the result cache directory.
+
+    Raises OSError when no safe directory can be created so callers treat
+    cache bookkeeping as unavailable instead of writing elsewhere.
+    """
+    if not _prepare_cache_dir(_RESULT_CACHE_DIR):
+        raise OSError(f"Cannot create result cache directory: {_RESULT_CACHE_DIR}")
+    return _RESULT_CACHE_DIR
+
+
 def _load_result_index() -> dict:
     try:
         if _RESULT_CACHE_INDEX.exists():
             data = json.loads(_RESULT_CACHE_INDEX.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data
-    except (json.JSONDecodeError, OSError):
+                # Entries written by hand or truncated by a crash can hold
+                # non-dict values; drop them rather than crash later while
+                # a finished job records its result.
+                return {k: v for k, v in data.items() if isinstance(v, dict)}
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         pass
     return {}
 
 
 def _save_result_index(index: dict):
-    _RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _RESULT_CACHE_INDEX.write_text(json.dumps(index), encoding="utf-8")
+    directory = _result_cache_dir()
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         dir=directory, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(index, temporary)
+        os.replace(temporary_path, _RESULT_CACHE_INDEX)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _evict_old_entries(index: dict):
+    # Malformed entries are dropped first so eviction can never raise on
+    # them (index bookkeeping runs after a job already succeeded).
+    for key in [k for k, v in index.items() if not isinstance(v, dict)]:
+        del index[key]
     now = time.time()
     expired = [
         k for k, v in index.items()
@@ -243,7 +390,7 @@ def _evict_old_entries(index: dict):
 def _content_hash(file_path: str, extra: str = "") -> str:
     sha = hashlib.sha256()
     with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
             sha.update(chunk)
     size = os.path.getsize(file_path)
     sha.update(str(size).encode())
@@ -260,7 +407,7 @@ def _remove_cached_file(path: str):
 
 
 def get_cached_result(input_path: str, model_name: str, tile_size: int, output_format: str = "") -> str | None:
-    key = _content_hash(input_path, f"v2:{model_name}:{tile_size}:{output_format.lower()}")
+    key = _content_hash(input_path, f"v3:{model_name}:{tile_size}:{output_format.lower()}")
     with _result_cache_lock:
         index = _load_result_index()
         entry = index.get(key)
@@ -275,11 +422,11 @@ def get_cached_result(input_path: str, model_name: str, tile_size: int, output_f
 
 def store_result(input_path: str, output_path: str, model_name: str, tile_size: int):
     suffix = Path(output_path).suffix.lower()
-    key = _content_hash(input_path, f"v2:{model_name}:{tile_size}:{suffix}")
+    key = _content_hash(input_path, f"v3:{model_name}:{tile_size}:{suffix}")
     with _result_cache_lock:
-        _RESULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cached = _RESULT_CACHE_DIR / f"{key}{suffix}"
-        with tempfile.NamedTemporaryFile(dir=_RESULT_CACHE_DIR, delete=False) as temporary:
+        directory = _result_cache_dir()
+        cached = directory / f"{key}{suffix}"
+        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temporary:
             temporary_path = Path(temporary.name)
         try:
             shutil.copyfile(output_path, temporary_path)

@@ -27,3 +27,16 @@ it('rejects audio before it reaches the upscale queue', async () => {
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Add to Queue/ })).toBeNull();
 });
+
+it('keeps the selected file and reports the error when queueing fails', async () => {
+  const add = vi.fn(async () => {
+    throw new Error('Invalid path: empty');
+  });
+  render(<Upscaler disabled={false} onAdd={add} />);
+  fireEvent.click(screen.getByText('Click or drag a video/image here'));
+  fireEvent.click(await screen.findByRole('button', { name: /Add to Queue/ }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('Invalid path: empty');
+  expect(add).toHaveBeenCalledOnce();
+  expect(screen.getByText('input.webm')).toBeTruthy();
+});

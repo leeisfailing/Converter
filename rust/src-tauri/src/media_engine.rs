@@ -142,6 +142,28 @@ pub struct NativeEngine;
 impl NativeEngine {
     /// Probe a media file and return metadata.
     pub async fn probe(input: &str) -> Result<ProbeInfo, String> {
+        let key = format!("probe-v2:{input}");
+        let lock = crate::commands::detect::file_cache_lock(&key);
+        let _guard = lock.lock().await;
+        let signature = crate::commands::detect::file_signature(input);
+        let cache = crate::persistent_cache::PersistentCache::global();
+        if let Some((size, mtime)) = signature {
+            if let Some(value) = cache.get_file(&key, Some(size), Some(mtime)).await {
+                if let Ok(info) = serde_json::from_value(value) { return Ok(info); }
+            }
+        }
+        let info = Self::probe_uncached(input).await?;
+        if let Some((size, mtime)) = signature {
+            if crate::commands::detect::file_signature(input) == signature {
+                if let Ok(value) = serde_json::to_value(&info) {
+                    cache.set_file(&key, value, Some(size), Some(mtime)).await;
+                }
+            }
+        }
+        Ok(info)
+    }
+
+    async fn probe_uncached(input: &str) -> Result<ProbeInfo, String> {
         let output = tokio::time::timeout(Duration::from_secs(10), media_command(paths::ffprobe())
             .args([
                 "-v",
@@ -168,7 +190,7 @@ impl NativeEngine {
         let streams = info
             .get("streams")
             .and_then(|v| v.as_array())
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
         let video = streams.iter().find(|s| {
             s.get("codec_type").and_then(|v| v.as_str()) == Some("video")
@@ -826,24 +848,8 @@ fn parse_hhmmss(s: &str) -> Option<f64> {
 
 #[tauri::command]
 pub async fn probe_file(input: String) -> Result<ProbeInfo, String> {
-    // Check persistent cache
-    let (size, mtime) = std::fs::metadata(&input)
-        .ok()
-        .map(|m| (Some(m.len()), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))))
-        .unwrap_or((None, None));
-    let cache_key = format!("probe:{input}");
-    let pc = crate::persistent_cache::PersistentCache::global();
-    if let Some(cached) = pc.get_file(&cache_key, size, mtime).await {
-        return serde_json::from_value(cached).map_err(|e| e.to_string());
-    }
-
-    let result = NativeEngine::probe(&input).await?;
-
-    // Cache the result
-    if let Ok(val) = serde_json::to_value(&result) {
-        pc.set_file(&cache_key, val, size, mtime).await;
-    }
-    Ok(result)
+    crate::validation::validate_file_exists(&input, "input")?;
+    NativeEngine::probe(&input).await
 }
 
 #[tauri::command]

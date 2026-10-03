@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import AppHeader from "./components/AppHeader";
 import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
-import FileConverter from "./components/FileConverter";
-import FileTranscoder from "./components/FileTranscoder";
-import Upscaler from "./components/Upscaler";
-import Enhancer from "./components/Enhancer";
+const FileConverter = lazy(() => import("./components/FileConverter"));
+const FileTranscoder = lazy(() => import("./components/FileTranscoder"));
+const Upscaler = lazy(() => import("./components/Upscaler"));
+const Enhancer = lazy(() => import("./components/Enhancer"));
 import QueueManager from "./components/QueueManager";
 import DebugConsole from "./components/DebugConsole";
 const SettingsPanel = lazy(() => import("./components/Settings"));
@@ -24,7 +24,6 @@ import {
   startEnhance,
   startConvertNative,
   startTranscoderNative,
-  cancelOperation,
   cancelOperationById,
   getSettings,
   getConcurrency,
@@ -35,6 +34,7 @@ import {
   probeFile,
   checkUpscale,
 } from "./lib/tauri-commands";
+import { prefersLightScheme, readStorage, writeStorage } from "./lib/storage";
 import type { AppSettings } from "./lib/tauri-commands";
 import type { QueueItem } from "./lib/queue-types";
 import { Download, ArrowRightLeft, Minimize2, ArrowUp, Sparkles, Zap, Settings } from "lucide-react";
@@ -96,10 +96,74 @@ class ErrorBoundary extends React.Component<
   }
 }
 
+interface PanelBoundaryProps {
+  area: string;
+  children: React.ReactNode;
+}
+
+interface PanelBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+/**
+ * Scoped to the tool workspace so one failed dynamic import cannot replace the
+ * whole shell. Switching tools re-arms it, which lets the user reach the other
+ * panels even when a single chunk refuses to load.
+ */
+export class PanelBoundary extends React.Component<PanelBoundaryProps, PanelBoundaryState> {
+  constructor(props: PanelBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): PanelBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error("[PanelBoundary] Tool panel failed to render:", error);
+  }
+
+  componentDidUpdate(prevProps: PanelBoundaryProps) {
+    if (prevProps.area !== this.props.area && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const err = this.state.error;
+      return (
+        <div role="alert" className="panel p-5 text-center">
+          <h2 className="text-sm font-semibold text-app-text mb-1">
+            This tool could not be loaded
+          </h2>
+          <p className="text-xs text-app-text-muted mb-4 break-words">
+            {err?.message || "An unexpected error occurred."}
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="btn px-4 py-2 text-sm"
+          >
+            Reload Converter
+          </button>
+          <p className="mt-3 text-[11px] text-app-text-muted">
+            The rest of Converter keeps working — reload to try again.
+          </p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 function getInitialTheme(): "dark" | "light" {
-  const saved = localStorage.getItem("app_theme");
+  const saved = readStorage("app_theme");
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return prefersLightScheme() ? "light" : "dark";
 }
 
 
@@ -132,7 +196,7 @@ const staggerContainer = {
 export default function App() {
   const [mode, setMode] = useState<Mode>("download");
   const [theme, setTheme] = useState<"dark" | "light">(getInitialTheme);
-  const [showConsole, setShowConsole] = useState(() => localStorage.getItem("debug_console_open") === "true");
+  const [showConsole, setShowConsole] = useState(() => readStorage("debug_console_open") === "true");
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showBugReport, setShowBugReport] = useState(false);
@@ -254,8 +318,13 @@ export default function App() {
     { key: ",", ctrl: true, action: () => setShowSettings((prev) => !prev) },
     { key: "d", ctrl: true, shift: true, action: () => setShowConsole((prev) => !prev) },
     { key: "q", ctrl: true, action: () => {
+      // Only the job that is actually running is stopped; other job types
+      // continue (they run concurrently by design).
       const active = queue.queueRef.current.find((i) => i.status === "active");
-      if (active) void queue.requestCancel(cancelOperation).catch((err) => toast.addToast("error", "Cancellation failed", String(err)));
+      if (active) {
+        void queue.requestCancel(() => cancelOperationById(active.id), active.id)
+          .catch((err) => toast.addToast("error", "Cancellation failed", String(err)));
+      }
     }},
     { key: "Escape", action: () => {
       if (showSettings) setShowSettings(false);
@@ -413,9 +482,15 @@ export default function App() {
     toast.addToast("info", "Added to queue", `${fileName} → ${safeFormat.toUpperCase()}`);
   }, [addToQueue, appSettings]);
 
-    const handleCancel = useCallback(async () => {
+  const handleCancel = useCallback(async () => {
+    const active = queue.queueRef.current.find((item) => item.status === "active");
+    if (!active) {
+      toast.addToast("info", "Nothing to cancel", "No operation is running right now.");
+      return;
+    }
     try {
-      await queue.requestCancel(cancelOperation);
+      // Cancel just this job: other job types keep running concurrently.
+      await queue.requestCancel(() => cancelOperationById(active.id), active.id);
       toast.addToast("warning", "Cancelled", "Current operation stopped");
     } catch (err) {
       console.error(err);
@@ -436,7 +511,7 @@ export default function App() {
   const isProcessing = queue.isProcessing;
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("app_theme", theme);
+    writeStorage("app_theme", theme);
   }, [theme]);
 
   const toggleTheme = () => {
@@ -455,7 +530,7 @@ export default function App() {
             onConsole={() => {
               const next = !showConsole;
               setShowConsole(next);
-              localStorage.setItem("debug_console_open", String(next));
+              writeStorage("debug_console_open", String(next));
             }}
             onSettings={() => setShowSettings((prev) => !prev)}
             onTheme={toggleTheme}
@@ -487,6 +562,7 @@ export default function App() {
                   )}
                 </div>
                 <Suspense fallback={<p className="text-sm text-app-text-secondary">Loading tools...</p>}>
+                <PanelBoundary area={showSettings ? "settings" : mode}>
                 <AnimatePresence mode="wait">
                   {showSettings ? (
                     <motion.div
@@ -532,6 +608,7 @@ export default function App() {
                     </>
                   )}
                 </AnimatePresence>
+                </PanelBoundary>
                 </Suspense>
 
                 {isProcessing && (
@@ -583,10 +660,10 @@ export default function App() {
         </div>
       </ErrorBoundary>
       {showAbout && (
-        <Suspense fallback={null}><About onClose={() => setShowAbout(false)} hasPendingWork={queue.isProcessing || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></Suspense>
+        <Suspense fallback={null}><PanelBoundary area="about"><About onClose={() => setShowAbout(false)} hasPendingWork={queue.isProcessing || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></PanelBoundary></Suspense>
       )}
       {showBugReport && (
-        <Suspense fallback={null}><BugReport onClose={() => setShowBugReport(false)} /></Suspense>
+        <Suspense fallback={null}><PanelBoundary area="bug-report"><BugReport onClose={() => setShowBugReport(false)} /></PanelBoundary></Suspense>
       )}
     </>
   );

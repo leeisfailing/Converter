@@ -17,10 +17,8 @@ void Ipc::send_response(const std::string& json_str) {
 }
 
 void Ipc::send_progress(int percent) {
-    nlohmann::json j;
-    j["type"] = "progress";
-    j["percent"] = percent;
-    send_response(j.dump());
+    // Only an integer varies: avoid constructing a JSON tree for each tick.
+    send_response("{\"percent\":" + std::to_string(percent) + ",\"type\":\"progress\"}");
 }
 
 void Ipc::send_finished(bool ok, const std::string& message, const std::string& file_path) {

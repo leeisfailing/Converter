@@ -2,27 +2,20 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 import { Download, X } from "lucide-react";
 import { useUpdater } from "../lib/updater";
+import { readStorage, removeStorage, writeStorage } from "../lib/storage";
 
 const DISMISSED_KEY = "converter-update-dismissed";
 
 function getDismissedVersion(): string | null {
-  try {
-    return typeof localStorage !== "undefined" ? localStorage.getItem(DISMISSED_KEY) : null;
-  } catch {
-    return null;
-  }
+  return readStorage(DISMISSED_KEY);
 }
 
 function saveDismissedVersion(version: string) {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.setItem(DISMISSED_KEY, version);
-  } catch {}
+  writeStorage(DISMISSED_KEY, version);
 }
 
 export function clearDismissedVersion() {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.removeItem(DISMISSED_KEY);
-  } catch {}
+  removeStorage(DISMISSED_KEY);
 }
 
 interface Props {
@@ -49,6 +42,8 @@ export default function UpdatePrompt({ onOpenAbout }: Props) {
     <AnimatePresence>
       {shouldShow && (
         <motion.div
+          role="status"
+          aria-live="polite"
           initial={{ opacity: 0, y: 40, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 40, scale: 0.95 }}

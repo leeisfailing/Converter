@@ -9,6 +9,8 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <memory>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -19,28 +21,30 @@ namespace engine {
 static std::mutex workers_mutex;
 static std::unordered_map<std::string, std::unique_ptr<FfmpegWorker>> active_workers;
 
-static bool has_active_worker() {
-    std::lock_guard<std::mutex> lock(workers_mutex);
-    for (auto it = active_workers.begin(); it != active_workers.end();) {
-        if (it->second && it->second->is_running()) {
-            return true;
-        }
-        it = active_workers.erase(it);
-    }
-    return false;
-}
-
 static void cancel_all_workers() {
-    std::lock_guard<std::mutex> lock(workers_mutex);
-    for (auto& [key, worker] : active_workers) {
-        if (worker) worker->stop();
+    std::vector<std::unique_ptr<FfmpegWorker>> workers;
+    {
+        std::lock_guard<std::mutex> lock(workers_mutex);
+        workers.reserve(active_workers.size());
+        for (auto& [key, worker] : active_workers) {
+            if (worker) workers.push_back(std::move(worker));
+        }
+        active_workers.clear();
     }
-    active_workers.clear();
+    // stop() joins a thread that may be blocked in an unbounded probe, so it
+    // must never run under workers_mutex or later commands queue behind it.
+    for (auto& worker : workers) worker->stop();
 }
 
 static void store_worker(const std::string& key, std::unique_ptr<FfmpegWorker> worker) {
-    std::lock_guard<std::mutex> lock(workers_mutex);
-    active_workers[key] = std::move(worker);
+    std::unique_ptr<FfmpegWorker> replaced;
+    {
+        std::lock_guard<std::mutex> lock(workers_mutex);
+        auto& slot = active_workers[key];
+        if (slot) replaced = std::move(slot);
+        slot = std::move(worker);
+    }
+    if (replaced) replaced->stop();
 }
 
 static bool validate_encoder_str(const std::string& enc) {

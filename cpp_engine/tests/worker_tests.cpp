@@ -1,8 +1,13 @@
 #include "ffmpeg_worker.h"
 #include "log_buffer.h"
+#include "media.h"
+#include "process_pipe.h"
+#include "security.h"
+#include "target_size.h"
 #include "temp_output.h"
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 using namespace engine;
@@ -49,6 +54,89 @@ int main(int argc, char** argv) {
         buffer.feed(std::string(2000000, 'x'), bounded);
         buffer.flush(bounded);
         require(total == 2000000, "lost log bytes");
+
+        // Bitrates derived from an IPC target over a short duration can far
+        // exceed INT_MAX, and an out-of-range float->int conversion is UB.
+        require(bitrate_to_int(4000.9) == 4000, "bitrate not truncated");
+        require(bitrate_to_int(2000.0) == 2000, "low bitrate masked by clamp");
+        require(bitrate_to_int(0.0) == 0 && bitrate_to_int(-1.0) == 0, "negative bitrate not floored");
+        require(bitrate_to_int(std::numeric_limits<double>::quiet_NaN()) == 0, "NaN bitrate not floored");
+        const int clamped = bitrate_to_int(3.5e10);
+        require(clamped == 1000000000, "oversized bitrate not clamped");
+        require(clamped <= (std::numeric_limits<int>::max)() / 2,
+                "clamped bitrate overflows bufsize arithmetic");
+
+        // On Windows, cmd.exe expands %VAR% inside quotes and ^ escapes the next
+        // byte, so both are rejected there. On POSIX they are ordinary, legal
+        // filename characters (100%_final.mp4) and must keep working.
+        bool rejected = false;
+#ifdef _WIN32
+        try { validate_path("clip%TEMP%.mp4", "input"); } catch (const ValidationError&) { rejected = true; }
+        require(rejected, "percent expansion allowed in path");
+        rejected = false;
+        try { validate_path("clip^.mp4", "input"); } catch (const ValidationError&) { rejected = true; }
+        require(rejected, "caret escape allowed in path");
+#else
+        try { validate_path("clip%TEMP%.mp4", "input"); } catch (const ValidationError&) { rejected = true; }
+        require(!rejected, "percent rejected in a legal POSIX filename");
+        rejected = false;
+        try { validate_path("clip^.mp4", "input"); } catch (const ValidationError&) { rejected = true; }
+        require(!rejected, "caret rejected in a legal POSIX filename");
+#endif
+        const std::string accepted = validate_path("clip (1) final.mp4", "input");
+        require(accepted.find("clip (1) final.mp4") != std::string::npos, "safe path rejected");
+
+        // Probe output must be captured, and a failed probe must surface a
+        // message instead of silently-defaulted metadata.
+        require(run_probe_command("echo probe-ok").find("probe-ok") != std::string::npos,
+                "probe output not captured");
+#ifdef _WIN32
+        const std::string probe_fail = "echo bad-input & exit 7";
+        require(describe_process_status(7) == "exit code 7", "exit status not described");
+#else
+        const std::string probe_fail = "echo bad-input; exit 7";
+        // pclose() yields the raw wait status (exit 7 -> 7*256), not the code.
+        require(describe_process_status(7 << 8) == "exit code 7", "wait status not decoded");
+        require(describe_process_status(9) == "signal 9", "signal status not decoded");
+#endif
+        bool reported = false;
+        try {
+            run_probe_command(probe_fail);
+        } catch (const std::exception& e) {
+            const std::string message = e.what();
+            reported = message.find("exit code") != std::string::npos &&
+                       message.find("bad-input") != std::string::npos;
+        }
+        require(reported, "probe exit status not reported");
+        require(summarize_output(std::string(500, 'x')).size() <= 200, "probe detail not truncated");
+
+#ifndef _WIN32
+        // pclose() yields a raw wait status: a signal must not read as an exit code.
+        bool signalled = false;
+        try {
+            run_probe_command("kill -9 $$");
+        } catch (const std::exception& e) {
+            signalled = std::string(e.what()).find("signal 9") != std::string::npos;
+        }
+        require(signalled, "probe signal status not reported");
+
+        // fread() errors are not EOF: truncated output must be discarded.
+        FILE* dir = std::fopen("/", "r");
+        if (dir) {
+            std::string partial = "stale";
+            require(!read_process_output(dir, partial), "stream error not detected");
+            require(partial.empty(), "truncated probe output kept");
+            std::fclose(dir);
+        }
+#endif
+
+        bool probe_failed = false;
+        try {
+            probe_media("converter-probe-missing-input.mp4");
+        } catch (const std::exception& e) {
+            probe_failed = std::string(e.what()).find("Probe command") != std::string::npos;
+        }
+        require(probe_failed, "probe_media swallowed a failed probe");
 
 #ifdef _WIN32
         DWORD before = 0, after = 0;

@@ -20,7 +20,7 @@ interface Props {
     fileType: "video" | "photo",
     model: string,
     tileSize: number,
-  ) => void;
+  ) => void | Promise<void>;
   disabled: boolean;
 }
 
@@ -134,18 +134,25 @@ export default function Enhancer({ onAdd, disabled }: Props) {
     return `${base}_AI_${modelSuffix}${ext}`;
   }, [filePath, model, detectedFileType]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!filePath || !detectedFileType) return;
+    setFileError("");
 
     console.log(`[enhancer] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${model}`);
 
-    onAdd(
-      filePath,
-      getOutputPath(),
-      detectedFileType,
-      model,
-      tileSize,
-    );
+    try {
+      await onAdd(
+        filePath,
+        getOutputPath(),
+        detectedFileType,
+        model,
+        tileSize,
+      );
+    } catch (error) {
+      // Nothing was queued: keep the selected file so the user can retry.
+      setFileError(error instanceof Error ? error.message : String(error));
+      return;
+    }
 
     setFilePath(null);
     setDetectedFileType(null);

@@ -16,18 +16,19 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from PyEngine.core.model_manager import (
-    ensure_model,
+    MODEL_REGISTRY,
     get_session,
     get_cached_result,
     store_result,
 )
+from PyEngine.core.security import validate_path, validate_output_path
 
 # Max parallel frame workers.  4 is a safe default; GPU sessions are
 # serialised internally by ONNX Runtime so >1 only helps CPU-bound
@@ -45,9 +46,9 @@ class EnhancerWorker:
     Parameters
     ----------
     input_path : str
-        Source file path (validated externally).
+        Source file path (validated here).
     output_path : str
-        Destination path (validated externally).
+        Destination path (validated here; its directory must exist).
     model_name : str
         ONNX model key from MODEL_REGISTRY.
     tile_size : int
@@ -72,8 +73,8 @@ class EnhancerWorker:
         use_gpu: bool = False,
         selected_gpu: str = "",
     ):
-        self.input_path = input_path
-        self.output_path = output_path
+        self.input_path = validate_path(input_path, "input_path")
+        self.output_path = validate_output_path(output_path, "output_path")
         self.model_name = model_name
         self.tile_size = max(64, min(tile_size, 512))
         self.use_gpu = use_gpu
@@ -86,6 +87,8 @@ class EnhancerWorker:
         self.on_progress = None
         self.on_finished = None
         self._last_pct = 0
+        self._geometry_lock = threading.Lock()
+        self._model_geometry = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -153,55 +156,35 @@ class EnhancerWorker:
             output = cv2.resize(output, (expected_w, expected_h), interpolation=cv2.INTER_LANCZOS4)
         return output
 
-    @staticmethod
-    def _probe_model_input_size(model_path: str, input_name: str) -> tuple[int, int]:
-        """Probe the model by trying common sizes to find the actual fixed input dimensions."""
-        import onnxruntime as ort
-        candidates = [64, 128, 192, 256, 512]
-        for size in candidates:
-            dummy = np.random.rand(1, 3, size, size).astype(np.float32)
-            sess = None
-            try:
-                sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-                sess.run(None, {input_name: dummy})
-                return size, size
-            except Exception:
-                continue
-            finally:
-                del dummy
-                if sess is not None:
-                    del sess
-        return 0, 0
-
     def _enhance_image(self, img: np.ndarray) -> np.ndarray:
-        from PyEngine.core.model_manager import get_model_path
         session = self._get_session()
-        input_meta = session.get_inputs()[0]
-        input_name = input_meta.name
-        in_shape = input_meta.shape
-
-        model_input_h = 0
-        model_input_w = 0
-        out_scale = 4
-        try:
-            out_shape = session.get_outputs()[0].shape
-            if (len(in_shape) >= 4
-                    and isinstance(in_shape[2], int) and isinstance(in_shape[3], int)
-                    and isinstance(out_shape[2], int) and isinstance(out_shape[3], int)):
-                model_input_h = in_shape[2]
-                model_input_w = in_shape[3]
-                out_scale = out_shape[2] // in_shape[2]
-            else:
-                model_path = str(get_model_path(self.model_name))
-                model_input_h, model_input_w = self._probe_model_input_size(model_path, input_name)
-                if model_input_h > 0:
-                    dummy = np.random.rand(1, 3, model_input_h, model_input_w).astype(np.float32)
-                    result = session.run(None, {input_name: dummy})[0]
-                    out_scale = result.shape[2] // model_input_h
-                    del dummy, result
-                    gc.collect()
-        except Exception:
-            out_scale = 4
+        with self._geometry_lock:
+            if self._model_geometry is None or self._model_geometry[0] is not session:
+                input_meta = session.get_inputs()[0]
+                # onnxruntime reports unknown dimensions as strings and can
+                # omit the shape entirely; neither may abort the job.
+                in_shape = input_meta.shape or []
+                default_scale = MODEL_REGISTRY.get(self.model_name, {}).get("scale", 4)
+                model_input_h = model_input_w = 0
+                out_scale = default_scale
+                try:
+                    if (len(in_shape) >= 4
+                            and isinstance(in_shape[2], int) and in_shape[2] > 0
+                            and isinstance(in_shape[3], int) and in_shape[3] > 0):
+                        model_input_h, model_input_w = in_shape[2:4]
+                        out_shape = session.get_outputs()[0].shape or []
+                        if (len(out_shape) >= 4
+                                and isinstance(out_shape[2], int) and out_shape[2] > 0):
+                            out_scale = max(1, out_shape[2] // model_input_h)
+                except Exception:
+                    # Probing is an optimisation: a runtime that refuses to
+                    # describe its graph falls back to the registered scale.
+                    out_scale = default_scale
+                # Symbolic input dimensions accept the tile directly; probing
+                # them adds a full inference and can incorrectly force resizing.
+                self._model_geometry = (session, input_meta.name, model_input_h,
+                                        model_input_w, out_scale)
+            _, input_name, model_input_h, model_input_w, out_scale = self._model_geometry
 
         h, w = img.shape[:2]
         tile = self.tile_size
@@ -261,7 +244,8 @@ class EnhancerWorker:
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir=os.path.dirname(self.output_path) or ".")
         os.close(tmp_fd)
         try:
-            cv2.imwrite(tmp_path, result)
+            if not cv2.imwrite(tmp_path, result):
+                raise EnhancerError(f"Cannot write enhanced photo: {tmp_path}")
             os.replace(tmp_path, self.output_path)
         except Exception:
             p = Path(tmp_path)
@@ -378,7 +362,12 @@ class EnhancerWorker:
         self._check_cancelled()
         self._emit_progress(5)
 
-        with tempfile.TemporaryDirectory(prefix=".enhance_") as tmpdir:
+        os.makedirs(os.path.dirname(self.output_path) or ".", exist_ok=True)
+        # Frames are staged beside the output file, not in the system temp
+        # directory: every frame of a long or 4K video at once would fill a
+        # tmpfs, which is RAM.
+        with tempfile.TemporaryDirectory(prefix=".enhance-",
+                                         dir=os.path.dirname(self.output_path) or ".") as tmpdir:
             frame_paths = self._extract_frames(tmpdir)
             total = len(frame_paths)
             if total == 0:
@@ -395,27 +384,38 @@ class EnhancerWorker:
             completed = 0
 
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = []
-                for i, fp in enumerate(frame_paths):
-                    out = os.path.join(enhanced_dir, f"enhanced_{i:06d}.png")
-                    futures.append(pool.submit(self._process_frame, fp, out))
-                del frame_paths
-                gc.collect()
+                frames = iter(enumerate(frame_paths))
+                pending = set()
 
-                for future in as_completed(futures):
-                    if not self._is_running:
-                        pool.shutdown(wait=False, cancel_futures=True)
-                        raise RuntimeError(f"{self.operation} was cancelled")
-                    exc = future.exception()
-                    if exc is not None:
-                        pool.shutdown(wait=False, cancel_futures=True)
-                        raise exc
-                    completed += 1
-                    pct = 20 + int(completed / total * 65)
-                    if pct > self._last_pct:
-                        self._last_pct = pct
-                        self._emit_progress(pct)
-                futures.clear()
+                def submit_next():
+                    self._check_cancelled()
+                    item = next(frames, None)
+                    if item is None:
+                        return False
+                    i, fp = item
+                    out = os.path.join(enhanced_dir, f"enhanced_{i:06d}.png")
+                    pending.add(pool.submit(self._process_frame, fp, out))
+                    return True
+
+                try:
+                    for _ in range(max_workers * 2):
+                        if not submit_next():
+                            break
+                    while pending:
+                        self._check_cancelled()
+                        done, pending = wait(pending, timeout=0.1,
+                                             return_when=FIRST_COMPLETED)
+                        for future in done:
+                            future.result()
+                            completed += 1
+                            pct = 20 + int(completed / total * 65)
+                            if pct > self._last_pct:
+                                self._last_pct = pct
+                                self._emit_progress(pct)
+                            submit_next()
+                finally:
+                    for future in pending:
+                        future.cancel()
 
             self._check_cancelled()
             self._emit_progress(90)
@@ -464,8 +464,14 @@ class EnhancerWorker:
             with tempfile.TemporaryDirectory(prefix=".enhance-", dir=Path(destination).parent) as folder:
                 candidate = Path(folder) / Path(destination).name
                 if cached:
-                    shutil.copyfile(cached, candidate)
-                else:
+                    # The entry can be evicted between lookup and copy; a
+                    # vanished cache file must fall through to processing
+                    # instead of failing the job.
+                    try:
+                        shutil.copyfile(cached, candidate)
+                    except OSError:
+                        cached = None
+                if not cached:
                     self.output_path = str(candidate)
                     try:
                         self._perform()
@@ -476,14 +482,16 @@ class EnhancerWorker:
                     raise EnhancerError("Enhancement produced no output")
                 os.replace(candidate, destination)
             if not cached:
-                # Cache availability must not turn a completed job into failure.
+                # Cache bookkeeping runs after the write succeeded: it must
+                # never turn a completed job into a failure.
                 try:
                     store_result(
                         self.input_path, self.output_path,
                         self.model_name, self.tile_size,
                     )
-                except OSError:
-                    pass
+                except Exception as exc:
+                    print(f"[enhance] result cache update skipped: {exc}",
+                          file=sys.stderr, flush=True)
             if self.on_progress:
                 self.on_progress(100)
             result = (True, "Enhanced (cached)" if cached else "", self.output_path)

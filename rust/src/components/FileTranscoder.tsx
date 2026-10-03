@@ -28,7 +28,7 @@ interface Props {
     fileType: "video" | "photo" | "audio",
     targetBytes: number | null,
     mode: TranscoderMode,
-  ) => void;
+  ) => void | Promise<void>;
   disabled: boolean;
 }
 
@@ -54,6 +54,7 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
   const targetBytes = Math.floor(Number(targetSize) * { KB: 1_000, MB: 1_000_000, GB: 1_000_000_000 }[targetUnit]);
   const validTarget = Number.isSafeInteger(targetBytes) && targetBytes > 0 && targetBytes <= 10_000_000_000;
   const [isDragOver, setIsDragOver] = useState(false);
+  const [fileError, setFileError] = useState("");
   const dropRef = useRef<HTMLDivElement>(null);
   const detectGeneration = useRef(0);
 
@@ -80,6 +81,7 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
 
   useEffect(() => {
     if (!filePath) return;
+    setFileError("");
     setDetectedFileType(null);
     let cancelled = false;
     const generation = ++detectGeneration.current;
@@ -129,21 +131,28 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
     return `${base}${suffix}${ext}`;
   }, [filePath, mode, detectedFileType]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!filePath || !detectedFileType) return;
     if (mode === "reduce" && !validTarget) return;
+    setFileError("");
 
     const targetBytesVal = mode === "reduce" ? targetBytes : null;
     console.log(`[transcoder] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => mode=${mode}${mode === "compress" ? `, quality=${quality}%` : `, max ${targetSize} ${targetUnit}`}`);
 
-    onAdd(
-      filePath,
-      getOutputPath(),
-      quality,
-      detectedFileType,
-      targetBytesVal,
-      mode,
-    );
+    try {
+      await onAdd(
+        filePath,
+        getOutputPath(),
+        quality,
+        detectedFileType,
+        targetBytesVal,
+        mode,
+      );
+    } catch (error) {
+      // Nothing was queued: keep the selected file so the user can retry.
+      setFileError(error instanceof Error ? error.message : String(error));
+      return;
+    }
 
     setFilePath(null);
     setDetectedFileType(null);
@@ -168,6 +177,7 @@ export default function FileTranscoder({ onAdd, disabled }: Props) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
     >
+      {fileError && <p role="alert" className="text-xs text-red-400">{fileError}</p>}
       <motion.div
         ref={dropRef}
         onClick={!disabled ? handleBrowse : undefined}

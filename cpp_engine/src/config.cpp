@@ -99,8 +99,8 @@ std::string find_binary(const std::string& name) {
     }
 #endif
 
-    char buf[4096] = {0};
 #ifdef _WIN32
+    char buf[4096] = {0};
     DWORD len = SearchPathA(nullptr, exe_name.c_str(), nullptr, sizeof(buf), buf, nullptr);
     if (len > 0 && len < sizeof(buf)) {
         return std::string(buf);

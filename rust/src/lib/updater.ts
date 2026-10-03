@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { version } from "../../package.json";
+import { readStorage, removeStorage, writeStorage } from "./storage";
 
 export type UpdateStatus =
   | "idle" | "checking" | "update_available" | "up_to_date"
@@ -40,22 +41,14 @@ export interface DownloadProgressEvent {
 }
 
 function loadInstalledFlag(): boolean {
-  try {
-    // The marker belongs to the app version that installed the update. A new
-    // version must be able to check again after the application restarts.
-    return typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === version;
-  } catch {
-    return false;
-  }
+  // The marker belongs to the app version that installed the update. A new
+  // version must be able to check again after the application restarts.
+  return readStorage(STORAGE_KEY) === version;
 }
 
 function saveInstalledFlag(value: boolean) {
-  try {
-    if (typeof localStorage !== "undefined") {
-      if (value) localStorage.setItem(STORAGE_KEY, state.currentVersion);
-      else localStorage.removeItem(STORAGE_KEY);
-    }
-  } catch {}
+  if (value) writeStorage(STORAGE_KEY, state.currentVersion);
+  else removeStorage(STORAGE_KEY);
 }
 
 function setState(patch: Partial<UpdateState>) {
@@ -115,7 +108,6 @@ export async function loadAppVersion() {
 
 export async function checkForUpdate() {
   if (isUpdateBusy(state.status) || state.downloaded) return;
-  if (state.status === "up_to_date") return;
   setState({
     status: "checking", version: null, notes: null, error: null,
     failedAction: null, downloadedBytes: 0, totalBytes: null,
@@ -158,6 +150,7 @@ export async function downloadAndInstallUpdate() {
           const total = event.data.contentLength || null;
           downloadAccumulated = 0;
           setState({ downloadedBytes: 0, totalBytes: total });
+          progressListeners.forEach((l) => l({ phase: "download", downloadedBytes: 0, totalBytes: total }));
           break;
         }
         case "Progress": {
@@ -168,9 +161,13 @@ export async function downloadAndInstallUpdate() {
           progressListeners.forEach((l) => l({ phase: "download", downloadedBytes: current, totalBytes: total }));
           break;
         }
-        case "Finished":
-          setState({ status: "installing", downloadedBytes: state.totalBytes ?? 0 });
+        case "Finished": {
+          const total = state.totalBytes;
+          const done = total ?? downloadAccumulated;
+          setState({ status: "installing", downloadedBytes: done });
+          progressListeners.forEach((l) => l({ phase: "install", downloadedBytes: done, totalBytes: total }));
           break;
+        }
       }
     }, { timeout: 600_000 });
     setState({ downloaded: true, status: "idle" });

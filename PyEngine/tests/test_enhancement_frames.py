@@ -11,6 +11,26 @@ HAS_RUNTIME = all(importlib.util.find_spec(name) for name in ("cv2", "numpy"))
 
 @unittest.skipUnless(HAS_RUNTIME, "Optional image inference runtime is not installed")
 class EnhancementFrameTests(unittest.TestCase):
+    def test_dynamic_geometry_reuses_metadata_without_probe_inference(self):
+        import numpy as np
+        from unittest.mock import Mock
+        from PyEngine.workers.enhancer import EnhancerWorker
+
+        session = Mock()
+        session.get_inputs.return_value = [
+            SimpleNamespace(name="image", shape=[1, 3, "height", "width"])]
+        session.run.side_effect = lambda _, inputs: [
+            inputs["image"].repeat(2, axis=2).repeat(2, axis=3)]
+        worker = EnhancerWorker("in.png", "out.png", model_name="realesrgan-x2plus")
+        image = np.full((8, 9, 3), 120, np.uint8)
+        with patch.object(worker, "_get_session", return_value=session):
+            for _ in range(3):
+                output = worker._enhance_image(image)
+                self.assertEqual(output.shape, (16, 18, 3))
+                self.assertTrue(np.all(output == 120))
+        session.get_inputs.assert_called_once()
+        self.assertEqual(session.run.call_count, 3)
+
     def test_video_frames_use_fixed_model_geometry_and_registered_scale(self):
         import cv2
         import numpy as np

@@ -21,7 +21,7 @@ interface Props {
     outputPath: string,
     format: string,
     devMode: boolean,
-  ) => void;
+  ) => void | Promise<void>;
   disabled: boolean;
 }
 
@@ -56,6 +56,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
   const [selectedFormat, setSelectedFormat] = useState("");
   const [devMode, setDevMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [fileError, setFileError] = useState("");
   const dropRef = useRef<HTMLDivElement>(null);
   const detectGeneration = useRef(0);
 
@@ -87,6 +88,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
 
   useEffect(() => {
     if (!filePath) return;
+    setFileError("");
     let cancelled = false;
     const generation = ++detectGeneration.current;
     console.log(`[converter] Detecting file type...`);
@@ -154,18 +156,23 @@ export default function FileConverter({ onAdd, disabled }: Props) {
     return outputPath;
   }, [filePath, selectedFormat]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!filePath) return;
     if (!selectedFormat) return;
+    setFileError("");
 
     console.log(`[converter] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${selectedFormat.toUpperCase()}`);
 
-    onAdd(
-      filePath,
-      getOutputPath(),
-      selectedFormat,
-      devMode,
-    );
+    const outputPath = getOutputPath();
+    try {
+      await onAdd(filePath, outputPath, selectedFormat, devMode);
+    } catch (error) {
+      // The queue never received the job: keep the form and release the
+      // reserved output name so a retry does not gain a `_2` suffix.
+      usedOutputPaths.current.delete(outputPath);
+      setFileError(error instanceof Error ? error.message : String(error));
+      return;
+    }
 
     setFilePath(null);
     setSelectedFormat("");
@@ -207,6 +214,7 @@ export default function FileConverter({ onAdd, disabled }: Props) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
     >
+      {fileError && <p role="alert" className="text-xs text-red-400">{fileError}</p>}
       {/* File Drop */}
       <motion.div
         ref={dropRef}

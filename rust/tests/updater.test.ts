@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
+import type { DownloadProgressEvent } from "../src/lib/updater";
+import { version } from "../package.json";
 
 const mocks = vi.hoisted(() => ({ check: vi.fn(), relaunch: vi.fn(), isTauri: vi.fn(), getVersion: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: mocks.check }));
@@ -44,7 +46,9 @@ describe("updater lifecycle", () => {
   });
 
   it("keeps a pending restart across a reload of the same version", async () => {
-    localStorage.setItem("converter-update-installed", "3.0.0");
+    // The marker must match the app version from package.json, exactly like
+    // loadInstalledFlag() compares it; hard-coding the number breaks on bumps.
+    localStorage.setItem("converter-update-installed", version);
     const store = await import("../src/lib/updater");
     await store.checkForUpdate();
     expect(store.getUpdaterState().downloaded).toBe(true);
@@ -79,15 +83,15 @@ describe("updater lifecycle", () => {
     expect(store.getUpdaterState().status).toBe("up_to_date");
   });
 
-  it("returns early on up_to_date without re-checking", async () => {
-    mocks.check.mockResolvedValue(null);
+  it("finds a newly published update after an earlier up-to-date check", async () => {
+    mocks.check.mockResolvedValueOnce(null).mockResolvedValueOnce(update());
     const store = await import("../src/lib/updater");
     await store.checkForUpdate();
     expect(store.getUpdaterState().status).toBe("up_to_date");
     expect(mocks.check).toHaveBeenCalledTimes(1);
     await store.checkForUpdate();
-    expect(mocks.check).toHaveBeenCalledTimes(1);
-    expect(store.getUpdaterState().status).toBe("up_to_date");
+    expect(mocks.check).toHaveBeenCalledTimes(2);
+    expect(store.getUpdaterState().status).toBe("update_available");
   });
 
   it("keeps the checked update and progress across subscriptions", async () => {
@@ -207,12 +211,26 @@ describe("updater lifecycle", () => {
     expect(mocks.relaunch).not.toHaveBeenCalled();
   });
 
-  it("exports subscribeToDownloadProgress", async () => {
+  it("publishes download and install phases to progress subscribers", async () => {
+    const available = update();
+    mocks.check.mockResolvedValue(available);
+    available.downloadAndInstall.mockImplementation(async (progress: (event: DownloadEvent) => void) => {
+      progress({ event: "Started", data: { contentLength: 100 } });
+      progress({ event: "Progress", data: { chunkLength: 40 } });
+      progress({ event: "Finished" });
+    });
     const store = await import("../src/lib/updater");
-    expect(typeof store.subscribeToDownloadProgress).toBe("function");
-    const unsubscribe = store.subscribeToDownloadProgress(vi.fn());
-    expect(typeof unsubscribe).toBe("function");
+    const events: DownloadProgressEvent[] = [];
+    const unsubscribe = store.subscribeToDownloadProgress((event) => events.push(event));
+    await store.checkForUpdate();
+    await store.downloadAndInstallUpdate();
     unsubscribe();
+    expect(available.downloadAndInstall).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.phase)).toEqual(["download", "download", "install"]);
+    expect(events[0]).toEqual({ phase: "download", downloadedBytes: 0, totalBytes: 100 });
+    expect(events[1]).toEqual({ phase: "download", downloadedBytes: 40, totalBytes: 100 });
+    expect(events[2]).toEqual({ phase: "install", downloadedBytes: 100, totalBytes: 100 });
+    expect(store.getUpdaterState().status).toBe("restarting");
   });
 
   it("checkForUpdate can be called multiple times without side effects", async () => {
@@ -221,6 +239,33 @@ describe("updater lifecycle", () => {
     await store.checkForUpdate();
     expect(store.getUpdaterState().status).toBe("up_to_date");
     await store.checkForUpdate();
-    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.check).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves downloaded bytes when the server omits content length", async () => {
+    const available = update();
+    mocks.check.mockResolvedValue(available);
+    available.downloadAndInstall.mockImplementation(async (progress: (event: DownloadEvent) => void) => {
+      progress({ event: "Started", data: {} });
+      progress({ event: "Progress", data: { chunkLength: 123 } });
+      progress({ event: "Finished" });
+      expect(store.getUpdaterState().downloadedBytes).toBe(123);
+    });
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    await store.downloadAndInstallUpdate();
+    // The guard must not short-circuit the download, and the assertion above
+    // only runs when the progress callback is actually invoked.
+    expect(available.downloadAndInstall).toHaveBeenCalledOnce();
+    expect(store.getUpdaterState().downloadedBytes).toBe(123);
+  });
+
+  it("allows a new check after a network failure", async () => {
+    mocks.check.mockRejectedValueOnce(new Error("network failure")).mockResolvedValueOnce(update());
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState()).toMatchObject({ status: "error", failedAction: "check" });
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().status).toBe("update_available");
   });
 });

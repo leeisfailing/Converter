@@ -4,6 +4,9 @@ A desktop app for downloading, converting, compressing, and enhancing media.
 Built with React, TypeScript, Tauri, Rust, and C++/Python media engines powered
 by FFmpeg, yt-dlp, and ONNX Runtime.
 
+> **Current release: v4.0.8** — Windows (installer + portable). Linux
+> production packaging is coming soon.
+
 ## Features
 
 | Tool | What it does |
@@ -27,8 +30,14 @@ availability depends on that service. Other supported sites use yt-dlp.
 
 | Platform | Run from source | Production build |
 | --- | --- | --- |
-| Windows x64 | Supported | Existing installer and portable build workflows |
-| Linux with glibc | x86_64 and aarch64 runtime setup | App executable; installer generation disabled |
+| Windows x64 | Supported | **Installer (NSIS) and portable zip** — the shipping formats |
+| Linux with glibc | x86_64 and aarch64 runtime setup | **Coming soon** (app executable only for now) |
+
+Windows is the primary release platform: each release publishes a signed NSIS
+installer and a self-contained portable zip (no install step, just unzip and run)
+via the [release workflow](.github/workflows/release.yml). Linux production
+packaging (AppImage, deb/rpm, and installer) is planned but not yet built; today
+Linux is supported for running from source and building the app executable.
 
 Linux has been tested locally on Arch Linux x86_64 with NVIDIA hardware,
 including conversion, reduction, upscaling, AI enhancement, and clean shutdown.
@@ -114,7 +123,8 @@ npm run build:linux
 
 The default output is `rust/src-tauri/target/release/converter`. If
 `CARGO_TARGET_DIR` is set, the executable is written under that directory instead.
-The Linux build produces no installer, AppImage, DEB, or RPM.
+The Linux build produces no installer, AppImage, DEB, or RPM — Linux production
+packaging is coming soon.
 
 Keep the source checkout, prepared runtime, FFmpeg, and WebKitGTK dependencies
 available when running this executable. It is not a standalone portable bundle.
@@ -160,18 +170,25 @@ or pip.
 
 ### Build
 
-After setup, run the desired command from `rust/`:
+These are the two shipping Windows artifacts. After setup, run the desired
+command from `rust/`:
 
 ```powershell
-# Windows NSIS installer
+# Windows NSIS installer (signed, auto-update capable)
 npm run build:installer
 
-# Windows portable distribution
+# Windows portable zip (no install step — unzip and run)
 npm run build:portable
 ```
 
 Installer output is under `rust/src-tauri/target/release/bundle/`. The portable
 build creates `rust/dist/portable/` and `rust/dist/Converter-portable.zip`.
+
+Both require a **Windows host with the MSVC toolchain and NSIS** — Tauri cannot
+cross-compile a Windows installer from Linux/macOS. In this repository the
+Windows artifacts are produced on Windows runners by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) (see
+[Updates and Windows releases](#updates-and-windows-releases)).
 
 ## Troubleshooting
 

@@ -1,6 +1,7 @@
 """GPU hardware encoder detection via ffmpeg."""
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Optional
 
@@ -124,8 +125,14 @@ def detect_gpu() -> dict:
         all_encoders: list - all working encoders [{"id", "vendor", "label"}]
     """
     print(f"[gpu] Running GPU detection...", file=sys.stderr, flush=True)
-    compiled = _probe_ffmpeg_encoders()
-    gpus = _get_system_gpu_names()
+    # These independent inventories can be slow (especially PowerShell on
+    # Windows). Overlap them, but keep actual GPU encode tests sequential so
+    # detection does not contend for hardware sessions or driver resources.
+    with ThreadPoolExecutor(max_workers=2) as inventory:
+        compiled_future = inventory.submit(_probe_ffmpeg_encoders)
+        names_future = inventory.submit(_get_system_gpu_names)
+        compiled = compiled_future.result()
+        gpus = names_future.result()
 
     # Find all working hardware encoders
     available = []

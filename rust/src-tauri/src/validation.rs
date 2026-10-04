@@ -1,7 +1,11 @@
-use std::path::Path;
+use std::net::Ipv4Addr;
+use std::path::{Component, Path};
 
 pub const MAX_PATH_LENGTH: usize = 2048;
 pub const MAX_URL_LENGTH: usize = 2048;
+
+/// Hostnames that are never a valid URL target (compared against domain hosts).
+const BLOCKED_HOSTNAMES: [&str; 4] = ["localhost", "0.0.0.0", "::1", "169.254.169.254"];
 
 pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String> {
     validate_no_null_bytes(path_str, field_name)?;
@@ -11,7 +15,12 @@ pub fn validate_path(path_str: &str, field_name: &str) -> Result<String, String>
     if path_str.trim().is_empty() {
         return Err(format!("{} cannot be empty", field_name));
     }
-    if path_str.contains("..") {
+    // Reject actual `..` components only, so file names like `clip..mp4`
+    // stay valid while `dir/../file` and `../file` are still refused.
+    if Path::new(path_str)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
         return Err(format!("{} contains invalid path traversal", field_name));
     }
     Ok(path_str.to_string())
@@ -58,31 +67,64 @@ pub fn validate_url(url: &str) -> Result<String, String> {
     if scheme != "http" && scheme != "https" {
         return Err(format!("URL scheme must be http or https, got: {}", scheme));
     }
-    let host_str = parsed
-        .host_str()
+    // `host()` is required here: `host_str()` returns IPv6 addresses with
+    // brackets (`[::1]`), which matches neither the name list nor `Ipv6Addr`.
+    let host = parsed
+        .host()
         .ok_or_else(|| "URL must have a valid hostname".to_string())?;
-    let blocked_hosts = ["localhost", "0.0.0.0", "::1", "169.254.169.254"];
-    if blocked_hosts.contains(&host_str) {
-        return Err(format!("URL hostname is not allowed: {}", host_str));
-    }
-    if let Ok(ip) = host_str.parse::<std::net::Ipv4Addr>() {
-        if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
-            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+    let host_str = parsed.host_str().unwrap_or_default().to_string();
+    match host {
+        url::Host::Domain(domain) => {
+            if BLOCKED_HOSTNAMES
+                .iter()
+                .any(|&blocked| domain.eq_ignore_ascii_case(blocked))
+            {
+                return Err(format!("URL hostname is not allowed: {}", host_str));
+            }
         }
-        if ip.octets()[0] == 0 {
-            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+        url::Host::Ipv4(ip) => {
+            if let Some(reason) = blocked_ipv4_reason(&ip) {
+                return Err(format!("URL hostname resolves to a {}: {}", reason, host_str));
+            }
         }
-        // RFC 2544 benchmarking network: 198.18.0.0/15.
-        if matches!(ip.octets(), [198, 18 | 19, _, _]) {
-            return Err(format!("URL hostname resolves to a benchmark/reserved IP: {}", host_str));
-        }
-    }
-    if let Ok(ip) = host_str.parse::<std::net::Ipv6Addr>() {
-        if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
-            return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+        // `Host::Ipv6` carries an unbracketed `Ipv6Addr`, unlike `host_str()`.
+        url::Host::Ipv6(ip) => {
+            // IPv4-mapped (`::ffff:a.b.c.d`) and IPv4-compatible (`::a.b.c.d`)
+            // forms embed an IPv4 address that must face the same rules.
+            if let Some(embedded) = ip.to_ipv4_mapped().or_else(|| ip.to_ipv4()) {
+                if let Some(reason) = blocked_ipv4_reason(&embedded) {
+                    return Err(format!("URL hostname resolves to a {}: {}", reason, host_str));
+                }
+            }
+            if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
+                return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+            }
+            // Unique-local addresses: fc00::/7.
+            if ip.segments()[0] & 0xfe00 == 0xfc00 {
+                return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+            }
+            // Link-local addresses: fe80::/10.
+            if ip.segments()[0] & 0xffc0 == 0xfe80 {
+                return Err(format!("URL hostname resolves to a private/reserved IP: {}", host_str));
+            }
         }
     }
     Ok(url.to_string())
+}
+
+/// Why an IPv4 address must not be contacted, if any.
+fn blocked_ipv4_reason(ip: &Ipv4Addr) -> Option<&'static str> {
+    if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
+        return Some("private/reserved IP");
+    }
+    if ip.octets()[0] == 0 {
+        return Some("private/reserved IP");
+    }
+    // RFC 2544 benchmarking network: 198.18.0.0/15.
+    if matches!(ip.octets(), [198, 18 | 19, _, _]) {
+        return Some("benchmark/reserved IP");
+    }
+    None
 }
 
 pub fn validate_output_dir(dir_str: &str) -> Result<String, String> {
@@ -186,4 +228,85 @@ pub fn validate_ffmpeg_override(override_str: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_url_rejects_ipv6_loopback() {
+        // `host_str()` yields the bracketed form, which never matched the
+        // literal "::1" nor `Ipv6Addr::parse`; `host()` yields V6 directly.
+        let err = validate_url("http://[::1]/").unwrap_err();
+        assert!(err.contains("private/reserved"), "unexpected error: {err}");
+        assert!(validate_url("http://[::1]:8080/admin").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_ipv4_mapped_ipv6_metadata_address() {
+        let err = validate_url("http://[::ffff:169.254.169.254]/latest/meta-data/").unwrap_err();
+        assert!(err.contains("private/reserved"), "unexpected error: {err}");
+        assert!(validate_url("http://[::ffff:127.0.0.1]/").is_err());
+        assert!(validate_url("http://[::169.254.169.254]/").is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_unique_local_and_link_local_ipv6() {
+        assert!(validate_url("http://[fc00::1]/").is_err());
+        assert!(validate_url("http://[fd12:3456:789a::1]/").is_err());
+        assert!(validate_url("http://[fe80::1]/").is_err());
+    }
+
+    #[test]
+    fn validate_url_still_rejects_ipv4_and_named_hosts() {
+        assert!(validate_url("http://127.0.0.1/").is_err());
+        assert!(validate_url("http://0.0.0.0/").is_err());
+        assert!(validate_url("http://10.0.0.1/").is_err());
+        assert!(validate_url("http://169.254.169.254/").is_err());
+        assert!(validate_url("http://198.18.0.1/").is_err());
+        assert!(validate_url("http://localhost/").is_err());
+        assert!(validate_url("http://example.test/").is_ok());
+    }
+
+    #[test]
+    fn validate_url_rejects_non_http_schemes() {
+        assert!(validate_url("file:///etc/passwd").is_err());
+        assert!(validate_url("ftp://example.com/").is_err());
+    }
+
+    #[test]
+    fn validate_url_accepts_public_https_url() {
+        let url = "https://example.com/watch?v=abc123";
+        assert_eq!(validate_url(url).unwrap(), url);
+    }
+
+    #[test]
+    fn validate_path_allows_dots_inside_a_file_name() {
+        assert_eq!(validate_path("clip..mp4", "path").unwrap(), "clip..mp4");
+        assert_eq!(validate_path("./clip.mp4", "path").unwrap(), "./clip.mp4");
+        assert!(validate_path("dir/.../clip.mp4", "path").is_ok());
+    }
+
+    #[test]
+    fn validate_path_rejects_parent_components() {
+        assert!(validate_path("../clip.mp4", "path")
+            .unwrap_err()
+            .contains("traversal"));
+        assert!(validate_path("dir/../clip.mp4", "path").is_err());
+        assert!(validate_path("dir/..", "path").is_err());
+        assert!(validate_path("..", "path").is_err());
+        // Backslash is a separator only on Windows; elsewhere `dir\..\clip`
+        // is a single, non-traversal component.
+        assert_eq!(validate_path("dir\\..\\clip.mp4", "path").is_ok(), !cfg!(windows));
+    }
+
+    #[test]
+    fn validate_path_keeps_null_byte_empty_and_length_checks() {
+        assert!(validate_path("bad\0name", "path").is_err());
+        assert!(validate_path("   ", "path").unwrap_err().contains("empty"));
+        assert!(validate_path(&"a".repeat(MAX_PATH_LENGTH + 1), "path").is_err());
+    }
 }

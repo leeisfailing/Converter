@@ -26,6 +26,10 @@ jobs:
       name: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Do not persist GITHUB_TOKEN in .git/config: later steps run
+          # `npm ci` / `cargo test`, and tauri-action reads GITHUB_TOKEN from env.
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
@@ -84,7 +88,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
-          updaterJsonPreferNsis: false
+          updaterJsonPreferNsis: true
           args: --bundles nsis,msi -- --locked
       - name: Verify release assets
         id: verify
@@ -102,7 +106,10 @@ jobs:
           $headers.Accept = 'application/octet-stream'
           $manifestPath = Join-Path $env:RUNNER_TEMP 'latest.json'
           Invoke-WebRequest -Uri $manifest.url -Headers $headers -OutFile $manifestPath
-          $null = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          $assetsPath = Join-Path $env:RUNNER_TEMP 'release-assets.json'
+          $release | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $assetsPath -Encoding utf8
+          node rust/scripts/validate-update-manifest.mjs $manifestPath $assetsPath
+          if ($LASTEXITCODE -ne 0) { throw "Updater manifest validation failed." }
           "manifest-path=$manifestPath" >> $env:GITHUB_OUTPUT
           "release-draft=$($release.draft.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           Write-Host "Release assets verified: $($release.assets.name -join ', ')"

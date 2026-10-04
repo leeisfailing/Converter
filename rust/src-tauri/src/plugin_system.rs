@@ -110,6 +110,17 @@ unsafe impl Sync for PluginVtable {}
 
 // ── Plugin registry ────────────────────────────────────────────────────────
 
+/// Shared-library extension used for plugins on this platform.
+fn plugin_extension() -> &'static str {
+    if cfg!(windows) {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    }
+}
+
 pub struct PluginRegistry {
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
 }
@@ -271,13 +282,7 @@ impl PluginRegistry {
             return results;
         }
 
-        let ext = if cfg!(windows) {
-            "dll"
-        } else if cfg!(target_os = "macos") {
-            "dylib"
-        } else {
-            "so"
-        };
+        let ext = plugin_extension();
 
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -351,7 +356,7 @@ impl PluginRegistry {
 
     /// Unload a plugin (calls its shutdown function if present).
     pub fn unload(&self, plugin_name: &str) -> Result<(), String> {
-        let mut plugins = self.plugins.write().unwrap();
+        let mut plugins = self.plugins.write().map_err(|e| e.to_string())?;
         let plugin = plugins
             .remove(plugin_name)
             .ok_or_else(|| format!("Plugin '{plugin_name}' not loaded"))?;
@@ -367,28 +372,70 @@ impl PluginRegistry {
     }
 
     /// List all loaded plugins.
-    pub fn list(&self) -> Vec<PluginInfo> {
-        self.plugins
+    pub fn list(&self) -> Result<Vec<PluginInfo>, String> {
+        Ok(self
+            .plugins
             .read()
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .values()
             .map(|p| p.info.clone())
-            .collect()
+            .collect())
     }
 }
 
 // ── Tauri command bindings ─────────────────────────────────────────────────
 
-use tauri::command;
+use tauri::{command, Manager};
 
 #[command]
 pub async fn plugin_list() -> Result<Vec<PluginInfo>, String> {
-    Ok(PluginRegistry::global().list())
+    PluginRegistry::global().list()
+}
+
+/// Resolve `path` to a canonical shared library inside `plugin_dir`.
+///
+/// The command is reachable from the webview, so accepting an arbitrary path
+/// would let any renderer script dlopen `/tmp/x.so` and execute native code.
+/// The library must carry the platform's plugin extension and must
+/// canonicalize into the plugin directory (symlinks resolve before the
+/// containment check).
+fn resolve_plugin_path(plugin_dir: &Path, path: &str) -> Result<PathBuf, String> {
+    crate::validation::validate_path(path, "path")?;
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case(plugin_extension()) {
+        return Err(format!(
+            "Plugin path must use the .{} extension: {path}",
+            plugin_extension()
+        ));
+    }
+    let plugin_dir = plugin_dir
+        .canonicalize()
+        .map_err(|e| format!("Plugin directory is unavailable: {e}"))?;
+    let candidate = Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("Plugin file not found: {path} ({e})"))?;
+    if !candidate.starts_with(&plugin_dir) {
+        return Err(format!(
+            "Plugins can only be loaded from {}: {}",
+            plugin_dir.display(),
+            candidate.display()
+        ));
+    }
+    Ok(candidate)
 }
 
 #[command]
-pub async fn plugin_load(path: String) -> Result<PluginInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().load(Path::new(&path)))
+pub async fn plugin_load(app: tauri::AppHandle, path: String) -> Result<PluginInfo, String> {
+    let plugin_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Cannot resolve resource directory: {e}"))?
+        .join("PyEngine/plugins");
+    let path = resolve_plugin_path(&plugin_dir, &path)?;
+    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().load(&path))
         .await.map_err(|e| e.to_string())?
 }
 
@@ -405,8 +452,13 @@ pub async fn plugin_process(
     output: String,
     options: String,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || PluginRegistry::global().process(&name, &input, &output, &options, None))
-        .await.map_err(|e| e.to_string())?
+    let input = crate::validation::validate_file_exists(&input, "input")?;
+    let output = crate::validation::validate_output_path(&output, "output")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        PluginRegistry::global().process(&name, &input, &output, &options, None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -425,5 +477,50 @@ mod tests {
         let registry = PluginRegistry { plugins: RwLock::new(HashMap::new()) };
         assert!(registry.process("missing", "in", "out", "{}", None).unwrap_err().contains("not loaded"));
         assert!(registry.unload("missing").unwrap_err().contains("not loaded"));
+    }
+
+    #[test]
+    fn shared_libraries_inside_the_plugin_directory_resolve() {
+        let plugin_dir = tempfile::tempdir().unwrap();
+        let plugin = plugin_dir.path().join(format!("good.{}", plugin_extension()));
+        std::fs::write(&plugin, b"").unwrap();
+        let resolved = resolve_plugin_path(plugin_dir.path(), plugin.to_str().unwrap()).unwrap();
+        assert_eq!(resolved, plugin.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn shared_libraries_outside_the_plugin_directory_are_rejected() {
+        let plugin_dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let foreign = outside.path().join(format!("evil.{}", plugin_extension()));
+        std::fs::write(&foreign, b"").unwrap();
+        let err = resolve_plugin_path(plugin_dir.path(), foreign.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("only be loaded from"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn plugin_paths_need_the_shared_library_extension() {
+        let plugin_dir = tempfile::tempdir().unwrap();
+        let script = plugin_dir.path().join("evil.sh");
+        std::fs::write(&script, b"#!/bin/sh\n").unwrap();
+        let err = resolve_plugin_path(plugin_dir.path(), script.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("extension"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn plugin_paths_still_reject_parent_components_and_missing_files() {
+        let plugin_dir = tempfile::tempdir().unwrap();
+        let err = resolve_plugin_path(
+            plugin_dir.path(),
+            &format!("../escape.{}", plugin_extension()),
+        )
+        .unwrap_err();
+        assert!(err.contains("traversal"), "unexpected error: {err}");
+        let err = resolve_plugin_path(
+            plugin_dir.path(),
+            &format!("{}/missing.{}", plugin_dir.path().display(), plugin_extension()),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "unexpected error: {err}");
     }
 }

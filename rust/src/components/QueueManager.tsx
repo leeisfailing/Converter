@@ -74,7 +74,7 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
     return (
       <motion.div
         ref={ref}
-        layout
+        layout="position"
         initial="hidden"
         animate="visible"
         variants={staggerItem}
@@ -127,11 +127,19 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
           </div>
           {/* Progress bar for active item */}
           {item.status === "active" && (
-            <div className="mt-2 progress-track">
+            <div
+              className="mt-2 progress-track"
+              role="progressbar"
+              aria-label={`${item.label} progress`}
+              aria-valuenow={Math.round(item.progress)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <motion.div
                 className="progress-fill"
-                initial={{ width: 0 }}
-                animate={{ width: `${item.progress}%` }}
+                style={{ width: "100%", transformOrigin: "left" }}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: item.progress / 100 }}
                 transition={{ duration: 0.3 }}
               />
             </div>
@@ -169,12 +177,17 @@ QueueItemRow.displayName = "QueueItemRow";
 export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted }: Props) {
   const hasItems = items.length > 0;
 
-  const completedCount = useMemo(
-    () => items.filter((i) => i.status === "completed" || i.status === "failed" || i.status === "cancelled").length,
-    [items]
-  );
-  const activeItem = useMemo(() => items.find((i) => i.status === "active"), [items]);
-  const pendingCount = useMemo(() => items.filter((i) => i.status === "pending").length, [items]);
+  const { completedCount, activeCount, pendingCount } = useMemo(() => {
+    let completedCount = 0;
+    let activeCount = 0;
+    let pendingCount = 0;
+    for (const item of items) {
+      if (item.status === "active") activeCount++;
+      else if (item.status === "pending") pendingCount++;
+      else completedCount++;
+    }
+    return { completedCount, activeCount, pendingCount };
+  }, [items]);
 
   if (!hasItems) return null;
 
@@ -191,16 +204,16 @@ export default memo(function QueueManager({ items, onRemove, onCancel, onClearCo
           <span className="text-xs font-semibold text-app-text uppercase tracking-wider">
             Queue
           </span>
-          {activeItem && (
+          {activeCount > 0 && (
             <motion.span
               initial={{ scale: 0.8 }}
               animate={{ scale: 1 }}
               className="text-[10px] text-app-accent bg-app-accent-dim px-1.5 py-0.5 rounded"
             >
-              Processing 1 of {items.length}
+              Processing {activeCount} of {items.length}
             </motion.span>
           )}
-          {!activeItem && pendingCount > 0 && (
+          {activeCount === 0 && pendingCount > 0 && (
             <span className="text-[10px] text-app-text-muted">
               {pendingCount} pending
             </span>

@@ -10,7 +10,16 @@ static const size_t MAX_PATH_LENGTH = 2048;
 static const size_t MAX_STRING_LENGTH = 4096;
 static const long long MAX_FILE_SIZE = 10LL * 1024 * 1024 * 1024;
 static const std::regex DANGEROUS_COMMAND_CHARS(R"([;&|`$\\])");
+// `;`, `&`, `|`, backtick and `$` are shell metacharacters on every platform,
+// so they are rejected in paths everywhere. `%` and `^` are ordinary, legal
+// filename characters on POSIX (`100%_final.mp4`), but Windows probes run
+// through cmd.exe where `%VAR%` expands even inside quotes and an unquoted `^`
+// escapes the next character -- so those two are rejected on Windows only.
+#ifdef _WIN32
+static const std::regex DANGEROUS_PATH_CHARS(R"([;&|`$%^])");
+#else
 static const std::regex DANGEROUS_PATH_CHARS(R"([;&|`$])");
+#endif
 
 void validate_no_null_bytes(const std::string& value, const std::string& field_name) {
     if (value.find('\0') != std::string::npos) {

@@ -1,24 +1,10 @@
 #include "media.h"
 #include "config.h"
 #include "process_pipe.h"
-#include <sstream>
-#include <regex>
-#include <fstream>
+#include <algorithm>
 #include <unordered_set>
 
 namespace engine {
-
-static std::string exec_cmd(const std::string& cmd) {
-    std::string result;
-    FILE* pipe = open_process_pipe(cmd);
-    if (!pipe) return result;
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), pipe)) {
-        result += buf;
-    }
-    close_process_pipe(pipe);
-    return result;
-}
 
 MediaMetadata probe_media(const std::string& path) {
     MediaMetadata meta;
@@ -28,39 +14,40 @@ MediaMetadata probe_media(const std::string& path) {
         ":stream_disposition=attached_pic:format=duration"
         " -of json " + quote_process_arg(path) + " 2>&1";
 
-    std::string output = exec_cmd(cmd);
+    std::string output = run_probe_command(cmd);
     if (output.empty()) return meta;
 
     try {
         auto j = nlohmann::json::parse(output);
-        auto streams = j.value("streams", nlohmann::json::array());
-        nlohmann::json video = nlohmann::json::object();
-        nlohmann::json audio = nlohmann::json::object();
+        const auto empty_streams = nlohmann::json::array();
+        const auto& streams = j.contains("streams") ? j.at("streams") : empty_streams;
+        const nlohmann::json* video = nullptr;
+        const nlohmann::json* audio = nullptr;
 
-        for (auto& s : streams) {
+        for (const auto& s : streams) {
             if (s.value("codec_type", "") == "video") {
-                auto disp = s.value("disposition", nlohmann::json::object());
-                if (disp.value("attached_pic", 0) == 0) {
-                    video = s;
+                const auto disp = s.find("disposition");
+                if (disp == s.end() || disp->value("attached_pic", 0) == 0) {
+                    video = &s;
                 }
             }
-            if (s.value("codec_type", "") == "audio" && audio.empty()) {
-                audio = s;
+            if (s.value("codec_type", "") == "audio" && !audio) {
+                audio = &s;
             }
         }
 
-        if (!video.empty()) {
-            if (video.contains("codec_name")) meta.vcodec = video["codec_name"].get<std::string>();
-            if (video.contains("width")) meta.width = video["width"].get<int>();
-            if (video.contains("height")) meta.height = video["height"].get<int>();
-            if (video.contains("pix_fmt")) meta.pix_fmt = video["pix_fmt"].get<std::string>();
+        if (video) {
+            if (video->contains("codec_name")) meta.vcodec = (*video)["codec_name"].get<std::string>();
+            if (video->contains("width")) meta.width = (*video)["width"].get<int>();
+            if (video->contains("height")) meta.height = (*video)["height"].get<int>();
+            if (video->contains("pix_fmt")) meta.pix_fmt = (*video)["pix_fmt"].get<std::string>();
         }
-        if (!audio.empty()) {
-            if (audio.contains("codec_name")) meta.acodec = audio["codec_name"].get<std::string>();
+        if (audio) {
+            if (audio->contains("codec_name")) meta.acodec = (*audio)["codec_name"].get<std::string>();
         }
-        auto format = j.value("format", nlohmann::json::object());
-        if (format.contains("duration")) {
-            try { meta.duration = std::stod(format["duration"].get<std::string>()); } catch (...) {}
+        const auto format = j.find("format");
+        if (format != j.end() && format->contains("duration")) {
+            try { meta.duration = std::stod((*format)["duration"].get<std::string>()); } catch (...) {}
         }
     } catch (...) {}
     return meta;

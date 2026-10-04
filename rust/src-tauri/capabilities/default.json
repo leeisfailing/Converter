@@ -15,8 +15,6 @@
     "fs:allow-read-text-file",
     "fs:allow-read-dir",
     "fs:allow-write-file",
-    "shell:default",
-    "shell:allow-open",
     "updater:default",
     "process:allow-restart",
     "os:default"

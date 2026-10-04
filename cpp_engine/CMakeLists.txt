@@ -3,8 +3,28 @@ project(gpu_engine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Surface unused code and ignored return values without failing the build;
+# -Werror is deliberately not set.
+if(MSVC)
+    add_compile_options(/W4)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
 
 # nlohmann/json is vendored as a single header in include/nlohmann/json.hpp
+
+# Compile the worker once for both the engine and its lifecycle tests.
+add_library(ffmpeg_worker STATIC src/ffmpeg_worker.cpp)
+target_include_directories(ffmpeg_worker PUBLIC include)
+if(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(ffmpeg_worker PUBLIC Threads::Threads)
+endif()
+if(WIN32)
+    target_compile_definitions(ffmpeg_worker PUBLIC UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 add_executable(gpu_engine
     src/main.cpp
@@ -14,7 +34,6 @@ add_executable(gpu_engine
     src/ipc.cpp
     src/gpu.cpp
     src/media.cpp
-    src/ffmpeg_worker.cpp
     src/converter.cpp
     src/reducer.cpp
     src/upscaler.cpp
@@ -23,10 +42,7 @@ add_executable(gpu_engine
 )
 
 target_include_directories(gpu_engine PRIVATE include)
-if(UNIX)
-    find_package(Threads REQUIRED)
-    target_link_libraries(gpu_engine PRIVATE Threads::Threads)
-endif()
+target_link_libraries(gpu_engine PRIVATE ffmpeg_worker)
 
 
 if(WIN32)
@@ -36,13 +52,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(worker_tests tests/worker_tests.cpp src/ffmpeg_worker.cpp)
-    target_include_directories(worker_tests PRIVATE include)
-    if(UNIX)
-        target_link_libraries(worker_tests PRIVATE Threads::Threads)
-    endif()
+    add_executable(worker_tests tests/worker_tests.cpp src/media.cpp src/config.cpp src/security.cpp)
+    target_link_libraries(worker_tests PRIVATE ffmpeg_worker)
     if(WIN32)
-        target_compile_definitions(worker_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_link_libraries(worker_tests PRIVATE shlwapi)
     endif()
     add_test(NAME worker_lifecycle COMMAND worker_tests)
     set_tests_properties(worker_lifecycle PROPERTIES TIMEOUT 30)

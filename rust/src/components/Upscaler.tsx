@@ -20,7 +20,7 @@ interface Props {
     outputPath: string,
     target: string,
     fileType: "video" | "photo",
-  ) => void;
+  ) => void | Promise<void>;
   disabled: boolean;
 }
 
@@ -142,6 +142,7 @@ export default function Upscaler({ onAdd, disabled }: Props) {
 
   const handleAdd = async () => {
     if (!filePath || !detectedFileType) return;
+    setFileError("");
 
     // Final capability check before adding
     try {
@@ -156,12 +157,18 @@ export default function Upscaler({ onAdd, disabled }: Props) {
 
     console.log(`[upscaler] Adding to queue: "${filePath.split(/[\\/]/).pop()}" => ${target.toUpperCase()}`);
 
-    onAdd(
-      filePath,
-      getOutputPath(),
-      target,
-      detectedFileType,
-    );
+    try {
+      await onAdd(
+        filePath,
+        getOutputPath(),
+        target,
+        detectedFileType,
+      );
+    } catch (error) {
+      // Nothing was queued: keep the selected file so the user can retry.
+      setFileError(error instanceof Error ? error.message : String(error));
+      return;
+    }
 
     setFilePath(null);
     setDetectedFileType(null);

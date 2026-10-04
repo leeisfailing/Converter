@@ -1,10 +1,7 @@
 import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, Download, Loader2, RefreshCw } from "lucide-react";
 import { checkForUpdate, downloadAndInstallUpdate, isUpdateBusy, restartAfterUpdate, useUpdater } from "../lib/updater";
-
-function formatBytes(bytes: number) {
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
+import { formatFileSize } from "../lib/file-size";
 
 export default function UpdatePanel({ hasPendingWork }: { hasPendingWork: boolean }) {
   const update = useUpdater();
@@ -53,7 +50,7 @@ export default function UpdatePanel({ hasPendingWork }: { hasPendingWork: boolea
         <div className="space-y-1">
           <progress className="update-progress w-full h-2" max={100} value={percent ?? undefined} aria-label="Update download" />
           <p className="text-xs text-app-text-secondary font-mono">
-            {formatBytes(update.downloadedBytes)}{update.totalBytes ? ` / ${formatBytes(update.totalBytes)} (${percent}%)` : " downloaded"}
+            {formatFileSize(update.downloadedBytes)}{update.totalBytes ? ` / ${formatFileSize(update.totalBytes)} (${percent}%)` : " downloaded"}
           </p>
         </div>
       )}

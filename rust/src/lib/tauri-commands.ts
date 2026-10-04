@@ -1,19 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import { normalizePastedUrl } from "./pasted-url";
 
-// Backslashes are Windows path separators, including in the default download folder.
-const DANGEROUS_PATH_CHARS = /[<>"'`;|&$(){}]/;
+// Only characters that are illegal on Windows as well as POSIX are refused;
+// everyday filename characters such as `Tom & Jerry.mp4` or `Cut (2).mp4` must
+// stay valid. Backslashes are Windows path separators, including in the
+// default download folder, so they are never part of this class.
+const DANGEROUS_PATH_CHARS = /[<>"|]/;
 // Ampersands separate query parameters in shared video links.
 const DANGEROUS_URL_CHARS = /[<>"';|$\\]/;
 const NULL_BYTE = /\x00/;
 const CONTROL_CHARS = /[\x01-\x1f]/;
+// Mirrors validation.rs in the Rust layer, which is the real boundary.
+const MAX_PATH_LENGTH = 2048;
 
 export function sanitizePath(p: string): string {
   if (typeof p !== "string" || !p.trim()) throw new Error("Invalid path: empty");
   if (NULL_BYTE.test(p)) throw new Error("Invalid path: contains null byte");
-  if (DANGEROUS_PATH_CHARS.test(p)) throw new Error("Invalid path: contains illegal characters");
-  if (p.includes("..")) throw new Error("Invalid path: path traversal detected");
-  return p.replace(/[\r\n]/g, "");
+  // Newlines are stripped rather than rejected so a pasted path still works.
+  const cleaned = p.replace(/[\r\n]/g, "");
+  if (CONTROL_CHARS.test(cleaned)) throw new Error("Invalid path: contains control characters");
+  if (cleaned.length > MAX_PATH_LENGTH) throw new Error(`Invalid path: exceeds maximum length of ${MAX_PATH_LENGTH}`);
+  if (DANGEROUS_PATH_CHARS.test(cleaned)) throw new Error("Invalid path: contains illegal characters");
+  if (cleaned.includes("..")) throw new Error("Invalid path: path traversal detected");
+  return cleaned;
 }
 
 export function sanitizeUrl(url: string): string {

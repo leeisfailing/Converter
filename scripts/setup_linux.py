@@ -93,9 +93,13 @@ def prepare_python(triple: str) -> None:
 
 def build_engine() -> None:
     build = ROOT / "cpp_engine/build-linux"
+    # Respect the same explicit job budget as the Windows build script.
+    jobs = int(os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL") or min(os.cpu_count() or 2, 4))
+    if jobs < 1:
+        raise ValueError("CMAKE_BUILD_PARALLEL_LEVEL must be a positive integer.")
     subprocess.run(["cmake", "-S", str(ROOT / "cpp_engine"), "-B", str(build),
                     "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON"], check=True)
-    subprocess.run(["cmake", "--build", str(build), "--parallel", str(min(os.cpu_count() or 2, 4))], check=True)
+    subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs)], check=True)
 
 
 def main() -> None:

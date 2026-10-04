@@ -4,7 +4,6 @@
 #include <thread>
 #include <mutex>
 #include <functional>
-#include <regex>
 #include <vector>
 #include <stdexcept>
 
@@ -47,7 +46,6 @@ protected:
 
 private:
     void run();
-    static double seconds_from_match(const std::smatch& match);
     void parse_progress(const std::string& line, double& duration);
 };
 

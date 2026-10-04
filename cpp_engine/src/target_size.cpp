@@ -34,14 +34,7 @@ static std::string exec_cmd_output(const std::vector<std::string>& args) {
 #endif
     }
     cmd += " 2>&1";
-
-    std::string result;
-    FILE* pipe = open_process_pipe(cmd);
-    if (!pipe) return result;
-    char buf[4096];
-    while (fgets(buf, sizeof(buf), pipe)) result += buf;
-    close_process_pipe(pipe);
-    return result;
+    return run_probe_command(cmd);
 }
 
 static std::string get_ext_lower(const std::string& path) {
@@ -74,20 +67,27 @@ void reduce_to_target(ReducerWorker* worker) {
     }
 
     auto probe_output = exec_cmd_output({find_binary("ffprobe"), "-v", "error",
-        "-show_streams", "-show_format", "-of", "json", worker->input_path});
+        "-show_entries", "stream=codec_type,codec_name,width,pix_fmt:format=duration",
+        "-of", "json", worker->input_path});
 
     nlohmann::json metadata;
     try { metadata = nlohmann::json::parse(probe_output); } catch (...) {
-        throw std::runtime_error("Failed to parse media metadata");
+        const std::string detail = summarize_output(probe_output);
+        throw std::runtime_error("Failed to parse media metadata" +
+                                 (detail.empty() ? std::string() : ": " + detail));
     }
 
-    auto streams = metadata.value("streams", nlohmann::json::array());
-    nlohmann::json video = nlohmann::json::object();
-    nlohmann::json audio = nlohmann::json::object();
-    for (auto& s : streams) {
-        if (s.value("codec_type", "") == "video" && video.empty()) video = s;
-        if (s.value("codec_type", "") == "audio" && audio.empty()) audio = s;
+    const auto empty_streams = nlohmann::json::array();
+    const auto empty_stream = nlohmann::json::object();
+    const auto& streams = metadata.contains("streams") ? metadata.at("streams") : empty_streams;
+    const nlohmann::json* video_stream = nullptr;
+    const nlohmann::json* audio_stream = nullptr;
+    for (const auto& s : streams) {
+        if (s.value("codec_type", "") == "video" && !video_stream) video_stream = &s;
+        if (s.value("codec_type", "") == "audio" && !audio_stream) audio_stream = &s;
     }
+    const auto& video = video_stream ? *video_stream : empty_stream;
+    const auto& audio = audio_stream ? *audio_stream : empty_stream;
 
     double duration = 0.0;
     try { duration = std::stod(metadata.at("format").at("duration").get<std::string>()); } catch (...) {}
@@ -105,6 +105,7 @@ void reduce_to_target(ReducerWorker* worker) {
         budget = std::max(0.0, (double)(target - 1024)) * 8.0 * 0.88 / duration;
     }
 
+    const auto ffmpeg = find_binary("ffmpeg");
     TempOutputDirectory temporary(destination);
     const auto& folder = temporary.path();
 
@@ -140,7 +141,7 @@ void reduce_to_target(ReducerWorker* worker) {
     if (worker->file_type_ == "photo") {
         if (video.empty()) throw std::runtime_error("No image stream found");
         auto base_cmd = std::vector<std::string>{
-            find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y", "-i", worker->input_path,
+            ffmpeg, "-v", "error", "-nostdin", "-y", "-i", worker->input_path,
             "-vf", "scale=" + std::to_string(width) + ":-1", "-c:v", "libwebp",
             "-compression_level", "6", "-an"
         };
@@ -190,7 +191,7 @@ void reduce_to_target(ReducerWorker* worker) {
     int max_attempts = (worker->file_type_ == "audio") ? (int)valid_rates.size() : 12;
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
         auto cmd = std::vector<std::string>{
-            find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y"
+            ffmpeg, "-v", "error", "-nostdin", "-y"
         };
         auto cuda_args = decode_args(cuda);
         cmd.insert(cmd.end(), cuda_args.begin(), cuda_args.end());
@@ -203,7 +204,7 @@ void reduce_to_target(ReducerWorker* worker) {
                                    "-b:a", std::to_string(rate) + "k", "-compression_level", "0"});
         } else {
             double audio_rate = std::min(192000.0, std::max(16000.0, budget * 0.15));
-            int video_rate = (int)(budget - audio_rate);
+            int video_rate = bitrate_to_int(budget - audio_rate);
             if (video.empty() || video_rate < 4000) {
                 continue;
             }
@@ -279,11 +280,11 @@ void reduce_to_target(ReducerWorker* worker) {
 
             for (int attempt = 0; attempt < 10; ++attempt) {
                 double audio_rate = audio.empty() ? 0 : std::min(64000.0, std::max(8000.0, fallback_budget * 0.10));
-                int video_rate = (int)(fallback_budget - audio_rate);
+                int video_rate = bitrate_to_int(fallback_budget - audio_rate);
                 if (video_rate < 3000) break;
 
                 auto cmd = std::vector<std::string>{
-                    find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y"
+                    ffmpeg, "-v", "error", "-nostdin", "-y"
                 };
                 auto cuda_args = decode_args(cuda);
                 cmd.insert(cmd.end(), cuda_args.begin(), cuda_args.end());
@@ -351,7 +352,7 @@ void reduce_to_target(ReducerWorker* worker) {
             scaled_width = scaled_width & ~1;
             for (int crf = 51; crf >= 28; crf -= 3) {
                 auto cmd = std::vector<std::string>{
-                    find_binary("ffmpeg"), "-v", "error", "-nostdin", "-y"
+                    ffmpeg, "-v", "error", "-nostdin", "-y"
                 };
                 auto cuda_args = decode_args(cuda);
                 cmd.insert(cmd.end(), cuda_args.begin(), cuda_args.end());
@@ -362,13 +363,13 @@ void reduce_to_target(ReducerWorker* worker) {
 
                 if (*encoder == "libx264") {
                     cmd.insert(cmd.end(), {"-c:v", "libx264", "-crf", std::to_string(crf),
-                                           "-maxrate", std::to_string(std::max(40000, (int)(target * 8 / duration / 2))),
-                                           "-bufsize", std::to_string(std::max(40000, (int)(target * 8 / duration))),
+                                           "-maxrate", std::to_string(std::max(40000, bitrate_to_int(target * 8 / duration / 2))),
+                                           "-bufsize", std::to_string(std::max(40000, bitrate_to_int(target * 8 / duration))),
                                            "-preset", "ultrafast", "-pix_fmt", "yuv420p"});
                 } else {
                     auto enc_args = video_encoding_args(*encoder);
                     cmd.insert(cmd.end(), enc_args.begin(), enc_args.end());
-                    int maxrate = std::max(40000, (int)(target * 8 / duration / 2));
+                    int maxrate = std::max(40000, bitrate_to_int(target * 8 / duration / 2));
                     cmd.insert(cmd.end(), {"-rc", "vbr", "-cq", std::to_string(crf),
                                            "-maxrate", std::to_string(maxrate),
                                            "-bufsize", std::to_string(maxrate * 2)});

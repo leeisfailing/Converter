@@ -13,11 +13,11 @@ from PyEngine.core.gpu import get_video_encoder, video_encoding_args
 from PyEngine.core.media import uses_cuda_frames, decode_args, scale_filter
 
 
-def _execute(worker, args):
+def _execute(worker, args, *, capture_output=False):
     if not worker._is_running:
         raise RuntimeError('Reduction was cancelled')
     with tempfile.TemporaryFile(mode='w+b') as errors:
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=errors,
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL, stderr=errors,
                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
         worker._process = proc
         try:
@@ -27,14 +27,24 @@ def _execute(worker, args):
                     proc.communicate()
                     raise RuntimeError('Reduction was cancelled')
                 try:
-                    output, _ = proc.communicate(timeout=0.2)
+                    if capture_output:
+                        output, _ = proc.communicate(timeout=0.2)
+                    else:
+                        proc.wait(timeout=0.2)
+                        output = b''
                     break
                 except subprocess.TimeoutExpired:
                     continue
             if proc.returncode:
                 errors.seek(0, 2)
                 errors.seek(max(0, errors.tell() - 4000))
-                raise RuntimeError(errors.read().decode('utf-8', errors='replace'))
+                detail = errors.read().decode('utf-8', errors='replace').strip()
+                if not detail:
+                    # Some failures exit silently; the UI must still get a
+                    # message that says which program failed and how.
+                    program = os.path.basename(args[0]) if args else 'program'
+                    detail = f'{program} exited with code {proc.returncode}'
+                raise RuntimeError(detail)
             return output
         finally:
             if proc.poll() is None:
@@ -54,7 +64,8 @@ def reduce_to_target(worker):
     if destination.suffix.lower() != extension:
         raise ValueError(f'Target-size {worker.file_type} output must use {extension}')
     metadata = json.loads(_execute(worker, [find_binary('ffprobe'), '-v', 'error',
-        '-show_streams', '-show_format', '-of', 'json', worker.input_path]))
+        '-show_entries', 'stream=codec_type,codec_name,pix_fmt,width:format=duration',
+        '-of', 'json', worker.input_path], capture_output=True))
     streams = metadata.get('streams', [])
     video = next((s for s in streams if s.get('codec_type') == 'video'), None)
     audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)

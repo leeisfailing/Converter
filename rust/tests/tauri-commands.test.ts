@@ -49,6 +49,22 @@ describe("download path validation", () => {
   ])("still rejects invalid paths: %s", (path) => {
     expect(() => sanitizePath(path)).toThrow("Invalid path:");
   });
+
+  it.each([
+    "C:/Media/Tom & Jerry.mp4",
+    String.raw`C:\Media\Cut (2).mp4`,
+    "C:/Media/it's a $clip$.webm",
+    "C:/Media/{brace} and `tick` + semi;.mkv",
+  ])("allows ordinary filenames that are legal on Windows and POSIX: %s", (path) => {
+    expect(sanitizePath(path)).toBe(path);
+  });
+
+  it("keeps the checks the Rust boundary enforces", () => {
+    expect(() => sanitizePath("C:/Media/\u001bclip.mp4")).toThrow("Invalid path: contains control characters");
+    expect(() => sanitizePath("a".repeat(2049))).toThrow("Invalid path: exceeds maximum length of 2048");
+    // Newlines come from a sloppy paste and are stripped, not rejected.
+    expect(sanitizePath("C:/Media/clip.mp4\n")).toBe("C:/Media/clip.mp4");
+  });
 });
 
 describe("shared social links", () => {

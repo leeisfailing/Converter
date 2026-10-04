@@ -1,9 +1,9 @@
 [package]
 name = "converter"
-version = "3.0.0"
+version = "4.0.8"
 description = "Media Downloader"
 authors = ["Lee"]
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "converter_lib"

@@ -5,6 +5,7 @@
 #include "security.h"
 #include "target_size.h"
 #include "temp_output.h"
+#include "native_paths.h"
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -25,7 +26,16 @@ public:
     std::vector<std::string> build_command() override { return command; }
 };
 
+#ifdef _WIN32
+int wmain(int argc, wchar_t** wide_argv) {
+    std::vector<std::string> arguments;
+    for (int i = 0; i < argc; ++i) arguments.push_back(ipc_path(std::filesystem::path(wide_argv[i])));
+    std::vector<char*> narrow_argv;
+    for (auto& argument : arguments) narrow_argv.push_back(argument.data());
+    char** argv = narrow_argv.data();
+#else
 int main(int argc, char** argv) {
+#endif
     if (argc > 1) {
         const std::string mode = argv[1];
         if (mode == "quiet") {
@@ -33,8 +43,17 @@ int main(int argc, char** argv) {
         } else if (mode == "progress") {
             std::cerr << "Duration: 00:00:10.00\rtime=00:00:05.00\r" << std::flush;
         } else if (mode == "write" || mode == "fail") {
-            std::ofstream(argv[2]) << "new output";
+            std::ofstream(native_path(argv[2])) << "new output";
             if (mode == "fail") return 3;
+#ifdef _WIN32
+        } else if (mode == "arguments") {
+            // Check actual CRT argv after the parent quotes its UTF-16 launch.
+            if (argc != 7 || std::string(argv[2]) != "" ||
+                std::string(argv[3]) != "tab\tvalue" ||
+                std::string(argv[4]) != "quoted\"value" ||
+                std::string(argv[5]) != "space at end\\") return 4;
+            if (std::string(argv[6]) != u8"\u65e5\u672c\u8a9e") return 5;
+#endif
         }
         return 0;
     }
@@ -156,6 +175,53 @@ int main(int argc, char** argv) {
         require(after <= before, "process or thread handle leak");
 #endif
         TempOutputDirectory root(std::filesystem::temp_directory_path() / "worker-tests");
+#ifdef _WIN32
+        {
+            const auto unicode_directory = root.path() / L"\u65e5\u672c\u8a9e space";
+            std::filesystem::create_directory(unicode_directory);
+            const auto unicode_output = unicode_directory / L"\u5f71\u7247.txt";
+            std::ofstream(unicode_output) << "original";
+            require(native_path(validate_file_exists(ipc_path(unicode_output), "input")) == unicode_output,
+                    "UTF-8 validation corrupted a Windows filename");
+            require(native_path(validate_output_path(ipc_path(unicode_output), "output")) == unicode_output,
+                    "UTF-8 output validation corrupted a Windows filename");
+
+            // Actually start an executable from a Unicode directory rather
+            // than only asserting the converter's intermediate strings.
+            wchar_t executable_buffer[32768] = {};
+            require(GetModuleFileNameW(nullptr, executable_buffer, 32768) != 0, "cannot locate test executable");
+            const auto unicode_executable = unicode_directory / "worker_tests.exe";
+            std::filesystem::copy_file(std::filesystem::path(executable_buffer), unicode_executable);
+            Worker unicode_worker;
+            unicode_worker.execute({ipc_path(unicode_executable), "arguments", "", "tab\tvalue",
+                                    "quoted\"value", "space at end\\", u8"\u65e5\u672c\u8a9e"});
+            unicode_worker.output_path = ipc_path(unicode_output);
+            unicode_worker.command = {ipc_path(unicode_executable), "write", ipc_path(unicode_output)};
+            unicode_worker.perform();
+
+            // A probe must preserve Unicode through cmd.exe and UTF-16 file
+            // lookup. Contents are ASCII so the output code page is irrelevant.
+            require(run_probe_command("type " + quote_process_arg(ipc_path(unicode_output))).find("new output") != std::string::npos,
+                    "Unicode probe path corrupted");
+            require(run_probe_command(quote_process_arg(ipc_path(unicode_executable)) + " progress 2>&1").find("Duration:") != std::string::npos,
+                    "quoted Unicode probe executable path corrupted");
+            TempOutputDirectory trial(unicode_output);
+            const auto candidate = trial.path() / unicode_output.filename();
+            std::ofstream(candidate) << "replacement";
+            replace_output(candidate, unicode_output);
+            std::ifstream input(unicode_output);
+            std::string content((std::istreambuf_iterator<char>(input)), {});
+            require(content == "replacement", "Unicode atomic publication failed");
+            input.close();
+            bool invalid_utf8_rejected = false;
+            try { native_path(std::string(1, '\xff')); } catch (const std::runtime_error&) { invalid_utf8_rejected = true; }
+            require(invalid_utf8_rejected, "invalid UTF-8 Windows path accepted");
+            std::filesystem::remove_all(unicode_directory);
+        }
+#else
+        require(ipc_path(native_path(std::string("clip-") + '\xff')) == std::string("clip-") + '\xff',
+                "POSIX filename bytes changed");
+#endif
         auto output = root.path() / "out.txt";
         std::ofstream(output) << "original";
         for (const auto mode : {"fail", "write"}) {

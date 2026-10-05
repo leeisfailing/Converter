@@ -56,6 +56,8 @@ rust/src-tauri/private_key.pem
 rust/src-tauri/private_key_hex.txt
 **/updater.key
 **/updater.key.password
+**/updater.linux.key
+**/updater.linux.key.password
 
 # Updater artifacts
 rust/src-tauri/target/release/bundle/

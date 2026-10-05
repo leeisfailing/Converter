@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <algorithm>
 #include <filesystem>
+#include "native_paths.h"
 
 namespace engine {
 
@@ -119,7 +120,7 @@ void handle_start_convert(const nlohmann::json& cmd_args) {
             return;
         }
 
-        auto parent = std::filesystem::path(output_path).parent_path();
+        auto parent = native_path(output_path).parent_path();
         if (!std::filesystem::exists(parent)) {
             try { std::filesystem::create_directories(parent); }
             catch (std::exception& e) {
@@ -193,7 +194,7 @@ void handle_start_transcoder(const nlohmann::json& cmd_args) {
             return;
         }
 
-        auto parent = std::filesystem::path(output_path).parent_path();
+        auto parent = native_path(output_path).parent_path();
         if (!std::filesystem::exists(parent)) {
             try { std::filesystem::create_directories(parent); }
             catch (std::exception& e) {
@@ -283,7 +284,7 @@ void handle_start_upscale(const nlohmann::json& cmd_args) {
             return;
         }
 
-        auto parent = std::filesystem::path(output_path).parent_path();
+        auto parent = native_path(output_path).parent_path();
         if (!std::filesystem::exists(parent)) {
             try { std::filesystem::create_directories(parent); }
             catch (std::exception& e) {

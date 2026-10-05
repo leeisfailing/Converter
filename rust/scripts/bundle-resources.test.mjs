@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, test as it } from './test-runner.mjs';
+import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,27 +38,27 @@ describe('portable bundle resources', () => {
     copyResources(resourcePlan(root, config), destination);
     for (const file of ['PyEngine/main.py', 'PyEngine/helper.py', 'PyEngine/bin/python/python.exe',
       'PyEngine/bin/python/Lib/package.py', 'PyEngine/bin/plugins/LSMASHSource.dll', 'gpu_engine.exe', 'ffmpeg.exe']) {
-      expect(readFileSync(path.join(destination, file), 'utf8')).not.toBe('');
+      assert.notEqual(readFileSync(path.join(destination, file), 'utf8'), '');
     }
-    expect(existsSync(path.join(destination, 'PyEngine/ignored.txt'))).toBe(false);
-    expect(existsSync(path.join(destination, 'PyEngine/bin/python/__pycache__'))).toBe(false);
+    assert.equal(existsSync(path.join(destination, 'PyEngine/ignored.txt')), false);
+    assert.equal(existsSync(path.join(destination, 'PyEngine/bin/python/__pycache__')), false);
   });
   it('fails before copying when a required engine is missing', () => {
     const { root, config } = fixture();
     config.bundle.resources['missing-engine.exe'] = 'missing-engine.exe';
-    expect(() => resourcePlan(root, config)).toThrow('Missing bundle resource');
+    assert.throws(() => resourcePlan(root, config), /Missing bundle resource/);
   });
   it('rejects empty resource globs and missing sidecars', () => {
     const { root, config } = fixture();
     config.bundle.resources['missing/*.py'] = 'missing/';
-    expect(() => resourcePlan(root, config)).toThrow('matched no files');
+    assert.throws(() => resourcePlan(root, config), /matched no files/);
     delete config.bundle.resources['missing/*.py'];
     config.bundle.externalBin.push('bin/ffprobe');
-    expect(() => resourcePlan(root, config)).toThrow('Missing Windows sidecar');
+    assert.throws(() => resourcePlan(root, config), /Missing Windows sidecar/);
   });
   it('rejects resource destinations outside the distribution', () => {
     const { root, config } = fixture();
     config.bundle.resources['gpu_engine.exe'] = '../escaped.exe';
-    expect(() => resourcePlan(root, config)).toThrow('must stay inside');
+    assert.throws(() => resourcePlan(root, config), /must stay inside/);
   });
 });

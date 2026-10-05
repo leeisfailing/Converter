@@ -6,8 +6,9 @@ No pip, registry changes, or machine-wide Python installation is required by the
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,45 @@ def download(url: str, digest: str) -> Path:
     return destination
 
 
+def ai_artifacts() -> tuple[tuple[str, str, str], ...]:
+    """Load the hash-pinned AI wheels for this embedded Python ABI and platform."""
+    manifest = json.loads((ROOT / "scripts/ai-runtime-wheels.json").read_text(encoding="utf-8"))
+    if manifest["python"] != "3.12" or manifest["platform"] != "win_amd64":
+        raise ValueError("AI wheel manifest must target Python 3.12 Windows x64")
+    required = {"numpy", "opencv-python-headless", "onnxruntime", "protobuf", "flatbuffers", "packaging"}
+    if {wheel["name"] for wheel in manifest["wheels"]} != required:
+        raise ValueError("AI wheel manifest must include all enhancement runtime dependencies")
+    artifacts = []
+    for wheel in manifest["wheels"]:
+        url, digest = wheel["url"], wheel["sha256"]
+        if not url.startswith("https://files.pythonhosted.org/packages/") or not url.endswith(".whl"):
+            raise ValueError(f"Invalid AI wheel URL: {wheel['name']}")
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError(f"Invalid AI wheel SHA-256: {wheel['name']}")
+        artifacts.append((url, digest, "Lib/site-packages"))
+    return tuple(artifacts)
+
+
+def install_wheel(wheel: Path, staging: Path) -> None:
+    """Install wheel libraries into the isolated runtime without requiring pip."""
+    packages = staging / "Lib/site-packages"
+    with zipfile.ZipFile(wheel) as archive:
+        for member in archive.infolist():
+            parts = PurePosixPath(member.filename).parts
+            if not parts or member.is_dir():
+                continue
+            if member.filename.startswith("/") or ".." in parts or "\\" in member.filename or ":" in member.filename:
+                raise ValueError(f"Wheel member escapes the private runtime: {member.filename}")
+            if len(parts) >= 3 and parts[0].endswith(".data") and parts[1] in ("purelib", "platlib"):
+                destination = packages.joinpath(*parts[2:])
+            elif member.filename.endswith(".data/scripts/deno.exe"):
+                destination = staging / "deno.exe"
+            else:
+                destination = packages.joinpath(*parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(archive.read(member))
+
+
 def main() -> None:
     if os.name != "nt":
         raise SystemExit("This runtime is for Windows x64; run setup on Windows.")
@@ -68,13 +108,13 @@ def main() -> None:
     assemble_media_tools()
     # Build and validate separately so failed downloads never damage the current runtime.
     staging = Path(tempfile.mkdtemp(prefix="python-", dir=CACHE))
-    for url, digest, relative in ARTIFACTS:
-        with zipfile.ZipFile(download(url, digest)) as archive:
-            archive.extractall(staging / relative)
-            # Wheel script entries need relocation when installing without pip.
-            for member in archive.namelist():
-                if member.endswith('.data/scripts/deno.exe'):
-                    (staging / 'deno.exe').write_bytes(archive.read(member))
+    for url, digest, relative in (*ARTIFACTS, *ai_artifacts()):
+        artifact = download(url, digest)
+        if artifact.suffix == ".whl":
+            install_wheel(artifact, staging)
+        else:
+            with zipfile.ZipFile(artifact) as archive:
+                archive.extractall(staging / relative)
     (staging / "python312._pth").write_text(
         "python312.zip\n.\nLib/site-packages\n../../../\nimport site\n", encoding="utf-8"
     )
@@ -89,7 +129,9 @@ def main() -> None:
         clean_env.pop(key, None)
     subprocess.run(
         [str(staging / "python.exe"), "-I", "-B", "-c",
-         "import sys, ssl, sqlite3, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs; "
+         "import sys, ssl, sqlite3, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs, cv2, numpy, onnxruntime; "
+         "assert 'CPUExecutionProvider' in onnxruntime.get_available_providers(); "
+         "assert cv2.resize(numpy.zeros((2, 2, 3), dtype=numpy.uint8), (4, 4)).shape == (4, 4, 3); "
          "assert sys.version_info[:2] == (3, 12); "
          "assert vs.core.std.BlankClip(width=16, height=16, length=1).get_frame(0).width == 16; "
          "print(sys.version); print('yt-dlp', yt_dlp.version.__version__); print(vs.__version__)"],

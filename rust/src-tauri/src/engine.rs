@@ -185,6 +185,8 @@ pub async fn request<T: DeserializeOwned>(app: &AppHandle, value: serde_json::Va
 /// `id` is a unique identifier echoed in all emitted events so the frontend
 /// can route progress/finished to the correct queue item.
 pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, prefix: &str, id: String) -> Result<(), String> {
+    crate::validation::validate_string(&id, "id", 256)?;
+    crate::validation::validate_json_value(&value, 10)?;
     let ops = app.state::<crate::operations::Operations>();
     let op_type = match prefix {
         "download" => crate::operations::OpType::Download,

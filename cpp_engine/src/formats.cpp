@@ -1,4 +1,5 @@
 #include "formats.h"
+#include "native_paths.h"
 #include <fstream>
 #include <algorithm>
 #include <cstdint>
@@ -90,7 +91,7 @@ static const uint8_t EBML_MAGIC[] = {0x1a, 0x45, 0xdf, 0xa3};
 static const uint8_t TS_MAGIC = 0x47;
 
 static std::string detect_from_content(const std::string& file_path) {
-    std::ifstream f(file_path, std::ios::binary);
+    std::ifstream f(native_path(file_path), std::ios::binary);
     if (!f) return "";
     uint8_t header[64] = {};
     f.read(reinterpret_cast<char*>(header), sizeof(header));

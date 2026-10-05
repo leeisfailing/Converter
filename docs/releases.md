@@ -5,8 +5,9 @@ builds an unsigned AppImage and checks its extracted media runtime without signi
 secrets. The test AppImage is available as a short-lived Actions artifact. The
 **Linux Release** workflow calls it to build a signed x64 portable AppImage, verifies
 its contents, and publishes the complete Linux release through GitHub Releases.
-Windows release integration is being handled separately; the existing Windows
-checks, packaging script, and shared Tauri configuration remain unchanged.
+`main` contains both supported platforms. Windows builds use separate tags,
+signing credentials, and updater metadata; see [Windows releases](windows-releases.md).
+The `Windows` branch keeps shared source code with Windows-only automation.
 
 ## Configure GitHub
 
@@ -123,7 +124,9 @@ its packages. Linux packaging also requires `libcrypt1` on Ubuntu/Debian or
 `libxcrypt-compat` on Arch because Python's `_crypt` extension needs `libcrypt.so.1`.
 
 The AppImage contains Python, its packages, FFmpeg/FFprobe, the C++ engine and their
-shared dependencies. glibc and GPU drivers remain host-provided. Releases build on
+shared dependencies. glibc, GPU drivers, GBM/DRM, Fontconfig and its font-library
+dependencies remain host-provided. Canonical host library names are excluded;
+private Python packages and their hashed OpenCV libraries remain bundled. Releases build on
 Ubuntu 24.04; older glibc distributions and musl systems are not guaranteed compatible.
 Source builds support additional architectures, but this release workflow ships x64 only.
 
@@ -133,7 +136,13 @@ source development environment may be unable to package an AppImage. Building on
 a Linux-native filesystem also avoids AppImage staging cleanup issues observed on
 NTFS. The wrapper defaults `NO_STRIP=1` because older linuxdeploy stripping tools
 cannot handle some modern ELF relocation formats; extraction mode is enabled for
-packaging tools. An unsigned local smoke build is available with
+packaging tools. The wrapper first builds an unsigned intermediate, extracts it
+into temporary staging, removes the canonical host graphics/font libraries also
+collected automatically by linuxdeploy, and repacks it with the cached official
+AppImage output plugin. Only these final bytes are signed; the wrapper verifies
+the signature with the Linux public key before succeeding. This avoids shipping
+Ubuntu Fontconfig/GBM libraries ahead of a newer host stack without disabling GPU
+acceleration. An unsigned local smoke build is available with
 `npm run build:linux -- --unsigned`; it cannot be installed as a signed updater artifact.
 
 ## Validate an update

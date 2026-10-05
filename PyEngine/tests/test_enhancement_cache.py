@@ -50,6 +50,38 @@ def _registry_with_digest(digest: str) -> dict:
 
 
 class EnhancementCacheTests(unittest.TestCase):
+    def test_ensure_model_replaces_corrupt_cache_with_verified_bytes(self):
+        payload = b"x" * (1024 * 1024 + 1)
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            destination = directory / "RealESRGAN_x4plus.onnx"
+            destination.write_bytes(b"y" * len(payload))
+            response = io.BytesIO(payload)
+            response.headers = {"Content-Length": str(len(payload))}
+            with patch.object(cache, "MODEL_REGISTRY",
+                              _registry_with_digest(hashlib.sha256(payload).hexdigest())), patch.object(
+                    cache, "_MODELS_DIR", directory), patch.object(
+                    cache.urllib.request, "urlopen", return_value=response) as request:
+                self.assertEqual(cache.ensure_model("realesrgan-x4plus"), destination)
+                self.assertEqual(destination.read_bytes(), payload)
+                request.assert_called_once()
+                cache.ensure_model("realesrgan-x4plus")
+                request.assert_called_once()
+
+    def test_corrupt_cache_cannot_bypass_pin_when_replacement_fails(self):
+        payload = b"x" * (1024 * 1024 + 1)
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            destination = directory / "RealESRGAN_x4plus.onnx"
+            destination.write_bytes(payload)
+            with patch.object(cache, "MODEL_REGISTRY", _registry_with_digest("0" * 64)), patch.object(
+                    cache, "_MODELS_DIR", directory), patch.object(
+                    cache.urllib.request, "urlopen", side_effect=OSError("offline")):
+                with self.assertRaisesRegex(RuntimeError, "offline"):
+                    cache.ensure_model("realesrgan-x4plus")
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertEqual(list(directory.iterdir()), [destination])
+
     def test_concurrent_session_misses_construct_once(self):
         from concurrent.futures import ThreadPoolExecutor
         import threading

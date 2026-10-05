@@ -1,4 +1,5 @@
 #include "security.h"
+#include "native_paths.h"
 #include <filesystem>
 #include <regex>
 #include <algorithm>
@@ -42,11 +43,11 @@ std::string validate_path(const std::string& path_str, const std::string& field_
         throw ValidationError(field_name + " contains dangerous characters");
     }
     std::error_code ec;
-    auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(path_str), ec);
+    auto resolved = std::filesystem::weakly_canonical(native_path(path_str), ec);
     if (ec) {
         throw ValidationError(field_name + " contains invalid path after canonicalization");
     }
-    auto resolved_str = resolved.string();
+    auto resolved_str = ipc_path(resolved);
     if (resolved_str.find("..") != std::string::npos) {
         throw ValidationError(field_name + " contains invalid path traversal after canonicalization");
     }
@@ -55,11 +56,11 @@ std::string validate_path(const std::string& path_str, const std::string& field_
 
 std::string validate_file_exists(const std::string& path_str, const std::string& field_name) {
     auto validated = validate_path(path_str, field_name);
-    if (!std::filesystem::is_regular_file(validated)) {
+    if (!std::filesystem::is_regular_file(native_path(validated))) {
         throw ValidationError("File not found: " + validated);
     }
     std::error_code ec;
-    auto size = std::filesystem::file_size(validated, ec);
+    auto size = std::filesystem::file_size(native_path(validated), ec);
     if (!ec && size > MAX_FILE_SIZE) {
         throw ValidationError("File exceeds maximum allowed size (10GB)");
     }
@@ -68,11 +69,11 @@ std::string validate_file_exists(const std::string& path_str, const std::string&
 
 std::string validate_output_path(const std::string& path_str, const std::string& field_name) {
     auto validated = validate_path(path_str, field_name);
-    auto parent = std::filesystem::path(validated).parent_path();
+    auto parent = native_path(validated).parent_path();
     if (!std::filesystem::exists(parent)) {
-        throw ValidationError("Output directory does not exist: " + parent.string());
+        throw ValidationError("Output directory does not exist: " + ipc_path(parent));
     }
-    auto filename = std::filesystem::path(validated).filename().string();
+    auto filename = ipc_path(native_path(validated).filename());
     if (filename.empty() || filename == "." || filename == "..") {
         throw ValidationError("Invalid filename in " + field_name);
     }
@@ -88,11 +89,11 @@ std::string validate_output_dir(const std::string& dir_str) {
         throw ValidationError("output_dir contains dangerous characters");
     }
     std::error_code ec;
-    auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(dir_str), ec);
+    auto resolved = std::filesystem::weakly_canonical(native_path(dir_str), ec);
     if (!std::filesystem::is_directory(resolved)) {
-        throw ValidationError("Output directory does not exist: " + resolved.string());
+        throw ValidationError("Output directory does not exist: " + ipc_path(resolved));
     }
-    return resolved.string();
+    return ipc_path(resolved);
 }
 
 std::string validate_string(const std::string& value, const std::string& field_name, size_t max_length) {

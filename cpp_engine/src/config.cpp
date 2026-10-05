@@ -1,4 +1,5 @@
 #include "config.h"
+#include "native_paths.h"
 #include <cstdlib>
 #include <vector>
 #include <sstream>
@@ -16,8 +17,9 @@ namespace engine {
 
 static std::filesystem::path get_executable_dir() {
 #ifdef _WIN32
-    char buf[MAX_PATH] = {0};
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    wchar_t buf[32768] = {0};
+    const DWORD length = GetModuleFileNameW(nullptr, buf, 32768);
+    if (!length || length >= 32768) throw std::runtime_error("Cannot locate native engine executable");
     std::filesystem::path p(buf);
     return p.parent_path();
 #else
@@ -40,7 +42,7 @@ std::filesystem::path resource_path(const std::string& relative) {
         }
         return exe_dir;
     }();
-    return base / relative;
+    return base / native_path(relative);
 }
 
 std::string find_binary(const std::string& name) {
@@ -83,7 +85,7 @@ std::string find_binary(const std::string& name) {
     for (auto& dir : search_dirs) {
         auto path = dir / exe_name;
         if (std::filesystem::exists(path)) {
-            return path.string();
+            return ipc_path(path);
         }
     }
 
@@ -95,15 +97,15 @@ std::string find_binary(const std::string& name) {
     auto sidecar = base.parent_path() / "rust" / "src-tauri" / "bin" /
                    (stem + "-x86_64-pc-windows-msvc.exe");
     if (std::filesystem::exists(sidecar)) {
-        return sidecar.string();
+        return ipc_path(sidecar);
     }
 #endif
 
 #ifdef _WIN32
-    char buf[4096] = {0};
-    DWORD len = SearchPathA(nullptr, exe_name.c_str(), nullptr, sizeof(buf), buf, nullptr);
-    if (len > 0 && len < sizeof(buf)) {
-        return std::string(buf);
+    wchar_t buf[32768] = {0};
+    DWORD len = SearchPathW(nullptr, utf8_to_wide(exe_name).c_str(), nullptr, 32768, buf, nullptr);
+    if (len > 0 && len < 32768) {
+        return ipc_path(std::filesystem::path(buf));
     }
 #else
     if (auto* path = getenv("PATH")) {

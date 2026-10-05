@@ -1,6 +1,7 @@
 #include "ffmpeg_worker.h"
 #include "log_buffer.h"
 #include "temp_output.h"
+#include "native_paths.h"
 #include <chrono>
 #include <filesystem>
 #include <cstdlib>
@@ -104,17 +105,11 @@ void FfmpegWorker::execute(const std::vector<std::string>& cmd, bool report_prog
     auto consume = [&](const std::string& line) {
         if (report_progress) parse_progress(line, duration);
     };
-    std::string cmd_str;
-    size_t capacity = 0;
-    for (const auto& arg : cmd) capacity += arg.size() + 3;
-    cmd_str.reserve(capacity);
+    if (cmd.empty()) throw FfmpegError("Missing ffmpeg command");
+    std::wstring cmd_str;
     for (size_t i = 0; i < cmd.size(); ++i) {
-        if (i > 0) cmd_str += " ";
-        if (cmd[i].find(' ') != std::string::npos) {
-            cmd_str += "\"" + cmd[i] + "\"";
-        } else {
-            cmd_str += cmd[i];
-        }
+        if (i > 0) cmd_str += L' ';
+        cmd_str += quote_windows_arg(utf8_to_wide(cmd[i]));
     }
 
     HANDLE hReadPipe, hWritePipe;
@@ -138,14 +133,14 @@ void FfmpegWorker::execute(const std::vector<std::string>& cmd, bool report_prog
         throw FfmpegError("Failed to open NUL device for ffmpeg output");
     }
 
-    STARTUPINFOA si = { sizeof(STARTUPINFOA) };
+    STARTUPINFOW si = { sizeof(STARTUPINFOW) };
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = hNull;
     si.hStdError = hWritePipe;
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi = {};
-    BOOL created = CreateProcessA(
+    BOOL created = CreateProcessW(
         nullptr, cmd_str.data(), nullptr, nullptr, TRUE,
         CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi
     );
@@ -302,10 +297,10 @@ void FfmpegWorker::execute(const std::vector<std::string>& cmd, bool report_prog
 
 void FfmpegWorker::perform() {
     auto cmd = build_command();
-    auto destination = std::filesystem::path(output_path);
+    auto destination = native_path(output_path);
     TempOutputDirectory temporary(destination);
     auto candidate = temporary.path() / destination.filename();
-    cmd.back() = candidate.string();
+    cmd.back() = ipc_path(candidate);
     execute(cmd);
     check_cancelled();
     if (!std::filesystem::is_regular_file(candidate) || std::filesystem::file_size(candidate) == 0) {
@@ -321,8 +316,8 @@ void FfmpegWorker::run() {
     try {
         check_cancelled();
         std::error_code ec;
-        auto in = std::filesystem::weakly_canonical(std::filesystem::path(input_path), ec);
-        auto out = std::filesystem::weakly_canonical(std::filesystem::path(output_path), ec);
+        auto in = std::filesystem::weakly_canonical(native_path(input_path), ec);
+        auto out = std::filesystem::weakly_canonical(native_path(output_path), ec);
         if (in == out) {
             throw std::runtime_error("Output must be different from the original file");
         }

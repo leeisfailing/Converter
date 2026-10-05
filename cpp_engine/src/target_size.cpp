@@ -1,5 +1,6 @@
 #include "target_size.h"
 #include "temp_output.h"
+#include "native_paths.h"
 #include "reducer.h"
 #include "config.h"
 #include "process_pipe.h"
@@ -26,12 +27,7 @@ static std::string exec_cmd_output(const std::vector<std::string>& args) {
     std::string cmd;
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) cmd += " ";
-#ifdef _WIN32
-        if (args[i].find(' ') != std::string::npos) cmd += "\"" + args[i] + "\"";
-        else cmd += args[i];
-#else
         cmd += quote_process_arg(args[i]);
-#endif
     }
     cmd += " 2>&1";
     return run_probe_command(cmd);
@@ -50,9 +46,9 @@ void reduce_to_target(ReducerWorker* worker) {
     if (target <= 0 || target > 10000000000LL) {
         throw std::runtime_error("Target size must be greater than zero and at most 10 GB");
     }
-    auto destination = std::filesystem::path(worker->output_path);
+    auto destination = native_path(worker->output_path);
     if (std::filesystem::weakly_canonical(destination) ==
-        std::filesystem::weakly_canonical(std::filesystem::path(worker->input_path))) {
+        std::filesystem::weakly_canonical(native_path(worker->input_path))) {
         throw std::runtime_error("Output must be different from the original file");
     }
 
@@ -128,7 +124,7 @@ void reduce_to_target(ReducerWorker* worker) {
         if (worker->on_progress) worker->on_progress(100);
     };
 
-    auto source = std::filesystem::path(worker->input_path);
+    auto source = native_path(worker->input_path);
     if (get_ext_lower(worker->input_path) == extension.substr(1) &&
         std::filesystem::file_size(source) <= (std::uintmax_t)target &&
         (video.empty() || width == video.value("width", 0))) {
@@ -147,7 +143,7 @@ void reduce_to_target(ReducerWorker* worker) {
         };
 
         auto lossless_cmd = base_cmd;
-        lossless_cmd.insert(lossless_cmd.end(), {"-lossless", "1", candidate.string()});
+        lossless_cmd.insert(lossless_cmd.end(), {"-lossless", "1", ipc_path(candidate)});
         worker->execute(lossless_cmd, false);
 
         if (keep_candidate()) { finish(); return; }
@@ -157,7 +153,7 @@ void reduce_to_target(ReducerWorker* worker) {
             if (low > high) break;
             int quality = (low + high) / 2;
             auto q_cmd = base_cmd;
-            q_cmd.insert(q_cmd.end(), {"-quality", std::to_string(quality), candidate.string()});
+            q_cmd.insert(q_cmd.end(), {"-quality", std::to_string(quality), ipc_path(candidate)});
             worker->execute(q_cmd, false);
             if (keep_candidate()) low = quality + 1;
             else high = quality - 1;
@@ -217,7 +213,7 @@ void reduce_to_target(ReducerWorker* worker) {
             if (*encoder == "libx264") {
                 cmd.insert(cmd.end(), {"-c:v", "libx264", "-b:v", std::to_string(video_rate),
                                        "-preset", "veryslow", "-pix_fmt", "yuv420p",
-                                       "-passlogfile", (folder / "analysis").string()});
+                                       "-passlogfile", ipc_path(folder / "analysis")});
                 auto pass1_cmd = cmd;
                 pass1_cmd.insert(pass1_cmd.end(), {"-pass", "1", "-an", "-f", "null", std::string(1, std::filesystem::path::preferred_separator) == "/" ? "/dev/null" : "NUL"});
                 worker->execute(pass1_cmd, false);
@@ -241,7 +237,7 @@ void reduce_to_target(ReducerWorker* worker) {
             }
         }
 
-        cmd.push_back(candidate.string());
+        cmd.push_back(ipc_path(candidate));
         if (worker->on_progress) worker->on_progress(std::min(90, 10 + attempt * 16));
         worker->execute(cmd, false);
 
@@ -296,7 +292,7 @@ void reduce_to_target(ReducerWorker* worker) {
                 if (*encoder == "libx264") {
                     cmd.insert(cmd.end(), {"-c:v", "libx264", "-b:v", std::to_string(video_rate),
                                            "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                                           "-passlogfile", (folder / "fb_analysis").string()});
+                                           "-passlogfile", ipc_path(folder / "fb_analysis")});
                     auto pass1_cmd = cmd;
                     pass1_cmd.insert(pass1_cmd.end(), {"-pass", "1", "-an", "-f", "null",
                         std::string(1, std::filesystem::path::preferred_separator) == "/" ? "/dev/null" : "NUL"});
@@ -319,7 +315,7 @@ void reduce_to_target(ReducerWorker* worker) {
                 if (!audio.empty()) {
                     cmd.insert(cmd.end(), {"-c:a", "aac", "-b:a", std::to_string((int)audio_rate)});
                 }
-                cmd.push_back(candidate.string());
+                cmd.push_back(ipc_path(candidate));
                 worker->execute(cmd, false);
 
                 if (!worker->is_running()) throw std::runtime_error("Reduction was cancelled");
@@ -379,7 +375,7 @@ void reduce_to_target(ReducerWorker* worker) {
                 if (!audio.empty()) {
                     cmd.insert(cmd.end(), {"-c:a", "aac", "-b:a", "48000"});
                 }
-                cmd.push_back(candidate.string());
+                cmd.push_back(ipc_path(candidate));
                 worker->execute(cmd, false);
 
                 if (!worker->is_running()) throw std::runtime_error("Reduction was cancelled");

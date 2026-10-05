@@ -179,11 +179,6 @@ def _download_model(model_name: str, on_progress=None) -> Path:
     info = MODEL_REGISTRY[model_name]
     dest = get_models_dir() / info["filename"]
 
-    if dest.exists() and dest.stat().st_size > 1024 * 1024:
-        if on_progress:
-            on_progress(100)
-        return dest
-
     expected = str(info.get("sha256", "")).strip().lower()
     if not expected:
         # An unpinned digest must not break model loading, but it must never
@@ -194,6 +189,18 @@ def _download_model(model_name: str, on_progress=None) -> Path:
         # A digest that is present but malformed must fail closed: accepting
         # it would silently disable the check it was meant to provide.
         raise RuntimeError(f"Model {model_name} has an invalid pinned SHA256: {expected!r}")
+
+    if dest.is_file() and dest.stat().st_size > 1024 * 1024:
+        cached_hash = hashlib.sha256()
+        with dest.open("rb") as cached:
+            for chunk in iter(lambda: cached.read(65536), b""):
+                cached_hash.update(chunk)
+        if not expected or cached_hash.hexdigest() == expected:
+            if on_progress:
+                on_progress(100)
+            return dest
+        print(f"[model] Cached {model_name} failed SHA256 verification; downloading a verified replacement",
+              file=sys.stderr, flush=True)
 
     ctx = ssl.create_default_context()
     req = urllib.request.Request(info["url"], headers={"User-Agent": "Converter/1.0"})
@@ -237,11 +244,9 @@ def _download_model(model_name: str, on_progress=None) -> Path:
 
 
 def ensure_model(model_name: str, on_progress=None) -> Path:
-    if not is_model_downloaded(model_name):
-        return download_model(model_name, on_progress=on_progress)
-    if on_progress:
-        on_progress(100)
-    return get_model_path(model_name)
+    # Session reuse avoids repeated hashing during frame processing. Every new
+    # session must verify cached bytes before passing a model to ONNX Runtime.
+    return download_model(model_name, on_progress=on_progress)
 
 
 def list_available_models() -> list:

@@ -30,6 +30,23 @@ jobs:
           # Do not persist GITHUB_TOKEN in .git/config: later steps run
           # `npm ci` / `cargo test`, and tauri-action reads GITHUB_TOKEN from env.
           persist-credentials: false
+      - name: Require matching release tag and draft target
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content -Raw rust/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "Run this workflow on the matching v$version tag. Branch dispatches cannot publish releases."
+          }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $tag = [uri]::EscapeDataString($env:GITHUB_REF_NAME)
+          try {
+            $release = Invoke-RestMethod -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" -Headers $headers
+            if (-not $release.draft) { throw "This tag already has a published release. Use a new version/tag." }
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
@@ -43,7 +60,7 @@ jobs:
         with:
           workspaces: rust/src-tauri -> target
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --include=optional
         working-directory: rust
       - name: Assemble bundled Python runtime
         run: python scripts/bundle_runtime.py
@@ -83,13 +100,39 @@ jobs:
           tagName: v__VERSION__
           releaseName: Converter v__VERSION__
           releaseBody: |
-            Windows x64 release. Download the setup installer for a new installation.
+            Windows x64 release. Download the setup installer or Converter-portable.zip for a new installation.
             Existing installations can use About & Updates after this release is published.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: --bundles nsis,msi -- --locked
+      - name: Package portable Windows ZIP
+        run: node scripts/build-portable.mjs
+        working-directory: rust
+      - name: Upload portable ZIP to the installer draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.build.outputs.releaseId }}
+        run: |
+          if ($env:RELEASE_ID -notmatch '^\d+$') { throw "Installer build did not return a release ID." }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $release = Invoke-RestMethod -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -Headers $headers
+          if (-not $release.draft -or $release.tag_name -cne $env:GITHUB_REF_NAME) {
+            throw "Portable assets must be uploaded to the matching draft release."
+          }
+          $zip = Get-Item -LiteralPath rust/dist/Converter-portable.zip
+          if ($zip.Length -eq 0) { throw "Portable ZIP is empty." }
+          foreach ($asset in ($release.assets | Where-Object name -EQ $zip.Name)) {
+            Invoke-RestMethod -Method Delete -Uri $asset.url -Headers $headers
+          }
+          $uploadUrl = $release.upload_url -replace '\{.*$', ''
+          $uploadUrl += '?name=' + [uri]::EscapeDataString($zip.Name)
+          $asset = Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers $headers -ContentType 'application/zip' -InFile $zip.FullName
+          if ($asset.name -cne $zip.Name -or $asset.size -ne $zip.Length -or $asset.state -ne 'uploaded') {
+            throw "Portable ZIP upload verification failed."
+          }
       - name: Verify release assets
         id: verify
         shell: pwsh
@@ -97,8 +140,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ steps.build.outputs.releaseId }}
         run: |
+          if ($env:RELEASE_ID -notmatch '^\d+$') { throw "Installer build did not return a release ID." }
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
           $release = Invoke-RestMethod -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -Headers $headers
+          $portable = $release.assets | Where-Object name -EQ 'Converter-portable.zip' | Select-Object -First 1
+          if (-not $portable -or $portable.size -le 0 -or $portable.state -ne 'uploaded') {
+            throw "Portable ZIP not found in release assets or incomplete."
+          }
           $manifest = $release.assets | Where-Object name -EQ 'latest.json' | Select-Object -First 1
           if (-not $manifest) {
             throw "latest.json not found in release assets. Upload failed."
@@ -119,6 +167,7 @@ jobs:
           subject-path: |
             rust/src-tauri/target/release/bundle/msi/*.msi
             rust/src-tauri/target/release/bundle/nsis/*.exe
+            rust/dist/Converter-portable.zip
       - name: Upload latest.json to Supabase (backup endpoint)
         if: success() && steps.verify.outputs.release-draft == 'false'
         env:

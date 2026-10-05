@@ -13,3 +13,5 @@ const runner = process.env.VITEST ? await import('vitest') : await import('node:
 
 /** Register a test with whichever harness loaded this file. */
 export const test = runner.test ?? runner.it;
+export const describe = runner.describe;
+export const afterEach = runner.afterEach;

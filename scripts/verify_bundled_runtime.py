@@ -64,10 +64,13 @@ def main():
             return result
 
         probe = run([str(python), "-I", "-B", "-c",
-            "import json, sys, pathlib, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs; "
+            "import json, sys, pathlib, yt_dlp.version, yt_dlp_ejs, vapoursynth as vs, cv2, numpy, onnxruntime; "
+            "assert 'CPUExecutionProvider' in onnxruntime.get_available_providers(); "
+            "assert cv2.resize(numpy.zeros((2, 2, 3), dtype=numpy.uint8), (4, 4)).shape == (4, 4, 3); "
             "from PyEngine.core.config import find_binary; "
             "print(json.dumps({'python':sys.executable, 'yt_dlp':yt_dlp.version.__version__, "
-            "'vapoursynth':str(vs.__version__), 'tools':{n:find_binary(n) for n in "
+            "'vapoursynth':str(vs.__version__), 'opencv':cv2.__version__, 'numpy':numpy.__version__, "
+            "'onnxruntime':onnxruntime.__version__, 'tools':{n:find_binary(n) for n in "
             "('ffmpeg','ffprobe','vspipe','deno')}}))"])
         details = json.loads(probe.stdout)
         for path in [details["python"], *details["tools"].values()]:
@@ -105,8 +108,8 @@ def main():
         converted = installed / 'converted.mp3'
         run([details['tools']['ffmpeg'], '-v', 'error', '-i', str(audio), '-c:a', 'libmp3lame', str(converted)])
         assert converted.stat().st_size > 0
-        print("Detached bundle smoke test passed: Python, yt-dlp/EJS, Deno, ffmpeg, ffprobe, engine IPC, audio encoding, VapourSynth/vspipe.")
-        print(json.dumps({key: details[key] for key in ("yt_dlp", "vapoursynth")}))
+        print("Detached bundle smoke test passed: Python, yt-dlp/EJS, Deno, ffmpeg, ffprobe, engine IPC, audio encoding, VapourSynth/vspipe, NumPy/OpenCV/ONNX Runtime CPU provider.")
+        print(json.dumps({key: details[key] for key in ("yt_dlp", "vapoursynth", "opencv", "numpy", "onnxruntime")}))
 
 
 if __name__ == "__main__":

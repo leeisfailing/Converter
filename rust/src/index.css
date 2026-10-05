@@ -1755,3 +1755,45 @@ header {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
+
+/* Software updates: compact status, quiet release notes, and one clear action. */
+.update-panel { display: flex; flex-direction: column; gap: 14px; }
+.update-summary { display: flex; align-items: center; gap: 13px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-secondary); }
+.update-status-icon { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px; background: var(--surface); }
+.update-version { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; line-height: 1.4; }
+.update-status { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.update-error { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; border-radius: 11px; background: var(--danger-dim); color: var(--danger); font-size: 12px; line-height: 1.6; }
+.update-download { display: flex; flex-direction: column; gap: 6px; }
+.update-notes { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.update-notes summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; list-style: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+.update-notes summary::-webkit-details-marker { display: none; }
+.update-notes summary:hover { background: var(--surface-hover); }
+.update-notes summary:focus-visible { outline-offset: -3px; }
+.update-notes summary svg { color: var(--text-muted); transition: transform 150ms ease; }
+.update-notes[open] summary { border-bottom: 1px solid var(--border); }
+.update-notes[open] summary svg { transform: rotate(180deg); }
+.update-notes-content { max-height: min(200px, 25vh); overflow-y: auto; padding: 15px 17px; scrollbar-gutter: stable; }
+.update-notes-content:focus-visible { outline-offset: -3px; }
+.release-notes { color: var(--text-secondary); font-size: 12px; line-height: 1.75; overflow-wrap: anywhere; }
+.release-notes > * + * { margin-top: 12px; }
+.release-notes h4, .release-notes h5 { font-size: 12px; font-weight: 650; line-height: 1.5; color: var(--text); }
+.release-notes > h4:not(:first-child), .release-notes > h5:not(:first-child) { margin-top: 18px; }
+.release-notes ul, .release-notes ol { padding-left: 18px; }
+.release-notes ul { list-style: disc; }
+.release-notes ol { list-style: decimal; }
+.release-notes li + li { margin-top: 5px; }
+.release-notes strong { color: var(--text); font-weight: 600; }
+.release-notes code { padding: 2px 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-secondary); color: var(--text); font-family: "SF Mono", Consolas, monospace; font-size: 11px; }
+.release-notes pre { padding: 10px 12px; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); white-space: pre; }
+.release-notes pre code { padding: 0; border: 0; background: transparent; }
+.release-reference { color: var(--text); }
+.release-reference-url { color: var(--text-muted); font-size: 11px; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.update-actions .btn { min-height: 36px; padding: 8px 12px; font-size: 12px; border-radius: 9px; }
+.update-actions .btn-primary { background: var(--gradient-accent); color: white; border-color: transparent; }
+.update-actions .btn-primary:hover:not(:disabled) { background: #0068d6; color: white; transform: none; }
+.update-actions .btn-primary:disabled { background: var(--gradient-accent); color: white; }
+.update-caption { font-size: 11px; line-height: 1.6; color: var(--text-muted); }
+.update-trust { display: flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.6; color: var(--text-muted); }
+
+.release-notes-truncated { padding-top: 12px; border-top: 1px solid var(--border); color: var(--text-muted); font-style: italic; }

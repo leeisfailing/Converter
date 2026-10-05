@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include "native_paths.h"
 #ifndef _WIN32
 #include <sys/wait.h>
 #endif
@@ -9,7 +10,12 @@
 namespace engine {
 inline FILE* open_process_pipe(const std::string& command) {
 #ifdef _WIN32
-    return _popen(command.c_str(), "r");
+    auto wide_command = utf8_to_wide(command);
+    // cmd.exe /c strips its outer quotes. Protect a quoted executable path
+    // when later arguments also contain quotes (for example a media path).
+    if (!wide_command.empty() && wide_command.front() == L'\"')
+        wide_command = L"\"" + wide_command + L"\"";
+    return _wpopen(wide_command.c_str(), L"r");
 #else
     return popen(command.c_str(), "r");
 #endif

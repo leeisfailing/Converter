@@ -5,7 +5,17 @@ AI-enhancing video, audio, and images. Built with Tauri 2, React, Rust, Python,
 C++, FFmpeg, yt-dlp, and ONNX Runtime.
 
 Download packages from this repository’s **Releases** tab and report bugs through
-**Issues**. [Linux release setup](docs/releases.md) · [Privacy](PRIVACY.md)
+**Issues**. [Linux release setup](docs/releases.md) ·
+[Windows release setup](docs/windows-releases.md) · [Privacy](PRIVACY.md)
+
+## Branches and supported platforms
+
+`main` is the combined open-source project for Linux and Windows. `Windows`
+retains the shared application and engines, with Windows-only automated builds
+and release workflows. Linux packaging files remain available in that branch so
+shared fixes can be merged back to `main` without maintaining duplicate engines.
+Open pull requests against `main` for changes that should reach both platforms.
+macOS and mobile packages are not supported release targets.
 
 ## Download and run
 
@@ -15,8 +25,8 @@ for availability; older releases may contain different packages.
 | Platform | Package | Launch | Updates |
 | --- | --- | --- | --- |
 | Linux x86_64, glibc | Portable `.AppImage` | Make executable, then run | Signed in-app updates |
-| Windows x64 | Installer | Run the installer | Maintained separately |
-| Windows x64 | Portable ZIP | Extract all files; run `converter.exe` | Maintained separately |
+| Windows x64 | NSIS installer / MSI | Run the installer | Signed in-app updates |
+| Windows x64 | Portable ZIP | Extract all files; run `converter.exe` | Manual replacement |
 
 On Linux, substitute your downloaded filename:
 
@@ -36,9 +46,9 @@ Linux release builds use Ubuntu 24.04. AppImages still need compatible glibc,
 desktop libraries, and GPU drivers. Linux aarch64 runtime setup is supported
 for source builds; the release pipeline publishes x86_64 only.
 
-Windows builds and release automation are maintained separately. This release
-update focuses on Linux; Windows uses its existing configuration and workflows.
-Windows requires Microsoft WebView2, including for portable builds.
+Windows requires Microsoft WebView2, including for portable builds. Windows
+and Linux use separate release tags, update channels, and signing keys within
+the shared project.
 
 ## Tools and queue
 
@@ -195,6 +205,10 @@ Signed updater builds require `TAURI_SIGNING_PRIVATE_KEY` and, for encrypted
 keys, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the process environment. Keep
 private material out of source control and shell history.
 
+Linux packaging keeps graphics loaders and Fontconfig on the host so they match
+your installed drivers and font configuration. The final AppImage is signed after
+this compatibility step; the bundled media engines remain included.
+
 Use Ubuntu 24.04 for release packaging. Modern Arch GDK Pixbuf can be
 incompatible with Tauri's GTK packaging plugin; Arch remains supported for
 development. Build output should be on a native Linux filesystem, since NTFS
@@ -210,8 +224,10 @@ signed updater distribution.
 | [Linux](.github/workflows/linux.yml) | Main/master pushes, PRs, manual checks, release calls | Test Linux; build signed AppImage for release calls |
 | [Linux Release](.github/workflows/linux-release.yml) | `linux-v*` pushes or manual runs on a version tag | Verify and publish Linux packages and update metadata |
 
-Windows [checks](.github/workflows/ci.yml) and
-[release workflow](.github/workflows/release.yml) remain separate. Linux uses
+Windows [checks](.github/workflows/ci.yml) run on `main`, `master`, and `Windows`
+pushes and pull requests. The Windows
+[release workflow](.github/workflows/release.yml) creates a draft containing
+NSIS, MSI, a portable ZIP, and the Windows updater manifest. Linux uses
 its own release tags and updater channel so the platform maintainers can work
 independently.
 
@@ -300,6 +316,13 @@ cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
 - **Invalid update signature:** verify the signing key matches the embedded
   public key. Do not bypass signature verification.
 - **AppImage cannot mount:** install FUSE 2 compatibility or try extraction mode.
+- **Wayland `Error 71` / WebKit crash:** on NVIDIA Wayland sessions, Converter
+  defaults `__NV_DISABLE_EXPLICIT_SYNC=1` before creating the window. Explicit
+  environment settings take precedence. If the crash persists, try
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri dev` from `rust/`, or prefix
+  the AppImage command with the same variable. This selects a slower UI rendering
+  path; media encoding and AI acceleration have their own settings. See
+  [Tauri's Linux graphics guidance](https://v2.tauri.app/develop/debug/linux-graphics/).
 - **Media job fails:** inspect the debug console (`Ctrl+Shift+D`). Website,
   codec, driver, and target-size constraints vary. Try CPU for hardware errors.
 

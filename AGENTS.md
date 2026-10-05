@@ -29,11 +29,12 @@ native C++ engine, both of which shell out to FFmpeg/FFprobe sidecars.
 - Upscale (video/image, hardware-aware) and Enhance (Real-ESRGAN via ONNX)
 - Job queue with progress, cancellation, and cancellation-safe cleanup
 - Settings (GPU selection, themes, output folders) and a debug console
-- Signed updater (Windows releases only; `updater.key.pub` is public, the
-  private key must never be committed)
+- Signed updater (separate Linux AppImage and Windows release channels;
+  `updater.key.pub` and `updater.linux.key.pub` are public, private keys must
+  never be committed)
 
 **Platform**: Windows x64 (installer/portable builds) and Linux glibc
-(x86_64/aarch64, app executable only). CI runs on Node.js 24, Python 3.12,
+(x86_64 AppImage releases; aarch64 source builds). CI runs on Node.js 24, Python 3.12,
 stable Rust.
 
 ## Repository Structure
@@ -101,7 +102,7 @@ cd rust && npm run preview                # frontend-only preview
 
 ```bash
 cd rust && npm run build                  # typecheck + Vite bundle (frontend only)
-cd rust && npm run build:linux            # Linux app -> src-tauri/target/release/converter
+cd rust && npm run build:linux            # Linux portable AppImage -> target/release/bundle/appimage/
 cd rust && npm run build:installer        # Windows NSIS installer
 cd rust && npm run build:portable         # Windows portable zip
 ```

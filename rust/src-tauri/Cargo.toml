@@ -1,6 +1,6 @@
 [package]
 name = "converter"
-version = "4.0.9"
+version = "4.0.10"
 description = "Media Downloader"
 authors = ["Converter contributors"]
 edition = "2024"

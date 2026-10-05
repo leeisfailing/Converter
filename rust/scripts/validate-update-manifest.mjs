@@ -1,3 +1,4 @@
+import { readReleasePublicKey } from './release-updater-config.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -178,7 +179,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const release = readJson(process.argv[3]);
     const config = readJson(fileURLToPath(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
     const repo = resolveRepository({ cwd: fileURLToPath(new URL('../', import.meta.url)) });
-    await validateUpdateManifest(manifest, release, config.version, repo, { publicKey: config.plugins.updater.pubkey, ...(process.argv.includes('--linux-only') ? { requiredPlatforms: ['linux-x86_64'] } : {}) });
+    await validateUpdateManifest(manifest, release, config.version, repo, { publicKey: readReleasePublicKey(config, process.argv.includes('--linux-only')), ...(process.argv.includes('--linux-only') ? { requiredPlatforms: ['linux-x86_64'], tag: `linux-v${config.version}` } : {}) });
     console.log(`Validated updater assets for v${config.version}: ${Object.keys(manifest.platforms).join(', ')}`);
   };
   main().catch(error => {

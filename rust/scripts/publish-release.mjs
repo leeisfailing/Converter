@@ -1,3 +1,4 @@
+import { readReleasePublicKey } from './release-updater-config.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -51,7 +52,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const directory = path.resolve(process.argv[2]);
   const manifest = JSON.parse(readFileSync(path.join(directory, 'latest.json')));
   const repo = resolveRepository();
-  const publicKey = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url))).plugins.updater.pubkey;
+  const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
+  const publicKey = readReleasePublicKey(config, process.argv.includes('--linux-only'));
   const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   if (process.argv.includes('--linux-only')) {
     const { publishLinuxRelease } = await import('./publish-linux-release.mjs');

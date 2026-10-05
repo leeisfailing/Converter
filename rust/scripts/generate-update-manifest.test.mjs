@@ -65,3 +65,9 @@ test('Linux-only releases require neither Windows artifacts nor a portable ZIP',
   assert.match(manifest.platforms['linux-x86_64'].url, /\/linux-v1\.2\.3\//);
   assert.deepEqual(Object.keys(manifest.platforms), ['linux-x86_64']);
 }));
+
+test('preserves tracked release notes in the updater manifest', () => withFixture(f => {
+  const notes = '# Linux release\n\nSigned portable update.';
+  const manifest = generateUpdateManifest(collectAssets(f.directory), '1.2.3', 'owner/repo', f.encodedKey, { requiredPlatforms: ['linux-x86_64'], notes });
+  assert.equal(manifest.notes, notes);
+}));

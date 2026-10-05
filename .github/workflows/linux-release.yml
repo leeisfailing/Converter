@@ -34,7 +34,7 @@ jobs:
     needs: linux
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: release
+    environment: linux-release
     permissions:
       contents: write
     steps:

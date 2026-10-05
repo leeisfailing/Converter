@@ -11,9 +11,9 @@ checks, packaging script, and shared Tauri configuration remain unchanged.
 ## Configure GitHub
 
 1. Enable GitHub Actions in this repository.
-2. Create an Actions environment named **release** and permit tags matching `linux-v*`.
-3. Add **TAURI_SIGNING_PRIVATE_KEY** to that environment using the existing private
-   key corresponding to `rust/src-tauri/updater.key.pub`.
+2. Create an Actions environment named **linux-release** and permit tags matching `linux-v*`.
+3. Add **TAURI_SIGNING_PRIVATE_KEY** to that environment using the Linux private
+   key corresponding to `rust/src-tauri/updater.linux.key.pub`.
 4. For an encrypted key, add **TAURI_SIGNING_PRIVATE_KEY_PASSWORD**. For a key with
    an empty password, omit the password secret; the workflow passes an empty string.
 5. Keep GitHub Releases publicly downloadable for the static updater endpoint.
@@ -23,15 +23,24 @@ in arguments or shell history:
 
 ```bash
 gh auth login
-gh secret set TAURI_SIGNING_PRIVATE_KEY --repo leeisfailing/Converter --env release < /secure/path/updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY --repo leeisfailing/Converter --env linux-release < /secure/path/updater.key
 # Encrypted key only:
-gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo leeisfailing/Converter --env release < /secure/path/updater-password
-gh secret list --repo leeisfailing/Converter --env release
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo leeisfailing/Converter --env linux-release < /secure/path/updater-password
+gh secret list --repo leeisfailing/Converter --env linux-release
 ```
 
 Protect those files with owner-only permissions. Never upload the `.pub` file as the
-private-key secret, commit signing material, or change the existing public key: doing
-so prevents existing installations from trusting updates.
+private-key secret, commit signing material, or change the Linux public key after shipping: doing so prevents existing Linux
+installations from trusting updates. The original Windows public key and shared
+configuration remain independent and unchanged.
+
+The original signing private key was lost. Linux therefore starts with a newly
+generated, independent key in `tauri.linux.conf.json` and `updater.linux.key.pub`.
+Install the first release using this key manually; installations trusting an old
+key cannot migrate through a signature from the new key. Future Linux updates
+must use this same Linux key. Back up its private file and password securely in a
+second location outside this repository and retain them across machine changes.
+The **linux-release** environment isolates signing secrets from Windows releases.
 
 Linux overrides the updater endpoint to use only
 `https://github.com/leeisfailing/Converter/releases/download/updater-linux/latest-linux.json`.
@@ -46,10 +55,11 @@ repository permissions; only the final publish job receives `contents: write`.
 3. Commit the release change and push the matching stable `linux-v<version>` tag.
    A manual Linux Release run must also select a matching tag, not a branch.
 4. Linux runs the frontend, C++, private Python and Rust tests before packaging.
-   The packaging job uses the **release** environment, builds a signed AppImage,
+   The packaging job uses the **linux-release** environment, builds a signed AppImage,
    extracts it, checks resource layout and exercises its Python/media tools.
 5. The final job verifies the AppImage signature against the retained public key,
-   creates `latest.json`, uploads a draft and verifies uploaded assets before publishing.
+   creates `latest.json` using release notes from
+   `docs/releases/linux-v<version>.md` when available, uploads a draft and verifies uploaded assets before publishing.
 
 The release contains `Converter_<version>_amd64.AppImage`, its `.sig`, `latest.json`
 and `SHA256SUMS.txt`. One publisher writes the manifest and assets. Failed builds or
@@ -105,7 +115,7 @@ packaging tools. An unsigned local smoke build is available with
 
 On a clean Linux x64 machine, download the AppImage, mark it executable, and run it
 from a writable directory. Exercise media download, conversion, compression and
-enhancement. Publish a higher version using the same signing key and verify the
+enhancement. Publish a higher version using the same Linux signing key and verify the
 old AppImage offers and installs the update, then relaunches successfully.
 
 A successful hosted build and an actual old-to-new install are required to confirm

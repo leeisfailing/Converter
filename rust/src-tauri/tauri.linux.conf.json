@@ -46,7 +46,8 @@
     "updater": {
       "endpoints": [
         "https://github.com/leeisfailing/Converter/releases/download/updater-linux/latest-linux.json"
-      ]
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCMDUxM0VFOUEzQzE1QkIKUldTN0ZUeWE3aE1GT3pkMnQ4MHo3dFhsTWFpNDFkVmVJbjJZbTB4NnpxT3k1dTMxc2tOSnI4ZEQK"
     }
   }
 }

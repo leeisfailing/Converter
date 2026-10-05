@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync, writeFileSync, copyFileSync } from 'node:fs';
+import { readReleasePublicKey } from './release-updater-config.mjs';
+import { readFileSync, readdirSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +40,7 @@ export function generateUpdateManifest(files, version, repo, publicKey, options 
     const portable = select(new RegExp(`^Converter_${version.replaceAll('.', '\\.')}\\_windows_x64_portable\\.zip$`));
     if (!readFileSync(portable).subarray(0, 2).equals(Buffer.from('PK'))) throw new Error('Portable release asset is not a ZIP archive.');
   }
-  return { version, notes: requiredPlatforms.length === 1 && requiredPlatforms[0] === 'linux-x86_64' ? 'Linux portable AppImage update.' : 'Linux AppImage and Windows installer updates.', pub_date: new Date().toISOString(), platforms };
+  return { version, notes: options.notes ?? (requiredPlatforms.length === 1 && requiredPlatforms[0] === 'linux-x86_64' ? 'Linux portable AppImage update.' : 'Linux AppImage and Windows installer updates.'), pub_date: new Date().toISOString(), platforms };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -47,7 +48,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
   const files = collectAssets(directory).filter(file => !['latest.json', 'latest-linux.json', 'SHA256SUMS.txt'].includes(path.basename(file)));
   const repo = resolveRepository();
-  const manifest = generateUpdateManifest(files, config.version, repo, config.plugins.updater.pubkey, process.argv.includes('--linux-only') ? { requiredPlatforms: ['linux-x86_64'], requirePortable: false, tag: `linux-v${config.version}` } : {});
+  const notesPath = new URL(`../../docs/releases/linux-v${config.version}.md`, import.meta.url);
+  const releaseNotes = process.argv.includes('--linux-only') && existsSync(notesPath) ? readFileSync(notesPath, 'utf8') : undefined;
+  const manifest = generateUpdateManifest(files, config.version, repo, readReleasePublicKey(config, process.argv.includes('--linux-only')), process.argv.includes('--linux-only') ? { requiredPlatforms: ['linux-x86_64'], requirePortable: false, tag: `linux-v${config.version}`, notes: releaseNotes } : {});
   for (const file of files) if (path.dirname(file) !== directory) copyFileSync(file, path.join(directory, path.basename(file)));
   writeFileSync(path.join(directory, 'latest.json'), JSON.stringify(manifest, null, 2) + '\n');
   const checksums = files.map(file => `${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${path.basename(file)}`).join('\n');

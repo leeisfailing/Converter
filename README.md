@@ -88,8 +88,9 @@ the embedded public key. Source executables require a supported AppImage for
 automatic update installation.
 
 Retain the private signing key matching
-[`updater.key.pub`](rust/src-tauri/updater.key.pub). Changing it breaks trust for
-existing installations. Linux releases use `linux-v<version>` tags and never
+[`updater.linux.key.pub`](rust/src-tauri/updater.linux.key.pub). Linux uses a
+separate key from Windows. The first release using this key requires manual
+installation; future Linux updates must retain the same key. Linux releases use `linux-v<version>` tags and never
 change the repository's Windows `latest.json` or latest-release pointer.
 
 ## Develop from source
@@ -215,12 +216,12 @@ Windows [checks](.github/workflows/ci.yml) and
 its own release tags and updater channel so the platform maintainers can work
 independently.
 
-Configure the GitHub environment **`release`**, allow tag deployments matching
+Configure the GitHub environment **`linux-release`**, allow tag deployments matching
 `linux-v*`, and add these environment secrets:
 
 | Secret | Value |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the existing private signing key |
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the Linux private signing key |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Its password; omit for an unencrypted key |
 
 GitHub supplies the workflow token; no personal access token or external update
@@ -248,8 +249,10 @@ Published binaries are immutable; recovery re-verifies existing assets rather
 than replacing them. Failed checks do not advance the update channel.
 
 Read [the Linux release guide](docs/releases.md) for secure secret upload,
-release recovery, and runtime verification. `npm run signer:generate` is for
-initial setup, not routine releases; preserve the existing signing key.
+release recovery, and runtime verification. Preserve secure backups of the Linux
+private key and its password outside the repository. The shared
+`npm run signer:generate` command updates Windows trust; do not use it for Linux
+release key rotation.
 
 ## Tests and checks
 

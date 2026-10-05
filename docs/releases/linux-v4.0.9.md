@@ -24,7 +24,7 @@ Keep the AppImage in a writable folder so the updater can replace it. This relea
 
 ## Verification
 
-The unsigned AppImage validation run on Ubuntu 24.04 passed the frontend, Rust, Python, and C++ tests, built the AppImage, and exercised conversion and compression using its extracted runtime. The subsequent Linux signing bootstrap must pass its signed release workflow before publication. A real installed old-to-new update has not yet been verified.
+Ubuntu 24.04 CI passed the frontend, Rust, Python, and C++ tests, built the signed AppImage, and exercised conversion and compression using its extracted runtime. Before publication, the AppImage signature, SHA-256 digests, and uploaded files were verified. A real installed old-to-new update has not yet been verified.
 
 This first release using the new Linux signing key requires manual installation.
 Back up the Linux private signing key securely; future AppImage updates must use

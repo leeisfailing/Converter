@@ -34,7 +34,11 @@ export async function publishRelease({ directory, manifest, repo, publicKey, tag
   if (release && !release.draft) throw new Error('Refusing to replace an already published release. Bump the version.');
   if (!release) {
     gh(['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', `Converter ${tag}`, '--notes', manifest.notes]);
-    release = JSON.parse(gh(['api', `repos/${repo}/releases/tags/${tag}`]));
+    // The REST by-tag endpoint omits drafts; gh resolves draft tags for the
+    // authenticated caller and provides the database ID for a reliable lookup.
+    const { databaseId } = JSON.parse(gh(['release', 'view', tag, '--repo', repo, '--json', 'databaseId']));
+    if (!Number.isSafeInteger(databaseId) || databaseId <= 0) throw new Error('Created draft has no valid release ID.');
+    release = JSON.parse(gh(['api', `repos/${repo}/releases/${databaseId}`]));
   }
   const files = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && entry.name !== 'latest-linux.json').map(entry => path.join(directory, entry.name));
   gh(['release', 'upload', tag, '--repo', repo, '--clobber', ...files]);

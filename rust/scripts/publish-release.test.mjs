@@ -13,13 +13,15 @@ async function fixture(callback) {
   const release = { id: 42, tag_name: 'v1.2.3', draft: true, assets: [{ name: 'Converter_1.2.3_windows_x64_portable.zip', state: 'uploaded', size: 4 }] };
   const events = [];
   const options = { directory, manifest: { version: '1.2.3', notes: 'Release' }, repo: 'owner/repo', publicKey: 'public',
-    gh: args => { events.push(args.slice(0, 2).join(' ')); return JSON.stringify(args.includes('--slurp') ? [] : release); },
+    gh: args => { events.push(args.slice(0, 2).join(' ')); if (args[0] === 'release' && args[1] === 'view') return JSON.stringify({ databaseId: release.id });
+      if (args[0] === 'api' && args[1].includes('/releases/tags/')) throw new Error('Draft by-tag lookup must not be used.');
+      return JSON.stringify(args.includes('--slurp') ? [] : release); },
     validate: async () => { events.push('validate'); }, verifyFiles: async () => { events.push('verify bytes'); } };
   try { await callback(options, release, events); } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 test('publishes only after uploads, signed manifest validation and all byte verification', async () => fixture(async (options, release, events) => {
   await publishRelease(options);
-  assert.deepEqual(events, ['api repos/owner/repo/releases?per_page=100', 'release create', 'api repos/owner/repo/releases/tags/v1.2.3', 'release upload', 'api repos/owner/repo/releases/42', 'validate', 'verify bytes', 'release edit']);
+  assert.deepEqual(events, ['api repos/owner/repo/releases?per_page=100', 'release create', 'release view', 'api repos/owner/repo/releases/42', 'release upload', 'api repos/owner/repo/releases/42', 'validate', 'verify bytes', 'release edit']);
 }));
 test('failed signature validation leaves the release unpublished', async () => fixture(async (options, release, events) => {
   options.validate = async () => { throw new Error('bad signature'); };
@@ -70,3 +72,10 @@ for (const [label, args] of [['Linux', ['--linux-only']], ['default', []]]) {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 }
+
+test('creates drafts using GitHub CLI database ID rather than REST tag lookup', async () => fixture(async (options, release, events) => {
+  await publishRelease(options);
+  assert.ok(events.includes('release view'));
+  assert.ok(events.includes('api repos/owner/repo/releases/42'));
+  assert.ok(!events.some(event => event.includes('/releases/tags/')));
+}));

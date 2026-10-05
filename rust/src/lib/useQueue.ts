@@ -11,14 +11,35 @@ interface QueueEventHandlers {
   onFinished: (id: string, ok: boolean, message: string, filePath: string) => void;
 }
 
+function freshAttempt(item: QueueItem): QueueItem {
+  return {
+    ...item,
+    id: crypto.randomUUID(),
+    status: "pending",
+    progress: 0,
+    createdAt: Date.now(),
+    assignedGpu: undefined,
+    error: undefined,
+    resultPath: undefined,
+    downloadSpeed: undefined,
+    downloadEta: undefined,
+    downloadIsLive: undefined,
+    downloadPhase: undefined,
+  };
+}
+
 export function useQueue() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const queueRef = useRef<QueueItem[]>([]);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
   const concurrencyRef = useRef<ConcurrencySnapshot>({
     download: 1, convert: 1, transcoder: 1, upscale: 1,
     activeDownload: 0, activeConvert: 0, activeTranscoder: 0, activeUpscale: 0,
   });
   const gpuReservations = useRef(new Map<string, string>());
+  const inFlightIds = useRef(new Set<string>());
+  const retryWaitsFor = useRef(new Map<string, string>());
   const activeByType = useRef<Record<string, number>>({ download: 0, convert: 0, transcoder: 0, upscale: 0, enhance: 0 });
 
   const commit = useCallback((change: (items: QueueItem[]) => QueueItem[]) => {
@@ -82,8 +103,12 @@ export function useQueue() {
   }, []);
 
   const processNextBatch = useCallback((onProcess: (item: QueueItem) => Promise<void>, gpuEncoders?: string[]) => {
+    if (pausedRef.current) return;
     const pending = queueRef.current.filter((entry) => entry.status === "pending");
     for (const item of pending) {
+      if (pausedRef.current) break;
+      if (!queueRef.current.some((entry) => entry.id === item.id && entry.status === "pending")) continue;
+      if (retryWaitsFor.current.has(item.id)) continue;
       const type = item.type;
       const limit = maxForType(type);
       const current = activeByType.current[type] ?? 0;
@@ -98,6 +123,7 @@ export function useQueue() {
         if (!assignedGpu) continue;
         gpuReservations.current.set(item.id, assignedGpu);
       }
+      inFlightIds.current.add(item.id);
       activeByType.current[type] = current + 1;
       updateItemStatus(item.id, "active", { progress: 0, assignedGpu });
       void (async () => {
@@ -112,6 +138,10 @@ export function useQueue() {
           }
         } finally {
           gpuReservations.current.delete(item.id);
+          inFlightIds.current.delete(item.id);
+          for (const [retryId, previousId] of retryWaitsFor.current) {
+            if (previousId === item.id) retryWaitsFor.current.delete(retryId);
+          }
           activeByType.current[type] = Math.max(0, (activeByType.current[type] ?? 1) - 1);
           commit((items) => [...items]);
         }
@@ -122,6 +152,31 @@ export function useQueue() {
   const setConcurrency = useCallback((snapshot: ConcurrencySnapshot) => {
     concurrencyRef.current = snapshot;
     commit((items) => [...items]);
+  }, [commit]);
+
+  const togglePaused = useCallback(() => {
+    pausedRef.current = !pausedRef.current;
+    setPaused(pausedRef.current);
+  }, []);
+
+  // Each attempt needs its own ID: events and cleanup from a previous attempt
+  // must never complete, fail, or release resources belonging to its retry.
+  const retryItem = useCallback((id: string) => {
+    commit((items) => items.map((item) => {
+      if (item.id !== id || (item.status !== "failed" && item.status !== "cancelled")) return item;
+      const retry = freshAttempt(item);
+      if (inFlightIds.current.has(item.id)) retryWaitsFor.current.set(retry.id, item.id);
+      return retry;
+    }));
+  }, [commit]);
+
+  const retryFailed = useCallback(() => {
+    commit((items) => items.map((item) => {
+      if (item.status !== "failed") return item;
+      const retry = freshAttempt(item);
+      if (inFlightIds.current.has(item.id)) retryWaitsFor.current.set(retry.id, item.id);
+      return retry;
+    }));
   }, [commit]);
 
   const enqueue = useCallback((item: QueueItem) => commit((items) => [...items, item]), [commit]);
@@ -137,7 +192,8 @@ export function useQueue() {
   }, [cancelActive, cancelItem]);
 
   return {
-    queue, queueRef, processNextBatch, enqueue, removeItem, clearCompleted,
+    queue, queueRef, paused, togglePaused, retryItem, retryFailed,
+    processNextBatch, enqueue, removeItem, clearCompleted,
     cancelActive, cancelItem, requestCancel, updateItemStatus, registerListeners, setConcurrency, concurrencyRef,
     isProcessing: queue.some((item) => item.status === "active") || Object.values(activeByType.current).some((count) => count > 0),
     hasQueue: queue.length > 0,

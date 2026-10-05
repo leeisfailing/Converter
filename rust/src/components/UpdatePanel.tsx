@@ -8,9 +8,10 @@ export default function UpdatePanel({ hasPendingWork }: { hasPendingWork: boolea
   const busy = isUpdateBusy(update.status);
   const canInstall = update.status === "update_available" || (update.status === "error" && update.failedAction === "install");
   const restartFailed = update.failedAction === "restart";
+  const needsRestart = update.downloaded && !busy;
   const percent = update.totalBytes ? Math.min(100, Math.round(update.downloadedBytes / update.totalBytes * 100)) : null;
   const statusText = {
-    idle: "Check for a newer version of Converter.",
+    idle: update.downloaded ? "Update installed. Restart Converter to finish." : "Check for a newer version of Converter.",
     checking: "Checking for updates...",
     update_available: `Version ${update.version} is available.`,
     up_to_date: `You're up to date on v${update.currentVersion}.`,
@@ -62,7 +63,7 @@ export default function UpdatePanel({ hasPendingWork }: { hasPendingWork: boolea
       )}
       {canInstall && hasPendingWork && <p className="text-xs text-app-warning">Finish or remove queued media jobs before installing the update.</p>}
       <div className="flex flex-wrap gap-2">
-        <motion.button type="button" onClick={() => void checkForUpdate()} disabled={busy || restartFailed} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} className="btn px-3 py-2 text-xs">
+        <motion.button type="button" onClick={() => void checkForUpdate()} disabled={busy || update.downloaded} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} className="btn px-3 py-2 text-xs">
           <RefreshCw size={14} aria-hidden="true" /> Check for Updates
         </motion.button>
         {canInstall && (
@@ -70,7 +71,7 @@ export default function UpdatePanel({ hasPendingWork }: { hasPendingWork: boolea
             <Download size={14} aria-hidden="true" /> {update.failedAction === "install" ? "Retry Update" : "Install & Restart"}
           </motion.button>
         )}
-        {restartFailed && <button type="button" onClick={() => void restartAfterUpdate()} disabled={busy || hasPendingWork} className="btn btn-primary px-3 py-2 text-xs">Restart Converter</button>}
+        {needsRestart && <button type="button" onClick={() => void restartAfterUpdate()} disabled={busy || hasPendingWork} className="btn btn-primary px-3 py-2 text-xs">Restart Converter</button>}
       </div>
       <p className="text-xs text-app-text-secondary">Updates come from GitHub Releases and are verified before installation.</p>
     </section>

@@ -5,6 +5,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { version } from "../../package.json";
 import { readStorage, removeStorage, writeStorage } from "./storage";
+import { getUpdateDistribution, type UpdateDistribution } from "./tauri-commands";
 
 export type UpdateStatus =
   | "idle" | "checking" | "update_available" | "up_to_date"
@@ -20,6 +21,7 @@ export interface UpdateState {
   error: string | null;
   failedAction: "check" | "install" | "restart" | null;
   downloaded: boolean;
+  distribution: UpdateDistribution | null;
 }
 
 const STORAGE_KEY = "converter-update-installed";
@@ -27,7 +29,7 @@ const STORAGE_KEY = "converter-update-installed";
 let state: UpdateState = {
   status: "idle", currentVersion: version, version: null, notes: null,
   downloadedBytes: 0, totalBytes: null, error: null, failedAction: null,
-  downloaded: loadInstalledFlag(),
+  downloaded: loadInstalledFlag(), distribution: null,
 };
 let pendingUpdate: Update | null = null;
 let downloadAccumulated = 0;
@@ -81,6 +83,7 @@ export function isUpdateBusy(status: UpdateStatus) {
 }
 
 function fail(action: UpdateState["failedAction"], error: unknown) {
+  console.error(`[updater] ${action} failed:`, error);
   const message = error instanceof Error ? error.message : String(error);
   let friendly = message;
   if (message.includes("timeout") || message.includes("timed out")) {
@@ -96,14 +99,16 @@ function fail(action: UpdateState["failedAction"], error: unknown) {
 async function releaseUpdate() {
   const previous = pendingUpdate;
   pendingUpdate = null;
-  if (previous) await previous.close().catch(() => {});
+  if (previous) await previous.close().catch((error: unknown) => console.error("[updater] Could not release update resource:", error));
 }
 
 export async function loadAppVersion() {
   if (!isTauri()) return;
   try {
     setState({ currentVersion: await getVersion() });
-  } catch {}
+  } catch (error) {
+    console.error("[updater] Could not read application version:", error);
+  }
 }
 
 export async function checkForUpdate() {
@@ -115,6 +120,9 @@ export async function checkForUpdate() {
   await releaseUpdate();
   try {
     if (!isTauri()) throw new Error("Open the desktop app to check for updates. Updates are unavailable in browser previews.");
+    const distribution = await getUpdateDistribution();
+    setState({ distribution });
+    if (distribution === "unsupported") throw new Error("Automatic updates require the Linux AppImage or Windows installer. Download a supported package from GitHub Releases.");
     pendingUpdate = await check({ timeout: 15_000 });
     setState(pendingUpdate ? {
       status: "update_available", currentVersion: pendingUpdate.currentVersion,
@@ -135,12 +143,12 @@ export async function restartAfterUpdate() {
   }
 }
 
-function isWindows(): boolean {
-  return typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("windows");
-}
-
 export async function downloadAndInstallUpdate() {
   if (!pendingUpdate || state.downloaded || isUpdateBusy(state.status)) return;
+  if (state.distribution !== "windows_installer" && state.distribution !== "linux_appimage") {
+    fail("install", new Error("This package does not support automatic installation."));
+    return;
+  }
   setState({ status: "downloading", error: null, failedAction: null, downloadedBytes: 0, totalBytes: null });
   downloadAccumulated = 0;
   try {
@@ -177,7 +185,7 @@ export async function downloadAndInstallUpdate() {
     return;
   }
   await releaseUpdate();
-  if (isWindows()) {
+  if (state.distribution === "windows_installer") {
     setState({ status: "idle" });
   } else {
     await restartAfterUpdate();

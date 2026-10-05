@@ -1,160 +1,148 @@
 # Converter
 
-A desktop app for downloading, converting, compressing, and enhancing media.
-Built with React, TypeScript, Tauri, Rust, and C++/Python media engines powered
-by FFmpeg, yt-dlp, and ONNX Runtime.
+A desktop workspace for downloading, converting, compressing, upscaling, and
+AI-enhancing video, audio, and images. Built with Tauri 2, React, Rust, Python,
+C++, FFmpeg, yt-dlp, and ONNX Runtime.
 
-> **Current release: v4.0.8** — Windows (installer + portable). Linux
-> production packaging is coming soon.
+[Downloads](https://github.com/leeisfailing/Converter/releases) ·
+[Report an issue](https://github.com/leeisfailing/Converter/issues) ·
+[Linux release setup](docs/releases.md)
 
-## Features
+## Download and run
 
-| Tool | What it does |
+The release pipeline produces the packages below. Check the release asset list
+for availability; older releases may contain different packages.
+
+| Platform | Package | Launch | Updates |
+| --- | --- | --- | --- |
+| Linux x86_64, glibc | Portable `.AppImage` | Make executable, then run | Signed in-app updates |
+| Windows x64 | Installer | Run the installer | Maintained separately |
+| Windows x64 | Portable ZIP | Extract all files; run `converter.exe` | Maintained separately |
+
+On Linux, substitute your downloaded filename:
+
+```bash
+chmod +x Converter_<version>_amd64.AppImage
+./Converter_<version>_amd64.AppImage
+```
+
+Keep the AppImage in a writable folder so the updater can replace it. FUSE 2
+may be needed by your distribution. If mounting is unavailable, try:
+
+```bash
+./Converter_<version>_amd64.AppImage --appimage-extract-and-run
+```
+
+Linux release builds use Ubuntu 24.04. AppImages still need compatible glibc,
+desktop libraries, and GPU drivers. Linux aarch64 runtime setup is supported
+for source builds; the release pipeline publishes x86_64 only.
+
+Windows builds and release automation are maintained separately. This release
+update focuses on Linux; Windows uses its existing configuration and workflows.
+Windows requires Microsoft WebView2, including for portable builds.
+
+## Tools and queue
+
+| Tool | Use it for |
 | --- | --- |
-| Download | Save video or audio from supported URLs with format and quality choices. |
-| Convert | Convert video, audio, and images between supported formats. |
-| Transcoder | Compress by quality or reduce to a target size in KB, MB, or GB. |
-| Upscale | Increase video and image resolution with hardware-aware processing. |
-| Enhance | Apply Real-ESRGAN 2× or 4× AI enhancement to photos and videos. |
+| Download | Save supported video/audio links with format and quality choices |
+| Convert | Change video, audio, or image formats |
+| Transcoder | Compress by quality or reduce toward a target file size |
+| Upscale | Increase video or image resolution with hardware-aware processing |
+| Enhance | Apply Real-ESRGAN enhancement using ONNX models |
 
-Jobs run through a queue with progress, cancellation, and configurable output
-folders. Settings include GPU selection, light and dark themes, and a debug
-console. Video tasks can use NVIDIA NVENC, AMD AMF, or Intel Quick Sync when the
-installed drivers and FFmpeg build support them.
+Add work to the queue and keep using the other tools while jobs process.
+Progress, download speed, cancellation, and errors appear beside each job.
+**Pause queue** holds pending work while active jobs finish; **Resume queue**
+starts scheduling again. Retry failed or cancelled jobs individually, or retry
+all failed jobs. Each retry starts a fresh attempt with the original options.
+Clear finished jobs when you no longer need their history.
 
-TikTok links use a separate TikWM/HTTP downloader with watermarked and
-no-watermark options. These links are sent to the third-party TikWM service;
-availability depends on that service. Other supported sites use yt-dlp.
+Settings control output folders, concurrency, GPU selection, and appearance.
+The interface uses neutral light/dark surfaces, blue accents, keyboard focus
+indicators, and reduced-motion preferences. Typography prefers locally
+installed SF Pro Text and SF Pro Display, then platform system fonts. Apple
+font files are not bundled or downloaded.
 
-## Platform support
+Hardware encoding can use NVIDIA NVENC, AMD AMF, or Intel Quick Sync when the
+drivers and FFmpeg build support them. Choose CPU when hardware encoding is
+unavailable. ONNX model inference and FFmpeg encoding use separate acceleration
+paths. Selecting a video encoder does not install a GPU inference provider.
+AI models download when first needed.
 
-| Platform | Run from source | Production build |
-| --- | --- | --- |
-| Windows x64 | Supported | **Installer (NSIS) and portable zip** — the shipping formats |
-| Linux with glibc | x86_64 and aarch64 runtime setup | **Coming soon** (app executable only for now) |
+TikTok links use the third-party TikWM service, including watermark options.
+Other supported sites use yt-dlp. Availability depends on websites,
+authentication, and upstream services.
 
-Windows is the primary release platform: each release publishes a signed NSIS
-installer and a self-contained portable zip (no install step, just unzip and run)
-via the [release workflow](.github/workflows/release.yml). Linux production
-packaging (AppImage, deb/rpm, and installer) is planned but not yet built; today
-Linux is supported for running from source and building the app executable.
+## Linux software updates
 
-Linux has been tested locally on Arch Linux x86_64 with NVIDIA hardware,
-including conversion, reduction, upscaling, AI enhancement, and clean shutdown.
-Hardware acceleration depends on the machine and its drivers.
+Open **About & Updates** to check manually. The app also checks after startup.
+The Linux AppImage reads `latest-linux.json` from the dedicated `updater-linux`
+GitHub Release. Tauri verifies the AppImage signature before installation,
+replaces the writable AppImage, and restarts Converter. Finish or remove
+pending media jobs before installing an update.
 
-## Get started
+The static manifest is version metadata served over GitHub HTTPS; it is not
+itself signed. Downloaded update binaries are cryptographically verified against
+the embedded public key. Source executables require a supported AppImage for
+automatic update installation.
+
+Retain the private signing key matching
+[`updater.key.pub`](rust/src-tauri/updater.key.pub). Changing it breaks trust for
+existing installations. Linux releases use `linux-v<version>` tags and never
+change the repository's Windows `latest.json` or latest-release pointer.
+
+## Develop from source
+
+Use **Node.js 24**, current stable Rust/Cargo, Python 3.11+, and CMake 3.20+.
+All npm commands run in `rust/`; there is no root `package.json`.
 
 ```bash
 git clone https://github.com/leeisfailing/Converter.git
 cd Converter
 ```
 
-Use Node.js 24, which is also used by CI. The frontend requires Node.js 22.12 or
-newer. Building requires a current stable Rust/Cargo toolchain, Python 3.11 or
-newer, and CMake 3.20 or newer. Tauri's CLI is included in the npm dependencies.
-Complete the platform setup below before starting the app.
+### Linux prerequisites
 
-## Linux
-
-### Native dependencies
-
-WebKitGTK is required to display the application; npm does not install it.
-These commands include [Tauri's Linux prerequisites](https://v2.tauri.app/start/prerequisites/)
-and the tools used by Converter's media engines.
-
-**Arch Linux**
-
-```bash
-sudo pacman -Syu
-sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
-  appmenu-gtk-module libappindicator-gtk3 librsvg xdotool \
-  cmake python ffmpeg pciutils patchelf
-```
-
-Install Node.js and Rust/Cargo separately if needed. Arch's `rust` package is
-supported, as is a stable toolchain installed with [rustup](https://rustup.rs/).
-
-**Ubuntu 24.04 / Debian**
+Ubuntu 24.04:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-  cmake python3 ffmpeg pciutils patchelf
+sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential cmake \
+  curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+  librsvg2-dev patchelf ffmpeg pciutils libfuse2t64 libcrypt1
 ```
 
-Install Node.js and stable Rust/Cargo separately if needed. Other distributions
-need equivalent packages and glibc; this project's runtime setup does not target
-musl.
+Arch Linux:
 
-### Run in development
+```bash
+sudo pacman -S --needed webkit2gtk-4.1 base-devel cmake curl wget file \
+  openssl libappindicator-gtk3 librsvg xdotool patchelf ffmpeg pciutils fuse2 libxcrypt-compat
+```
 
-From the project root:
+Install Node.js and stable Rust separately. Other distributions need equivalent
+packages and glibc; this runtime setup does not target musl.
 
 ```bash
 cd rust
 npm ci --include=optional
+npm run setup:linux
 npm run tauri dev
 ```
 
-Tauri automatically applies
-[`tauri.linux.conf.json`](rust/src-tauri/tauri.linux.conf.json). Its startup hook
-runs `npm run setup:linux` to prepare:
+Linux's Tauri hooks also run setup before development and builds. Setup
+prepares SHA-256-verified private Python, Python packages, FFmpeg/FFprobe
+sidecars, and the C++ engine. First setup needs network access; subsequent runs
+reuse prepared files and incremental builds. System Python is not modified.
+Optional VapourSynth must come from the Linux distribution.
 
-- Private, SHA-256-verified Python in `rust/src-tauri/bin/linux/python/`.
-- yt-dlp, Deno, ONNX Runtime, OpenCV, and NumPy inside that runtime.
-- Linux FFmpeg and FFprobe sidecars copied from the system installation.
-- The native C++ engine in `cpp_engine/build-linux/`.
+### Windows prerequisites
 
-The first run needs internet access. Later runs reuse the runtime and incremental
-C++ build. System Python is not modified, and Linux runtime files are kept
-separate from Windows runtime files. Run `npm run setup:linux` from `rust/` to
-prepare or diagnose the runtime independently.
+Install Node.js, Python, CMake, stable Rust with the MSVC toolchain, and Visual
+Studio C++ build tools. See
+[Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-### Build and run the executable
-
-From `rust/`:
-
-```bash
-npm run build:linux
-./src-tauri/target/release/converter
-```
-
-The default output is `rust/src-tauri/target/release/converter`. If
-`CARGO_TARGET_DIR` is set, the executable is written under that directory instead.
-The Linux build produces no installer, AppImage, DEB, or RPM — Linux production
-packaging is coming soon.
-
-Keep the source checkout, prepared runtime, FFmpeg, and WebKitGTK dependencies
-available when running this executable. It is not a standalone portable bundle.
-Build on the distribution where you intend to run it: newer system libraries
-on the build machine may not be available on an older distribution.
-
-### GPU and AI behavior
-
-Select a working hardware encoder in Settings, or choose CPU for software
-encoding. GPU video mode reports hardware errors rather than silently changing
-to a CPU video encoder. Available encoders are probed before selection.
-
-AI enhancement uses ONNX Runtime on CPU by default. A compatible GPU execution
-provider can accelerate inference; this is separate from FFmpeg hardware
-encoding. Model files are downloaded when first needed. All three configured
-models support photo and video enhancement.
-
-Optional VapourSynth tooling must come from the Linux distribution. Linux does
-not load the bundled Windows DLLs.
-
-## Windows
-
-### Prepare and run
-
-Install Node.js, stable Rust with the Windows MSVC toolchain, Python, and CMake.
-The native engine requires Visual Studio C++ build tools. Follow
-[Tauri's Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows)
-for the C++ tools and WebView2 runtime.
-
-Run these commands in PowerShell from the project root:
+In PowerShell, from the project root:
 
 ```powershell
 python scripts/bundle_runtime.py
@@ -164,86 +152,118 @@ npm ci --include=optional
 npm run tauri dev
 ```
 
-The setup prepares private Python, yt-dlp, Deno, VapourSynth, and media tools
-using pinned downloads. Installed Windows users do not need their own Python
-or pip.
+Setup assembles private Python and pinned runtime tools. Packaged users do not
+need Python installed separately. Windows packages are built on Windows with
+MSVC; this project does not cross-build its installer from Linux.
 
-### Build
+### Frontend preview
 
-These are the two shipping Windows artifacts. After setup, run the desired
-command from `rust/`:
+After installing dependencies, run from `rust/`:
 
-```powershell
-# Windows NSIS installer (signed, auto-update capable)
+```bash
+npm run build
+npm run preview
+```
+
+The browser displays the interface. Media operations and update installation
+require the desktop app.
+
+## Build packages
+
+Run from `rust/` after preparing the platform runtime:
+
+```bash
+# Linux portable AppImage
+npm run build:linux
+
+# Linux packaging smoke test without signing secrets
+npm run build:linux -- --unsigned
+
+# Windows NSIS installer
 npm run build:installer
 
-# Windows portable zip (no install step — unzip and run)
+# Windows portable ZIP
 npm run build:portable
 ```
 
-Installer output is under `rust/src-tauri/target/release/bundle/`. The portable
-build creates `rust/dist/portable/` and `rust/dist/Converter-portable.zip`.
+AppImages appear in `rust/src-tauri/target/release/bundle/appimage/`, installers
+in `rust/src-tauri/target/release/bundle/nsis/`. Portable Windows builds use the
+existing packaging script and create
+`rust/dist/portable/` and `rust/dist/Converter-portable.zip`.
 
-Both require a **Windows host with the MSVC toolchain and NSIS** — Tauri cannot
-cross-compile a Windows installer from Linux/macOS. In this repository the
-Windows artifacts are produced on Windows runners by
-[`.github/workflows/release.yml`](.github/workflows/release.yml) (see
-[Updates and Windows releases](#updates-and-windows-releases)).
+Signed updater builds require `TAURI_SIGNING_PRIVATE_KEY` and, for encrypted
+keys, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the process environment. Keep
+private material out of source control and shell history.
 
-## Troubleshooting
+Use Ubuntu 24.04 for release packaging. Modern Arch GDK Pixbuf can be
+incompatible with Tauri's GTK packaging plugin; Arch remains supported for
+development. Build output should be on a native Linux filesystem, since NTFS
+can fail while recreating AppImage staging directories. Linux pull requests
+also build and verify an unsigned AppImage on Ubuntu and upload it as the
+`linux-appimage-smoke` Actions artifact. This artifact is for testing, not
+signed updater distribution.
 
-### Missing Tauri or Rollup native binding
+## Linux GitHub Actions and Releases
 
-For errors such as `Cannot find module '@tauri-apps/cli-linux-x64-gnu'`, run this
-from `rust/`:
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| [Linux](.github/workflows/linux.yml) | Main/master pushes, PRs, manual checks, release calls | Test Linux; build signed AppImage for release calls |
+| [Linux Release](.github/workflows/linux-release.yml) | `linux-v*` pushes or manual runs on a version tag | Verify and publish Linux packages and update metadata |
+
+Windows [checks](.github/workflows/ci.yml) and
+[release workflow](.github/workflows/release.yml) remain separate. Linux uses
+its own release tags and updater channel so the platform maintainers can work
+independently.
+
+Configure the GitHub environment **`release`**, allow tag deployments matching
+`linux-v*`, and add these environment secrets:
+
+| Secret | Value |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the existing private signing key |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Its password; omit for an unencrypted key |
+
+GitHub supplies the workflow token; no personal access token or external update
+server is needed for Linux. Linux build jobs read repository contents. Only the
+Linux publisher has `contents: write`. PR checks do not sign or publish.
+
+To release Linux:
+
+1. Synchronize versions in `rust/package.json`, `rust/package-lock.json`,
+   `rust/src-tauri/Cargo.toml`, `rust/src-tauri/Cargo.lock`, and
+   `rust/src-tauri/tauri.conf.json`.
+2. Run the checks below and `npm run release:check -- --linux-only` in `rust/`.
+3. Commit and push the changes, then push `linux-v<version>`.
+4. Watch Linux tests, signed packaging, extracted-runtime verification, and
+   Linux Release publication in GitHub Actions.
+5. Confirm the immutable version release includes AppImage, signature,
+   `latest.json`, and `SHA256SUMS.txt`. The stable `updater-linux` release
+   serves the active manifest, referencing the versioned AppImage.
+6. Verify an update from the previous AppImage using the same signing key.
+
+The Linux publisher validates signatures and uploaded bytes before publishing
+its version release and advancing the Linux updater channel. Linux version and
+channel releases are explicitly excluded from the repository's latest pointer.
+Published binaries are immutable; recovery re-verifies existing assets rather
+than replacing them. Failed checks do not advance the update channel.
+
+Read [the Linux release guide](docs/releases.md) for secure secret upload,
+release recovery, and runtime verification. `npm run signer:generate` is for
+initial setup, not routine releases; preserve the existing signing key.
+
+## Tests and checks
+
+Frontend/release helpers, from `rust/`:
 
 ```bash
-npm ci --include=optional
-```
-
-Keep `package-lock.json`. Do not reuse a Windows `node_modules` directory on
-Linux or share one across operating systems. npm's
-[optional dependency issue](https://github.com/npm/cli/issues/4828) can leave
-native bindings missing.
-
-### Missing WebKitGTK or build tools
-
-Install the platform dependencies above, then run `npm run tauri -- info` from
-`rust/`. An Arch system using the distribution's Rust package can report that
-`rustup` is absent; a working `rustc` and `cargo` are sufficient for this build.
-
-### Frontend tests fail on Node.js 26
-
-If jsdom tests report unavailable `localStorage`, run this from `rust/` on Linux:
-
-```bash
-NODE_OPTIONS=--no-experimental-webstorage npm test
-```
-
-CI uses Node.js 24.
-
-### Downloads or media jobs fail
-
-Open the debug console with `Ctrl+Shift+D` and inspect the operation's error.
-Website availability, authentication, drivers, supported codecs, and achievable
-target sizes vary. For hardware encoder errors, verify the driver and FFmpeg
-support or select CPU in Settings.
-
-The About dialog can save a bug report as a text file. Attach it to a
-[GitHub issue](https://github.com/leeisfailing/Converter/issues); saving the report
-does not submit it automatically.
-
-## Development checks
-
-Run the frontend checks from `rust/`:
-
-```bash
-npm test
 npm run typecheck
+npm test
 npm run build
+npm run release:check -- --linux-only
+node --test scripts/*.test.mjs
 ```
 
-Run the Linux backend checks from the project root after runtime setup:
+Linux engines, from the project root after setup:
 
 ```bash
 ctest --test-dir cpp_engine/build-linux --output-on-failure
@@ -252,9 +272,12 @@ rust/src-tauri/bin/linux/python/bin/python3 -B -m unittest discover -s PyEngine/
 cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
 ```
 
-The detached-runtime check copies the engines and dependencies into a temporary
-directory, then tests tool lookup, conversion, and reduction without system
-tools on its `PATH`. The Windows equivalent is:
+`python3 run_tests.py` uses system Python and needs its Python dependencies
+installed. The private-runtime command above matches Linux CI. Runtime
+verification checks detached engines, tool lookup, conversion, and reduction.
+Releases also verify the extracted AppImage runtime.
+
+Windows runtime checks, from the project root:
 
 ```powershell
 python scripts/verify_bundled_runtime.py
@@ -262,60 +285,53 @@ rust/src-tauri/bin/python/python.exe -B -c "import runpy, sys; sys.path.insert(0
 cargo test --locked --manifest-path rust/src-tauri/Cargo.toml
 ```
 
-The [Linux workflow](.github/workflows/linux.yml) tests on Ubuntu 24.04 and builds
-the app executable. The [Windows checks](.github/workflows/ci.yml) prepare and
-test the Windows runtime and native engine.
+## Troubleshooting
 
-## Updates and Windows releases
+- **Missing native npm binding:** run `npm ci --include=optional` in `rust/`.
+  Keep the lockfile and use separate dependencies for each operating system.
+- **Missing build tools/WebKitGTK:** install the prerequisites, then run
+  `npm run tauri -- info` from `rust/`.
+- **Node.js 26 jsdom/localStorage failure:** on Linux, use
+  `NODE_OPTIONS=--no-experimental-webstorage npm test`. CI uses Node.js 24.
+- **Missing Linux update manifest:** confirm the published `updater-linux`
+  channel includes `latest-linux.json`. Legacy releases may lack it.
+- **Invalid update signature:** verify the signing key matches the embedded
+  public key. Do not bypass signature verification.
+- **AppImage cannot mount:** install FUSE 2 compatibility or try extraction mode.
+- **Media job fails:** inspect the debug console (`Ctrl+Shift+D`). Website,
+  codec, driver, and target-size constraints vary. Try CPU for hardware errors.
 
-The Windows release workflow builds signed updater artifacts for GitHub
-Releases. The app checks shortly after startup and supports manual checks
-through About & Updates. Installing an update requires a published release with
-matching signed artifacts and `latest.json`. Linux installer distribution and
-automatic-update artifacts are not configured by this development setup.
+About can save a bug report as a text file. Review it and attach it to a GitHub
+issue; saving does not submit it automatically.
 
-For a Windows release:
+## Architecture
 
-1. Synchronize versions in `rust/package.json`, `rust/package-lock.json`,
-   `rust/src-tauri/Cargo.toml`, `rust/src-tauri/Cargo.lock`, and
-   `rust/src-tauri/tauri.conf.json`.
-2. Run `npm run release:check` from `rust/`.
-3. Commit the release changes and push a matching `v<version>` tag.
-4. Verify the artifacts from the [release workflow](.github/workflows/release.yml),
-   then publish its draft.
+```text
+React UI → Tauri Rust commands → Python / C++ engines → FFmpeg
+```
 
-GitHub Actions requires `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the original private key matching the
-public key embedded in the app; changing it breaks trust for existing installs.
-Private signing material must not be committed. `npm run signer:generate` is
-available for initial key creation, not routine releases.
-
-## Project layout
+Rust validates requests, orchestrates processes, and manages settings/caches.
+Python handles downloads and ONNX enhancement through JSON-lines IPC. C++
+handles native conversion, reduction, and upscaling. React manages job state,
+progress, settings, and updates.
 
 ```text
 Converter/
-├── rust/
-│   ├── src/                    React interface and shared UI helpers
-│   ├── tests/                  Frontend regression tests
-│   ├── src-tauri/
-│   │   ├── src/                Rust commands, processes, settings, and caches
-│   │   ├── tauri.conf.json     Shared configuration and Windows build settings
-│   │   └── tauri.linux.conf.json
-│   └── scripts/                Frontend and release utilities
-├── PyEngine/
-│   ├── __main__.py             JSON-lines engine entry point
-│   ├── core/                   Tool lookup, GPU detection, and AI models
-│   ├── handlers/               Command dispatch
-│   ├── workers/                Media, download, and enhancement operations
-│   └── tests/                  Python unit and integration tests
-├── cpp_engine/                 Native media engine and lifecycle tests
-├── scripts/                    Runtime setup and verification
-└── .github/workflows/          Windows, Linux, and release automation
+├── rust/src/                  React interface and helpers
+├── rust/tests/                Frontend regression tests
+├── rust/src-tauri/            Rust shell and Tauri configuration
+├── rust/scripts/              Packaging, signing, and release utilities
+├── PyEngine/                  Python engine and tests
+├── cpp_engine/                Native engine and CTest suite
+├── scripts/                   Runtime setup and verification
+├── docs/releases.md           Linux release and updater setup
+└── .github/workflows/         Platform checks and release automation
 ```
 
-Generated runtimes, Linux build output, and download caches are ignored by Git.
-Prepare them again after a fresh checkout.
+Generated runtimes, download caches, dependencies, and build output are ignored
+by Git. Recreate them with the setup commands after a fresh checkout.
 
 ## License
 
-MIT
+MIT. Third-party components and models retain their own licenses. SF Pro is a
+local font preference, not a bundled font asset.

@@ -1,7 +1,7 @@
 import { formatFileSize } from "./lib/file-size";
 import { gpuSelection, gpuStatus, parallelGpuEncoders } from "./lib/gpu-selection";
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import AppHeader from "./components/AppHeader";
 import { tempDir, sep } from "@tauri-apps/api/path";
 import URLDownloader from "./components/URLDownloader";
@@ -345,7 +345,7 @@ export default function App() {
     const parallel = !appSettings.autoDetectGpu && appSettings.selectedGpu === "parallel";
     if (parallel && parallelEncoders === null) return;
     queue.processNextBatch(processNextCallback, parallel ? parallelEncoders ?? [] : undefined);
-  }, [queue.queue, processNextCallback, queue.processNextBatch, parallelEncoders, appSettings.autoDetectGpu, appSettings.selectedGpu]);
+  }, [queue.queue, queue.paused, processNextCallback, queue.processNextBatch, parallelEncoders, appSettings.autoDetectGpu, appSettings.selectedGpu]);
 
   const addToQueue = useCallback((item: QueueItem) => {
     queue.enqueue(item);
@@ -520,6 +520,7 @@ export default function App() {
 
   return (
     <>
+      <MotionConfig reducedMotion="user">
       <ErrorBoundary>
         <div className="app-shell h-full flex flex-col bg-app-bg">
           <AppHeader
@@ -543,7 +544,7 @@ export default function App() {
                 aria-current={!showSettings && mode === id ? "page" : undefined}
                 onClick={() => { setMode(id); setShowSettings(false); }}>
                 <Icon size={16} aria-hidden="true" />{label}
-                {badge && <span className="ml-1.5 inline-flex items-center rounded-md bg-purple-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-purple-300 ring-1 ring-inset ring-purple-500/30">{badge}</span>}
+                {badge && <span className="ml-1.5 inline-flex items-center rounded-md workspace-badge">{badge}</span>}
               </button>
             ))}
           </nav>
@@ -553,10 +554,10 @@ export default function App() {
               <div className="workspace-content mx-auto space-y-5">
                 <div className="workspace-intro">
                   <p className="workspace-eyebrow">{showSettings ? "Preferences" : "Media workspace"}</p>
-                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "A new format. Same content." : mode === "upscale" ? "Higher resolution. Same quality." : mode === "enhance" ? "AI-powered quality boost." : "Less size. More space."}</h1>
+                  <h1>{showSettings ? "Make it yours" : mode === "download" ? "Save from a link" : mode === "convert" ? "Convert your media" : mode === "upscale" ? "See every detail" : mode === "enhance" ? "Give your media new life" : "Make room for more"}</h1>
                   <p>{showSettings ? "Choose how Converter works for you." : mode === "download" ? "Paste a link, choose a format, and add it to your queue." : mode === "convert" ? "Choose a file and the format you need. We\u2019ll handle the rest." : mode === "upscale" ? "Enhance resolution with GPU-accelerated upscaling." : mode === "enhance" ? "Super-resolution and denoising using Real-ESRGAN neural networks." : "Find the right balance between file size and quality."}</p>
                   {!showSettings && mode !== "download" && mode !== "enhance" && (
-                    <p className="text-[11px] text-green-400 mt-1">
+                    <p className="text-[11px] text-app-success mt-1">
                       {gpuStatus(appSettings, nativeGpuInfo)}
                     </p>
                   )}
@@ -643,22 +644,25 @@ export default function App() {
               </div>
             </div>
 
-            {queue.hasQueue && (
-              <div className="workspace-queue border-l border-app-border bg-app-surface overflow-hidden flex flex-col">
+            <aside aria-label="Job queue" className={`workspace-queue overflow-hidden flex flex-col ${queue.hasQueue || queue.paused ? "" : "workspace-queue-empty"}`}>
                 <QueueManager
                   items={queue.queue}
                   onRemove={removeFromQueue}
                   onCancel={handleCancelItem}
                   onClearCompleted={clearCompleted}
+                  paused={queue.paused}
+                  onPauseToggle={queue.togglePaused}
+                  onRetry={queue.retryItem}
+                  onRetryFailed={queue.retryFailed}
                 />
-              </div>
-            )}
+              </aside>
           </div>
 
           <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
           <UpdatePrompt onOpenAbout={() => setShowAbout(true)} />
         </div>
       </ErrorBoundary>
+      </MotionConfig>
       {showAbout && (
         <Suspense fallback={null}><PanelBoundary area="about"><About onClose={() => setShowAbout(false)} hasPendingWork={queue.isProcessing || queue.queue.some((item) => item.status === "pending" || item.status === "active")} onOpenBugReport={() => { setShowAbout(false); setShowBugReport(true); }} /></PanelBoundary></Suspense>
       )}

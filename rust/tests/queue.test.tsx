@@ -203,3 +203,121 @@ it("fails clearly when no GPU is available but continues non-video jobs", async 
   expect(process).toHaveBeenCalledOnce();
   expect(process.mock.calls[0][0].assignedGpu).toBeUndefined();
 });
+
+it("pauses admission synchronously, lets active work finish, and resumes waiting work", async () => {
+  const view = renderHook(useQueue);
+  let finish!: () => void;
+  const process = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+  act(() => {
+    view.result.current.enqueue(item("one"));
+    view.result.current.enqueue(item("two"));
+    view.result.current.processNextBatch(process);
+    view.result.current.togglePaused();
+    view.result.current.processNextBatch(process);
+  });
+  expect(view.result.current.paused).toBe(true);
+  expect(process).toHaveBeenCalledOnce();
+  await act(async () => { finish(); });
+  act(() => view.result.current.processNextBatch(process));
+  expect(view.result.current.queue.map((job) => job.status)).toEqual(["completed", "pending"]);
+  expect(process).toHaveBeenCalledOnce();
+  act(() => {
+    view.result.current.togglePaused();
+    view.result.current.processNextBatch(process);
+  });
+  expect(view.result.current.paused).toBe(false);
+  expect(process).toHaveBeenCalledTimes(2);
+  await act(async () => { finish(); });
+  expect(view.result.current.queue[1].status).toBe("completed");
+});
+
+it("resets failed attempts with new IDs while preserving job input and options", () => {
+  const view = renderHook(useQueue);
+  const failed: QueueItem = {
+    ...item("failed", "download"), status: "failed", progress: 78,
+    url: "https://example.com/video", formatType: "mp4", outputDir: "/media",
+    writeSubtitles: true, useBrowserCookies: true,
+    assignedGpu: "h264_nvenc", error: "Network failed", resultPath: "/partial.mp4",
+    downloadSpeed: 100, downloadEta: 30, downloadIsLive: true, downloadPhase: "retrying",
+  };
+  act(() => { view.result.current.enqueue(failed); view.result.current.retryItem("failed"); });
+  const retried = view.result.current.queue[0];
+  expect(retried.id).not.toBe(failed.id);
+  expect(retried).toMatchObject({ status: "pending", progress: 0, url: failed.url, formatType: "mp4", outputDir: "/media", writeSubtitles: true, useBrowserCookies: true });
+  expect(retried.createdAt).toBeGreaterThan(0);
+  for (const key of ["assignedGpu", "error", "resultPath", "downloadSpeed", "downloadEta", "downloadIsLive", "downloadPhase"] as const) {
+    expect(retried[key]).toBeUndefined();
+  }
+});
+
+it("retries only failed jobs in bulk and keeps retries paused", () => {
+  const view = renderHook(useQueue);
+  act(() => {
+    for (const status of ["failed", "failed", "cancelled", "completed", "pending", "active"] as const) {
+      const index = view.result.current.queueRef.current.length;
+      view.result.current.enqueue({ ...item(`${status}-${index}`), status });
+    }
+    view.result.current.togglePaused();
+    view.result.current.retryFailed();
+  });
+  const jobs = view.result.current.queue;
+  expect(jobs.map((job) => job.status)).toEqual(["pending", "pending", "cancelled", "completed", "pending", "active"]);
+  expect(jobs[0].id).not.toBe("failed-0");
+  expect(jobs[1].id).not.toBe("failed-1");
+  expect(new Set(jobs.map((job) => job.id)).size).toBe(jobs.length);
+  expect(jobs[2].id).toBe("cancelled-2");
+  const process = vi.fn().mockResolvedValue(undefined);
+  act(() => view.result.current.processNextBatch(process));
+  expect(process).not.toHaveBeenCalled();
+  expect(view.result.current.paused).toBe(true);
+});
+
+it("does not retry active, pending, or completed jobs", () => {
+  const view = renderHook(useQueue);
+  act(() => {
+    for (const status of ["active", "pending", "completed"] as const) {
+      view.result.current.enqueue({ ...item(status), status });
+      view.result.current.retryItem(status);
+    }
+  });
+  expect(view.result.current.queue.map((job) => [job.id, job.status])).toEqual([["active", "active"], ["pending", "pending"], ["completed", "completed"]]);
+});
+
+it.each(["cancelled", "failed"] as const)("keeps a %s attempt reserved until cleanup and ignores its late events after retry", async (status) => {
+  const notify = vi.fn();
+  const view = renderHook(() => { const queue = useQueue(); useQueueEvents(queue, notify); return queue; });
+  await act(async () => {});
+  let rejectOld!: (error: Error) => void;
+  let finishRetry!: () => void;
+  const process = vi.fn()
+    .mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectOld = reject; }))
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { finishRetry = resolve; }));
+  act(() => {
+    view.result.current.setConcurrency(gpuLimits);
+    view.result.current.enqueue(video("old"));
+    view.result.current.processNextBatch(process, ["h264_nvenc", "h264_amf"]);
+    if (status === "cancelled") view.result.current.cancelItem("old");
+    else events.handlers.get("convert-finished")!({ payload: { id: "old", ok: false, message: "Encoder failed", file_path: "" } });
+    view.result.current.retryItem("old");
+    view.result.current.processNextBatch(process, ["h264_nvenc", "h264_amf"]);
+  });
+  const retryId = view.result.current.queue[0].id;
+  expect(retryId).not.toBe("old");
+  expect(view.result.current.queue[0].status).toBe("pending");
+  expect(process).toHaveBeenCalledOnce();
+  expect(view.result.current.isProcessing).toBe(true);
+  await act(async () => { rejectOld(new Error("Old cancellation cleanup finished")); });
+  expect(view.result.current.queue[0]).toMatchObject({ id: retryId, status: "pending", error: undefined });
+  act(() => view.result.current.processNextBatch(process, ["h264_nvenc", "h264_amf"]));
+  expect(process).toHaveBeenCalledTimes(2);
+  expect(process.mock.calls[1][0]).toMatchObject({ id: retryId, assignedGpu: "h264_nvenc" });
+  notify.mockClear();
+  act(() => {
+    events.handlers.get("convert-progress")!({ payload: { id: "old", percent: 99 } });
+    events.handlers.get("convert-finished")!({ payload: { id: "old", ok: true, message: "Old task done", file_path: "/old.mp4" } });
+  });
+  expect(view.result.current.queue[0]).toMatchObject({ id: retryId, status: "active", progress: 0, resultPath: undefined });
+  expect(notify).not.toHaveBeenCalled();
+  await act(async () => { finishRetry(); });
+  expect(view.result.current.queue[0].status).toBe("completed");
+});

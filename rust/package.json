@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "build:installer": "tauri build --bundles nsis",
     "setup:linux": "python3 ../scripts/setup_linux.py",
-    "build:linux": "tauri build --no-bundle",
+    "build:linux": "node scripts/build-linux.mjs",
     "build:portable": "npm run build && cargo build --release --manifest-path src-tauri/Cargo.toml && node scripts/build-portable.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

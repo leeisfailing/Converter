@@ -11,7 +11,12 @@ import {
   Trash2,
   Clock,
   List,
+  Layers,
+  Sparkles,
   X,
+  Pause,
+  Play,
+  RotateCcw,
 } from "lucide-react";
 import type { QueueItem, QueueItemStatus } from "../lib/queue-types";
 
@@ -39,6 +44,10 @@ interface Props {
   onRemove: (id: string) => void;
   onCancel: (id: string) => void;
   onClearCompleted: () => void;
+  paused: boolean;
+  onPauseToggle: () => void;
+  onRetry: (id: string) => void;
+  onRetryFailed: () => void;
 }
 
 const statusConfig: Record<
@@ -54,9 +63,10 @@ const statusConfig: Record<
 
 const typeConfig: Record<string, { icon: typeof Download; color: string; bg: string }> = {
   download: { icon: Download, color: "text-app-accent", bg: "bg-app-accent-dim" },
-  convert: { icon: ArrowRightLeft, color: "text-purple-400", bg: "bg-purple-500/10" },
-  transcoder: { icon: Minimize2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-  upscale: { icon: ArrowUp, color: "text-blue-400", bg: "bg-blue-500/10" },
+  convert: { icon: ArrowRightLeft, color: "text-app-accent", bg: "bg-app-accent-dim" },
+  transcoder: { icon: Minimize2, color: "text-app-success", bg: "bg-app-success-dim" },
+  upscale: { icon: ArrowUp, color: "text-app-accent", bg: "bg-app-accent-dim" },
+  enhance: { icon: Sparkles, color: "text-app-accent", bg: "bg-app-accent-dim" },
 };
 
 const staggerItem = {
@@ -64,8 +74,15 @@ const staggerItem = {
   visible: { opacity: 1, x: 0 },
 };
 
-const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove: (id: string) => void; onCancel: (id: string) => void }>(
-  ({ item, onRemove, onCancel }, ref) => {
+interface QueueItemRowProps {
+  item: QueueItem;
+  onRemove: (id: string) => void;
+  onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
+}
+
+const QueueItemRow = memo(forwardRef<HTMLDivElement, QueueItemRowProps>(
+  ({ item, onRemove, onCancel, onRetry }, ref) => {
     const sConfig = statusConfig[item.status];
     const tConfig = typeConfig[item.type] || typeConfig.convert;
     const SIcon = sConfig.icon;
@@ -79,9 +96,9 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
         animate="visible"
         variants={staggerItem}
         transition={{ duration: 0.25, ease: "easeOut" }}
-        whileHover={{ scale: 1.01, x: 2 }}
+        whileHover={{ scale: 1 }}
         whileTap={{ scale: 0.99 }}
-        className={`panel p-3 flex items-center gap-3 ${sConfig.bg} ${
+        className={`panel queue-row p-3 flex flex-wrap items-center gap-3 ${sConfig.bg} ${
           item.status === "active" ? "border-app-accent/30" : ""
         }`}
       >
@@ -119,11 +136,7 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
             {item.status === "active" && item.type === "download" && item.downloadIsLive && (
               <span className="text-[10px] text-red-400 font-medium">LIVE</span>
             )}
-            {item.error && (
-              <span className="text-[10px] text-app-danger truncate max-w-[120px]">
-                {item.error}
-              </span>
-            )}
+
           </div>
           {/* Progress bar for active item */}
           {item.status === "active" && (
@@ -151,9 +164,9 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
           <motion.button
             onClick={() => onCancel(item.id)}
             aria-label={`Cancel ${item.label}`}
-            className="w-6 h-6 rounded flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
-            whileHover={{ scale: 1.2 }}
-            whileTap={{ scale: 0.8 }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
           >
             <X size={12} />
           </motion.button>
@@ -161,12 +174,18 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
           <motion.button
             onClick={() => onRemove(item.id)}
             aria-label={`Remove ${item.label} from queue`}
-            className="w-6 h-6 rounded flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
-            whileHover={{ scale: 1.2 }}
-            whileTap={{ scale: 0.8 }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-app-text-muted hover:text-app-danger hover:bg-app-danger-dim transition-colors cursor-pointer"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
           >
             <Trash2 size={12} />
           </motion.button>
+        )}
+        {item.error && <p className="w-full text-[11px] leading-relaxed text-app-danger break-words">{item.error}</p>}
+        {(item.status === "failed" || item.status === "cancelled") && (
+          <button type="button" className="queue-retry" onClick={() => onRetry(item.id)} aria-label={`Retry ${item.label}`}>
+            <RotateCcw size={12} aria-hidden="true" /> Retry
+          </button>
         )}
       </motion.div>
     );
@@ -174,71 +193,73 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, { item: QueueItem; onRemove
 ));
 QueueItemRow.displayName = "QueueItemRow";
 
-export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted }: Props) {
+export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted, paused, onPauseToggle, onRetry, onRetryFailed }: Props) {
   const hasItems = items.length > 0;
-
-  const { completedCount, activeCount, pendingCount } = useMemo(() => {
-    let completedCount = 0;
-    let activeCount = 0;
-    let pendingCount = 0;
-    for (const item of items) {
-      if (item.status === "active") activeCount++;
-      else if (item.status === "pending") pendingCount++;
-      else completedCount++;
-    }
-    return { completedCount, activeCount, pendingCount };
-  }, [items]);
-
-  if (!hasItems) return null;
+  const { completedCount, failedCount, cancelledCount, activeCount, pendingCount } = useMemo(() => ({
+    completedCount: items.filter((item) => item.status === "completed").length,
+    failedCount: items.filter((item) => item.status === "failed").length,
+    cancelledCount: items.filter((item) => item.status === "cancelled").length,
+    activeCount: items.filter((item) => item.status === "active").length,
+    pendingCount: items.filter((item) => item.status === "pending").length,
+  }), [items]);
+  const finishedCount = completedCount + failedCount + cancelledCount;
 
   return (
     <div className="h-full flex flex-col">
-      {/* Queue header */}
-      <motion.div
-        initial={{ opacity: 0, y: -5 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex items-center justify-between px-4 py-3 border-b border-app-border"
-      >
+      <div className="queue-toolbar flex items-center justify-between px-4 py-3 border-b border-app-border">
         <div className="flex items-center gap-2">
-          <List size={14} className="text-app-accent" />
-          <span className="text-xs font-semibold text-app-text uppercase tracking-wider">
-            Queue
-          </span>
-          {activeCount > 0 && (
-            <motion.span
-              initial={{ scale: 0.8 }}
-              animate={{ scale: 1 }}
-              className="text-[10px] text-app-accent bg-app-accent-dim px-1.5 py-0.5 rounded"
-            >
-              Processing {activeCount} of {items.length}
-            </motion.span>
-          )}
-          {activeCount === 0 && pendingCount > 0 && (
-            <span className="text-[10px] text-app-text-muted">
-              {pendingCount} pending
-            </span>
+          <List size={14} className="text-app-accent" aria-hidden="true" />
+          <span className="text-xs font-semibold text-app-text">Queue</span>
+          <span className="queue-count">{items.length}</span>
+        </div>
+        {finishedCount > 0 && (
+          <button type="button" onClick={onClearCompleted} className="queue-clear">Clear finished</button>
+        )}
+      </div>
+
+      {(hasItems || paused) && (
+        <div className="queue-controls">
+          <div className="flex items-center gap-2">
+            <button type="button" className="queue-control" onClick={onPauseToggle} aria-pressed={paused} aria-label={paused ? "Resume queue" : "Pause queue"}>
+              {paused ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
+              {paused ? "Resume" : "Pause"}
+            </button>
+            {failedCount > 0 && (
+              <button type="button" className="queue-control" onClick={onRetryFailed}>
+                <RotateCcw size={12} aria-hidden="true" /> Retry failed
+              </button>
+            )}
+          </div>
+          <div className="queue-summary" role="status" aria-live="polite">
+            {paused && <span className="text-app-accent">Paused · </span>}
+            {activeCount > 0 ? <span>Processing {activeCount} of {items.length}</span> : pendingCount > 0 ? <span>{pendingCount} pending</span> : <span>{hasItems ? "All tasks finished" : "No tasks yet"}</span>}
+          </div>
+          {finishedCount > 0 && (
+            <div className="queue-summary flex flex-wrap gap-x-3">
+              {completedCount > 0 && <span className="text-app-success">{completedCount} completed</span>}
+              {failedCount > 0 && <span className="text-app-danger">{failedCount} failed</span>}
+              {cancelledCount > 0 && <span>{cancelledCount} cancelled</span>}
+            </div>
           )}
         </div>
-        {completedCount > 0 && (
-          <motion.button
-            onClick={onClearCompleted}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="text-[10px] text-app-text-muted hover:text-app-text transition-colors cursor-pointer"
-          >
-            Clear done
-          </motion.button>
-        )}
-      </motion.div>
+      )}
 
-      {/* Queue items */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        <AnimatePresence mode="popLayout">
-          {items.map((item) => (
-            <QueueItemRow key={item.id} item={item} onRemove={onRemove} onCancel={onCancel} />
-          ))}
-        </AnimatePresence>
-      </div>
+      {!hasItems ? (
+        <div className="queue-empty">
+          <div className="queue-empty-icon"><Layers size={26} strokeWidth={1.4} aria-hidden="true" /></div>
+          <h3>Ready when you are</h3>
+          <p>Add a link or a file to get started. Your media and its progress will appear here.</p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <AnimatePresence mode="popLayout">
+            {items.map((item) => (
+              <QueueItemRow key={item.id} item={item} onRemove={onRemove} onCancel={onCancel} onRetry={onRetry} />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+      <div className="queue-footer">{paused ? "Running tasks finish normally. New tasks wait until you resume." : activeCount > 0 ? "You can keep working while your media processes." : "Your media, all in one place."}</div>
     </div>
   );
 });

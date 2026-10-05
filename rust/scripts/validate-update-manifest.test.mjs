@@ -1,7 +1,7 @@
 import { test } from './test-runner.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { validateUpdateManifest } from './validate-update-manifest.mjs';
+import { validateUpdateManifest, defaultFetchBytes } from './validate-update-manifest.mjs';
 
 const REPO = 'leeisfailing/Converter';
 const VERSION = '3.0.0';
@@ -13,13 +13,18 @@ function fixture() {
   const url = `https://github.com/${REPO}/releases/download/v${VERSION}/Converter-setup.exe`;
   const artifactUrl = `https://api.github.com/repos/${REPO}/releases/assets/1001`;
   const signatureUrl = `https://api.github.com/repos/${REPO}/releases/assets/1002`;
+  const linuxUrl = `https://github.com/${REPO}/releases/download/v${VERSION}/Converter_3.0.0_amd64.AppImage`;
+  const linuxArtifactUrl = `https://api.github.com/repos/${REPO}/releases/assets/1003`;
+  const linuxSignatureUrl = `https://api.github.com/repos/${REPO}/releases/assets/1004`;
   return {
-    manifest: { version: VERSION, platforms: { 'windows-x86_64': { url, signature: SIGNATURE } } },
+    manifest: { version: VERSION, platforms: { 'windows-x86_64': { url, signature: SIGNATURE }, 'linux-x86_64': { url: linuxUrl, signature: SIGNATURE } } },
     release: { tag_name: `v${VERSION}`, assets: [
       { name: 'Converter-setup.exe', size: INSTALLER_BYTES.length, state: 'uploaded', browser_download_url: url, url: artifactUrl, digest: INSTALLER_DIGEST },
       { name: 'Converter-setup.exe.sig', size: SIGNATURE.length, state: 'uploaded', browser_download_url: `${url}.sig`, url: signatureUrl },
+      { name: 'Converter_3.0.0_amd64.AppImage', size: INSTALLER_BYTES.length, state: 'uploaded', browser_download_url: linuxUrl, url: linuxArtifactUrl, digest: INSTALLER_DIGEST },
+      { name: 'Converter_3.0.0_amd64.AppImage.sig', size: SIGNATURE.length, state: 'uploaded', browser_download_url: `${linuxUrl}.sig`, url: linuxSignatureUrl },
     ] },
-    downloads: { [artifactUrl]: INSTALLER_BYTES, [signatureUrl]: Buffer.from(SIGNATURE) },
+    downloads: { [artifactUrl]: INSTALLER_BYTES, [signatureUrl]: Buffer.from(SIGNATURE), [linuxArtifactUrl]: INSTALLER_BYTES, [linuxSignatureUrl]: Buffer.from(SIGNATURE) },
   };
 }
 
@@ -36,7 +41,7 @@ function fetchBytesFor(f) {
 }
 
 function validate(f) {
-  return validateUpdateManifest(f.manifest, f.release, VERSION, REPO, { fetchBytes: fetchBytesFor(f) });
+  return validateUpdateManifest(f.manifest, f.release, VERSION, REPO, { requiredPlatforms: ['windows-x86_64', 'linux-x86_64'], fetchBytes: fetchBytesFor(f) });
 }
 
 test('accepts complete release assets and verifies their bytes', async () => {
@@ -109,4 +114,72 @@ test('fails closed when an asset cannot be downloaded', async () => {
   const f = fixture();
   delete f.downloads[artifactUrl(f)];
   await assert.rejects(() => validate(f), /Could not download/);
+});
+
+test('rejects release missing Linux updater target', async () => {
+  const f = fixture();
+  delete f.manifest.platforms['linux-x86_64'];
+  await assert.rejects(() => validate(f), /linux-x86_64/);
+});
+
+test('rejects corrupted Linux AppImage bytes', async () => {
+  const f = fixture();
+  f.downloads[f.release.assets[2].url] = Buffer.from('corrupted AppImage');
+  await assert.rejects(() => validate(f), /linux-x86_64/);
+});
+
+for (const hostile of [
+  'https://api.github.com.evil.test/repos/leeisfailing/Converter/releases/assets/1001',
+  'https://api.github.com@evil.test/repos/leeisfailing/Converter/releases/assets/1001',
+  'https://evil.test@api.github.com/repos/leeisfailing/Converter/releases/assets/1001',
+  'http://api.github.com/repos/leeisfailing/Converter/releases/assets/1001',
+  'https://api.github.com/repos/attacker/repo/releases/assets/1001',
+  'https://api.github.com/repos/leeisfailing/Converter/releases/assets/not-a-number',
+  'https://github.com/attacker/repo/releases/download/v3.0.0/asset',
+]) {
+  for (const index of [0, 1, 2, 3]) {
+    test(`rejects hostile asset URL before fetch: ${index} ${hostile}`, async () => {
+      const f = fixture();
+      f.release.assets[index].url = hostile;
+      let downloads = 0;
+      await assert.rejects(() => validateUpdateManifest(f.manifest, f.release, VERSION, REPO, {
+        fetchBytes: async () => { downloads++; return Buffer.alloc(0); },
+      }), /Untrusted download URL/);
+      assert.equal(downloads, 0);
+    });
+  }
+}
+
+test('drops token explicitly when GitHub API redirects to asset CDN', async () => {
+  const originalFetch = globalThis.fetch;
+  const previousToken = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'synthetic-test-token';
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return calls.length === 1
+      ? new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/test' } })
+      : new Response('artifact');
+  };
+  try {
+    await defaultFetchBytes(`https://api.github.com/repos/${REPO}/releases/assets/1001`);
+    assert.equal(calls[0].options.headers.authorization, 'Bearer synthetic-test-token');
+    assert.equal(calls[1].options.headers.authorization, undefined);
+    assert.equal(calls[0].options.redirect, 'manual');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = previousToken;
+  }
+});
+
+test('validates a Linux-only manifest when explicitly requested', async () => {
+  const f = fixture();
+  delete f.manifest.platforms['windows-x86_64'];
+  await validateUpdateManifest(f.manifest, f.release, VERSION, REPO, { requiredPlatforms: ['linux-x86_64'], fetchBytes: fetchBytesFor(f) });
+});
+
+test('preserves default Windows-only validation for the unchanged Windows release workflow', async () => {
+  const f = fixture();
+  delete f.manifest.platforms['linux-x86_64'];
+  await validateUpdateManifest(f.manifest, f.release, VERSION, REPO, { fetchBytes: fetchBytesFor(f) });
 });

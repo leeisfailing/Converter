@@ -1,0 +1,57 @@
+name: Linux Release
+on:
+  push:
+    tags: ["linux-v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Require matching stable release tag
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          test "$RELEASE_REF_TYPE" = tag || { echo 'Run Release from a linux-v<version> tag.'; exit 1; }
+          node rust/scripts/check-release.mjs --linux-only
+  linux:
+    needs: validate
+    uses: ./.github/workflows/linux.yml
+    with:
+      release: true
+    secrets: inherit
+  publish:
+    needs: linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-linux
+          path: release-assets
+          merge-multiple: true
+      - name: Generate and verify Linux signed manifest
+        run: node rust/scripts/generate-update-manifest.mjs release-assets --linux-only
+      - name: Upload, verify, and publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node rust/scripts/publish-release.mjs release-assets --linux-only

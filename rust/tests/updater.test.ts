@@ -3,10 +3,10 @@ import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import type { DownloadProgressEvent } from "../src/lib/updater";
 import { version } from "../package.json";
 
-const mocks = vi.hoisted(() => ({ check: vi.fn(), relaunch: vi.fn(), isTauri: vi.fn(), getVersion: vi.fn() }));
+const mocks = vi.hoisted(() => ({ check: vi.fn(), relaunch: vi.fn(), isTauri: vi.fn(), getVersion: vi.fn(), invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: mocks.check }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: mocks.relaunch }));
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: mocks.isTauri }));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: mocks.isTauri, invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: mocks.getVersion }));
 
 let originalUA: string;
@@ -16,6 +16,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.isTauri.mockReturnValue(true);
   mocks.getVersion.mockResolvedValue("3.0.0");
+  mocks.invoke.mockResolvedValue("linux_appimage");
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -36,6 +37,22 @@ function update() {
 }
 
 describe("updater lifecycle", () => {
+  it("explains why a bare Linux executable cannot install an AppImage update", async () => {
+    mocks.invoke.mockResolvedValue("unsupported");
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().error).toContain("Linux AppImage");
+    expect(mocks.check).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Linux distribution detection fails", async () => {
+    mocks.invoke.mockRejectedValue(new Error("Cannot determine update distribution"));
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState().status).toBe("error");
+    expect(mocks.check).not.toHaveBeenCalled();
+  });
+
   it.each(["2.9.0", "true"])("allows checks after replacing an older installed marker (%s)", async (marker) => {
     localStorage.setItem("converter-update-installed", marker);
     mocks.check.mockResolvedValue(null);
@@ -77,7 +94,7 @@ describe("updater lifecycle", () => {
     const store = await import("../src/lib/updater");
     const first = store.checkForUpdate();
     await store.checkForUpdate();
-    expect(mocks.check).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mocks.check).toHaveBeenCalledTimes(1));
     complete(null);
     await first;
     expect(store.getUpdaterState().status).toBe("up_to_date");
@@ -196,7 +213,7 @@ describe("updater lifecycle", () => {
   });
 
   it("sets idle instead of restarting on Windows after install", async () => {
-    Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", configurable: true });
+    mocks.invoke.mockResolvedValue("windows_installer");
     const available = update();
     mocks.check.mockResolvedValue(available);
     available.downloadAndInstall.mockImplementation(async (progress: (event: DownloadEvent) => void) => {

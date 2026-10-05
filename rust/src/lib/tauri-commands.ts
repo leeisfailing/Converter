@@ -336,6 +336,12 @@ export async function cancelOperationById(id: string): Promise<void> {
 
 // ===== APP SETTINGS =====
 
+export type UpdateDistribution = "windows_installer" | "linux_appimage" | "unsupported";
+
+export function getUpdateDistribution(): Promise<UpdateDistribution> {
+  return invoke<UpdateDistribution>("get_update_distribution");
+}
+
 export interface AppSettings {
   downloadDir: string;
   outputDir: string;

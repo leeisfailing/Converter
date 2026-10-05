@@ -5,9 +5,11 @@
     "beforeBuildCommand": "npm run setup:linux && npm run build"
   },
   "bundle": {
-    "active": false,
-    "targets": [],
-    "createUpdaterArtifacts": false,
+    "active": true,
+    "targets": [
+      "appimage"
+    ],
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "bin/converter-ffmpeg",
       "bin/converter-ffprobe"
@@ -19,6 +21,11 @@
       "../../cpp_engine/build/gpu_engine.exe": null,
       "bin/linux/python/": "PyEngine/bin/python/",
       "../../cpp_engine/build-linux/gpu_engine": "gpu_engine"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
     }
   },
   "app": {
@@ -34,5 +41,12 @@
         "transparent": false
       }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/leeisfailing/Converter/releases/download/updater-linux/latest-linux.json"
+      ]
+    }
   }
 }

@@ -84,6 +84,7 @@ pub fn run() {
         .manage(cache::AppCache::default())
         .manage(persistent_cache::PersistentCache::global().clone())
         .invoke_handler(tauri::generate_handler![
+            commands::updater::get_update_distribution,
             // Existing commands (Python engine fallback)
             commands::detect::detect_file,
             commands::detect::detect_url,

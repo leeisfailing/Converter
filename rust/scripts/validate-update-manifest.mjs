@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { verifyUpdaterSignature } from './updater-signature.mjs';
 import { resolveRepository } from './resolve-repository.mjs';
 
 /** Where to download a release asset from: the API URL (works for drafts) or the public URL. */
@@ -12,24 +13,54 @@ function assetUrl(asset) {
   return null;
 }
 
-/**
- * Download a release asset as raw bytes. GitHub token comes from GH_TOKEN /
- * GITHUB_TOKEN when present; it is only ever sent as an Authorization header,
- * never logged.
- */
-async function defaultFetchBytes(url) {
-  const headers = { 'user-agent': 'converter-release-verify' };
-  if (/^https:\/\/api\.github\.com\//.test(url)) headers.accept = 'application/octet-stream';
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  if (token) headers.authorization = `Bearer ${token}`;
-  let response;
-  try {
-    response = await fetch(url, { headers, redirect: 'follow' });
-  } catch (error) {
-    throw new Error(`network error while downloading ${url}: ${error instanceof Error ? error.message : error}`);
+/** Reject untrusted release metadata before any downloader is called. */
+function validateAssetUrl(value, repo, prefix, label) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error(`Invalid download URL for ${label}.`); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash) {
+    throw new Error(`Untrusted download URL for ${label}.`);
   }
-  if (!response.ok) throw new Error(`HTTP ${response.status} while downloading ${url}`);
-  return Buffer.from(await response.arrayBuffer());
+  const apiPrefix = `/repos/${repo}/releases/assets/`;
+  const apiAsset = url.hostname === 'api.github.com' && url.pathname.startsWith(apiPrefix)
+    && /^\d+$/.test(url.pathname.slice(apiPrefix.length));
+  const publicAsset = url.hostname === 'github.com' && value.startsWith(prefix)
+    && /^[^/]+$/.test(value.slice(prefix.length));
+  if (!apiAsset && !publicAsset) throw new Error(`Untrusted download URL for ${label}.`);
+}
+
+/** Only the GitHub API receives a token; cross-origin redirects drop it explicitly. */
+export async function defaultFetchBytes(value) {
+  const initial = new URL(value);
+  if (initial.protocol !== 'https:' || initial.username || initial.password || initial.port
+      || !['api.github.com', 'github.com'].includes(initial.hostname)) throw new Error('Untrusted initial GitHub asset URL.');
+  let current = initial;
+  let tokenAllowed = initial.hostname === 'api.github.com';
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const headers = { 'user-agent': 'converter-release-verify' };
+    if (current.hostname === 'api.github.com') {
+      headers.accept = 'application/octet-stream';
+      if (token && tokenAllowed) headers.authorization = `Bearer ${token}`;
+    }
+    let response;
+    try { response = await fetch(current.href, { headers, redirect: 'manual' }); }
+    catch (error) { throw new Error(`network error while downloading ${current.href}: ${error instanceof Error ? error.message : error}`); }
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      if (!location) throw new Error('GitHub asset redirect has no location.');
+      const next = new URL(location, current);
+      if (next.protocol !== 'https:' || next.username || next.password || next.port
+          || !['api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(next.hostname)) {
+        throw new Error('Untrusted GitHub asset redirect.');
+      }
+      if (next.origin !== current.origin) tokenAllowed = false;
+      current = next;
+      continue;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status} while downloading ${current.href}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+  throw new Error('Too many GitHub asset redirects.');
 }
 
 async function download(fetchBytes, url, label) {
@@ -75,12 +106,13 @@ async function verifySignatureAsset({ platform, name, artifact, sigAsset }, fetc
   }
 }
 
-async function verifyArtifactBytes({ platform, name, asset }, fetchBytes) {
+async function verifyArtifactBytes({ platform, name, asset, artifact }, fetchBytes, publicKey) {
   const expected = sha256DigestHex(asset.digest, name);
   const url = assetUrl(asset);
   if (!url) throw new Error(`Updater asset ${name} has no download URL.`);
   const bytes = await download(fetchBytes, url, name);
   const actual = createHash('sha256').update(bytes).digest('hex');
+  if (publicKey) verifyUpdaterSignature(bytes, artifact.signature, publicKey);
   if (actual !== expected) {
     throw new Error(
       `Digest mismatch for ${platform}: the bytes of ${name} do not match the sha256 digest recorded for the release asset. `
@@ -106,11 +138,14 @@ async function verifyArtifactBytes({ platform, name, asset }, fetchBytes) {
 export async function validateUpdateManifest(manifest, release, version, repo, options = {}) {
   const fetchBytes = options.fetchBytes ?? defaultFetchBytes;
   if (manifest.version !== version) throw new Error('Updater manifest version does not match the app.');
-  if (release.tag_name !== `v${version}`) throw new Error('Release tag does not match the app.');
+  const tag = options.tag ?? `v${version}`;
+  if (release.tag_name !== tag) throw new Error('Release tag does not match the app.');
   if (!manifest.platforms || typeof manifest.platforms !== 'object') throw new Error('Updater platforms are missing.');
-  if (!manifest.platforms['windows-x86_64']) throw new Error('Windows x64 updater artifact is missing.');
+  for (const platform of options.requiredPlatforms ?? ['windows-x86_64']) {
+    if (!manifest.platforms[platform]) throw new Error(`Updater artifact is missing: ${platform}.`);
+  }
   const assets = new Map((release.assets ?? []).map(asset => [asset.name, asset]));
-  const prefix = `https://github.com/${repo}/releases/download/v${version}/`;
+  const prefix = `https://github.com/${repo}/releases/download/${tag}/`;
   const targets = [];
   for (const [platform, artifact] of Object.entries(manifest.platforms)) {
     if (!artifact || typeof artifact.url !== 'string' || !artifact.url.startsWith(prefix)) {
@@ -123,11 +158,16 @@ export async function validateUpdateManifest(manifest, release, version, repo, o
     if (typeof artifact.signature !== 'string' || !artifact.signature.trim()) throw new Error(`Missing updater signature for ${platform}.`);
     const sigAsset = assets.get(`${name}.sig`);
     if (!sigAsset || sigAsset.size <= 0 || sigAsset.state !== 'uploaded') throw new Error(`Missing uploaded signature for ${name}.`);
+    for (const [label, metadata] of [[name, asset], [`${name}.sig`, sigAsset]]) {
+      if (metadata.url) validateAssetUrl(metadata.url, repo, prefix, label);
+      if (metadata.browser_download_url) validateAssetUrl(metadata.browser_download_url, repo, prefix, label);
+      if (!assetUrl(metadata)) throw new Error(`Missing download URL for ${label}.`);
+    }
     targets.push({ platform, name, artifact, asset, sigAsset });
   }
   for (const target of targets) {
     await verifySignatureAsset(target, fetchBytes);
-    await verifyArtifactBytes(target, fetchBytes);
+    await verifyArtifactBytes(target, fetchBytes, options.publicKey);
   }
 }
 
@@ -138,7 +178,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const release = readJson(process.argv[3]);
     const config = readJson(fileURLToPath(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
     const repo = resolveRepository({ cwd: fileURLToPath(new URL('../', import.meta.url)) });
-    await validateUpdateManifest(manifest, release, config.version, repo);
+    await validateUpdateManifest(manifest, release, config.version, repo, { publicKey: config.plugins.updater.pubkey, ...(process.argv.includes('--linux-only') ? { requiredPlatforms: ['linux-x86_64'] } : {}) });
     console.log(`Validated updater assets for v${config.version}: ${Object.keys(manifest.platforms).join(', ')}`);
   };
   main().catch(error => {

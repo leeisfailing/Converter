@@ -38,7 +38,7 @@ export default {
         glow: "0 0 20px var(--accent-glow)",
       },
       fontFamily: {
-        sans: ['"Inter"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
+        sans: ['"SF Pro Text"', '"SF Pro Display"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', '"SF Mono"', '"Fira Code"', 'monospace'],
       },
       animation: {

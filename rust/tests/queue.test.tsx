@@ -204,6 +204,56 @@ it("fails clearly when no GPU is available but continues non-video jobs", async 
   expect(process.mock.calls[0][0].assignedGpu).toBeUndefined();
 });
 
+it("blocks admission until native pause and resume are acknowledged", async () => {
+  let acknowledge!: () => void;
+  const control = vi.fn(() => new Promise<void>((resolve) => { acknowledge = resolve; }));
+  const view = renderHook(() => useQueue(control));
+  const process = vi.fn().mockResolvedValue(undefined);
+  let transition!: Promise<void>;
+  act(() => {
+    view.result.current.enqueue(item("one"));
+    transition = view.result.current.togglePaused();
+    view.result.current.processNextBatch(process);
+  });
+  expect(process).not.toHaveBeenCalled();
+  expect(view.result.current.pausePending).toBe(true);
+  expect(view.result.current.paused).toBe(false);
+  await act(async () => { acknowledge(); await transition; });
+  expect(view.result.current.paused).toBe(true);
+  act(() => {
+    transition = view.result.current.togglePaused();
+    view.result.current.processNextBatch(process);
+    void view.result.current.togglePaused();
+  });
+  expect(control.mock.calls).toEqual([[true], [false]]);
+  expect(process).not.toHaveBeenCalled();
+  await act(async () => { acknowledge(); await transition; });
+  expect(view.result.current.paused).toBe(false);
+  await act(async () => view.result.current.processNextBatch(process));
+  expect(process).toHaveBeenCalledOnce();
+});
+
+it("restores admission on failed pause and keeps the queue paused on failed resume", async () => {
+  const control = vi.fn().mockRejectedValueOnce(new Error("pause rejected"))
+    .mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("resume rejected"));
+  const view = renderHook(() => useQueue(control));
+  act(() => view.result.current.enqueue(item("one")));
+  await act(async () => {
+    await expect(view.result.current.togglePaused()).rejects.toThrow("pause rejected");
+  });
+  expect(view.result.current.paused).toBe(false);
+  expect(view.result.current.pausePending).toBe(false);
+  await act(async () => view.result.current.togglePaused());
+  await act(async () => {
+    await expect(view.result.current.togglePaused()).rejects.toThrow("resume rejected");
+  });
+  expect(view.result.current.paused).toBe(true);
+  const process = vi.fn();
+  act(() => view.result.current.processNextBatch(process));
+  expect(process).not.toHaveBeenCalled();
+  expect(view.result.current.queue[0]).toMatchObject({ id: "one", status: "pending" });
+});
+
 it("pauses admission synchronously, lets active work finish, and resumes waiting work", async () => {
   const view = renderHook(useQueue);
   let finish!: () => void;

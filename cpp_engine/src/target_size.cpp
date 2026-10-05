@@ -199,7 +199,7 @@ void reduce_to_target(ReducerWorker* worker) {
             cmd.insert(cmd.end(), {"-map", "0:a:0", "-vn", "-c:a", "libmp3lame",
                                    "-b:a", std::to_string(rate) + "k", "-compression_level", "0"});
         } else {
-            double audio_rate = std::min(192000.0, std::max(16000.0, budget * 0.15));
+            double audio_rate = audio.empty() ? 0 : std::min(192000.0, std::max(16000.0, budget * 0.15));
             int video_rate = bitrate_to_int(budget - audio_rate);
             if (video.empty() || video_rate < 4000) {
                 continue;
@@ -305,9 +305,9 @@ void reduce_to_target(ReducerWorker* worker) {
                                            "-maxrate", std::to_string((int)(video_rate * 1.1)),
                                            "-bufsize", std::to_string(video_rate)});
                     if (encoder->size() >= 6 && encoder->substr(encoder->size() - 6) == "_nvenc") {
-                        cmd.insert(cmd.end(), {"-rc", "constqp", "-qp", "35"});
+                        cmd.insert(cmd.end(), {"-rc", "vbr", "-multipass", "fullres"});
                     } else if (encoder->size() >= 4 && encoder->substr(encoder->size() - 4) == "_amf") {
-                        cmd.insert(cmd.end(), {"-rc", "cqp", "-qp_p", "35", "-qp_i", "30"});
+                        cmd.insert(cmd.end(), {"-rc", "vbr_peak"});
                     }
                 }
 

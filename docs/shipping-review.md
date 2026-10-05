@@ -10,8 +10,9 @@ and release-note changes were preserved in the combined source revision.
 - `Windows`: shared application and engines, Windows-focused README, Windows
   checks/releases only. Linux source/configuration remains available; the three
   Linux workflow files are removed on this branch only.
-- Branches are prepared locally. No remote push, release tag, release upload,
-  or signing-key change was performed.
+- This initial review prepared branches locally. Subsequent user-authorized
+  fixes, GitHub pushes, and Linux channel recovery are documented in
+  [the update and performance review](update-performance-review.md).
 
 ## Corrections
 

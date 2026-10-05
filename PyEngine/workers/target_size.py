@@ -7,24 +7,56 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 
 from PyEngine.core.config import find_binary
 from PyEngine.core.gpu import get_video_encoder, video_encoding_args
 from PyEngine.core.media import uses_cuda_frames, decode_args, scale_filter
 
 
-def _execute(worker, args, *, capture_output=False):
+def _report_progress(worker, percent):
+    percent = max(getattr(worker, '_target_progress', 0), min(99, percent))
+    if worker.on_progress and percent > getattr(worker, '_target_progress', 0):
+        worker._target_progress = percent
+        worker.on_progress(percent)
+
+
+def _execute(worker, args, *, capture_output=False, progress_duration=None, progress_range=(10, 16)):
     if not worker._is_running:
         raise RuntimeError('Reduction was cancelled')
+    report_progress = bool(progress_duration and progress_duration > 0 and worker.on_progress and not capture_output)
+    if report_progress:
+        args = [args[0], '-progress', 'pipe:1', '-nostats', *args[1:]]
     with tempfile.TemporaryFile(mode='w+b') as errors:
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL, stderr=errors,
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE if capture_output or report_progress else subprocess.DEVNULL, stderr=errors,
                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
         worker._process = proc
+        progress_errors = []
+        def read_progress():
+            try:
+                for record in iter(lambda: proc.stdout.readline(256), b''):
+                    if record.startswith(b'out_time_us='):
+                        try:
+                            fraction = max(0, min(1, int(record.split(b'=', 1)[1]) / 1_000_000 / progress_duration))
+                        except ValueError:
+                            continue
+                        start, end = progress_range
+                        _report_progress(worker, int(start + fraction * (end - start)))
+            except Exception as error:
+                progress_errors.append(error)
+                if proc.poll() is None:
+                    proc.terminate()
+        progress_thread = threading.Thread(target=read_progress) if report_progress else None
+        if progress_thread:
+            progress_thread.start()
         try:
             while True:
                 if not worker._is_running:
                     proc.kill()
-                    proc.communicate()
+                    if capture_output:
+                        proc.communicate()
+                    else:
+                        proc.wait()
                     raise RuntimeError('Reduction was cancelled')
                 try:
                     if capture_output:
@@ -45,15 +77,23 @@ def _execute(worker, args, *, capture_output=False):
                     program = os.path.basename(args[0]) if args else 'program'
                     detail = f'{program} exited with code {proc.returncode}'
                 raise RuntimeError(detail)
+            if progress_thread:
+                progress_thread.join()
+            if progress_errors:
+                raise progress_errors[0]
             return output
         finally:
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+            if progress_thread:
+                progress_thread.join()
+                proc.stdout.close()
             worker._process = None
 
 
 def reduce_to_target(worker):
+    worker._target_progress = 0
     target = worker.target_bytes
     if type(target) is not int or not 0 < target <= 10_000_000_000:
         raise ValueError('Target size must be greater than zero and at most 10 GB')
@@ -121,7 +161,7 @@ def reduce_to_target(worker):
                 else:
                     high = quality - 1
                 if worker.on_progress:
-                    worker.on_progress(10 + attempt * 12)
+                    _report_progress(worker, 10 + attempt * 12)
             if best.exists():
                 finish()
                 return
@@ -152,7 +192,7 @@ def reduce_to_target(worker):
                     continue
                 video_opts = ['-map', '0:V:0', '-vf', scale_filter(width, cuda=cuda, limit=True)]
                 if worker.on_progress:
-                    worker.on_progress(min(90, 5 + attempt * 16))
+                    _report_progress(worker, 10 + attempt * 6)
                 if encoder == 'libx264':
                     video_opts += ['-c:v', encoder, '-b:v', str(video_rate), '-preset', 'veryslow',
                                    '-pix_fmt', 'yuv420p', '-passlogfile', str(Path(folder) / 'analysis')]
@@ -175,8 +215,9 @@ def reduce_to_target(worker):
                     cmd += ['-c:a', 'aac', '-b:a', str(audio_rate)]
             cmd.append(str(candidate))
             if worker.on_progress:
-                worker.on_progress(min(90, 10 + attempt * 16))
-            _execute(worker, cmd)
+                _report_progress(worker, 10 + attempt * 6)
+            _execute(worker, cmd, progress_duration=duration,
+                     progress_range=(10 + attempt * 6, 16 + attempt * 6))
             if not worker._is_running:
                 raise RuntimeError('Reduction was cancelled')
             size = candidate.stat().st_size
@@ -194,7 +235,7 @@ def reduce_to_target(worker):
             return
         # Fallback: try progressively smaller resolutions when bitrate alone can't fit
         if video and worker.file_type == 'video':
-            for scale in (0.75, 0.6, 0.5, 0.4, 0.3, 0.2):
+            for scale_index, scale in enumerate((0.75, 0.6, 0.5, 0.4, 0.3, 0.2)):
                 scaled_width = max(256, int(width * scale)) & ~1
                 fb_budget = max(0, target - 1024) * 8 * 0.80 / duration if duration else 0
                 fl, fu = 0, 0
@@ -216,14 +257,15 @@ def reduce_to_target(worker):
                         cmd += ['-b:v', str(video_rate_fb), '-maxrate', str(int(video_rate_fb * 1.1)),
                                 '-bufsize', str(video_rate_fb)]
                         if encoder.endswith('_nvenc'):
-                            cmd += ['-rc', 'constqp', '-qp', '35']
+                            cmd += ['-rc', 'vbr', '-multipass', 'fullres']
                         elif encoder.endswith('_amf'):
-                            cmd += ['-rc', 'cqp', '-qp_p', '35', '-qp_i', '30']
+                            cmd += ['-rc', 'vbr_peak']
                     cmd += ['-map', '0:a:0?', '-movflags', '+faststart+use_metadata_tags']
                     if audio:
                         cmd += ['-c:a', 'aac', '-b:a', str(audio_rate_fb)]
                     cmd.append(str(candidate))
-                    _execute(worker, cmd)
+                    _execute(worker, cmd, progress_duration=duration,
+                             progress_range=(84 + scale_index * 2, 86 + scale_index * 2))
                     if not worker._is_running:
                         raise RuntimeError('Reduction was cancelled')
                     fb_size = candidate.stat().st_size
@@ -259,7 +301,7 @@ def reduce_to_target(worker):
                     if audio:
                         cmd += ['-c:a', 'aac', '-b:a', '48000']
                     cmd.append(str(candidate))
-                    _execute(worker, cmd)
+                    _execute(worker, cmd, progress_duration=duration, progress_range=(96, 99))
                     if not worker._is_running:
                         raise RuntimeError('Reduction was cancelled')
                     if keep_candidate():

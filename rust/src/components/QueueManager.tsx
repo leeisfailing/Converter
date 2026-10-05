@@ -45,6 +45,7 @@ interface Props {
   onCancel: (id: string) => void;
   onClearCompleted: () => void;
   paused: boolean;
+  pausePending?: boolean;
   onPauseToggle: () => void;
   onRetry: (id: string) => void;
   onRetryFailed: () => void;
@@ -76,16 +77,17 @@ const staggerItem = {
 
 interface QueueItemRowProps {
   item: QueueItem;
+  paused: boolean;
   onRemove: (id: string) => void;
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
 }
 
 const QueueItemRow = memo(forwardRef<HTMLDivElement, QueueItemRowProps>(
-  ({ item, onRemove, onCancel, onRetry }, ref) => {
+  ({ item, paused, onRemove, onCancel, onRetry }, ref) => {
     const sConfig = statusConfig[item.status];
     const tConfig = typeConfig[item.type] || typeConfig.convert;
-    const SIcon = sConfig.icon;
+    const SIcon = item.status === "active" && paused ? Pause : sConfig.icon;
     const TIcon = tConfig.icon;
 
     return (
@@ -114,11 +116,11 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, QueueItemRowProps>(
           <div className="flex items-center gap-2 mt-0.5">
             <SIcon
               size={11}
-              className={`${sConfig.color} ${item.status === "active" ? "animate-spin" : ""}`}
+              className={`${sConfig.color} ${item.status === "active" && !paused ? "animate-spin motion-reduce:animate-none" : ""}`}
             />
             <span className={`text-[10px] ${sConfig.color}`}>
               {item.status === "active"
-                ? item.downloadPhase === "resolving" ? "Finding video…"
+                ? paused ? `Paused · ${Math.round(item.progress)}%` : item.downloadPhase === "resolving" ? "Finding video…"
                   : item.downloadPhase === "retrying" ? "Retrying…"
                   : `${Math.round(item.progress)}%`
                 : item.status}
@@ -193,7 +195,7 @@ const QueueItemRow = memo(forwardRef<HTMLDivElement, QueueItemRowProps>(
 ));
 QueueItemRow.displayName = "QueueItemRow";
 
-export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted, paused, onPauseToggle, onRetry, onRetryFailed }: Props) {
+export default memo(function QueueManager({ items, onRemove, onCancel, onClearCompleted, paused, pausePending = false, onPauseToggle, onRetry, onRetryFailed }: Props) {
   const hasItems = items.length > 0;
   const { completedCount, failedCount, cancelledCount, activeCount, pendingCount } = useMemo(() => ({
     completedCount: items.filter((item) => item.status === "completed").length,
@@ -220,9 +222,9 @@ export default memo(function QueueManager({ items, onRemove, onCancel, onClearCo
       {(hasItems || paused) && (
         <div className="queue-controls">
           <div className="flex items-center gap-2">
-            <button type="button" className="queue-control" onClick={onPauseToggle} aria-pressed={paused} aria-label={paused ? "Resume queue" : "Pause queue"}>
+            <button type="button" className="queue-control" onClick={onPauseToggle} disabled={pausePending} aria-busy={pausePending} aria-pressed={paused} aria-label={paused ? "Resume queue" : "Pause queue"}>
               {paused ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
-              {paused ? "Resume" : "Pause"}
+              {pausePending ? paused ? "Resuming…" : "Pausing…" : paused ? "Resume" : "Pause"}
             </button>
             {failedCount > 0 && (
               <button type="button" className="queue-control" onClick={onRetryFailed}>
@@ -232,7 +234,7 @@ export default memo(function QueueManager({ items, onRemove, onCancel, onClearCo
           </div>
           <div className="queue-summary" role="status" aria-live="polite">
             {paused && <span className="text-app-accent">Paused · </span>}
-            {activeCount > 0 ? <span>Processing {activeCount} of {items.length}</span> : pendingCount > 0 ? <span>{pendingCount} pending</span> : <span>{hasItems ? "All tasks finished" : "No tasks yet"}</span>}
+            {activeCount > 0 ? <span>{paused ? `${activeCount} suspended` : `Processing ${activeCount} of ${items.length}`}</span> : pendingCount > 0 ? <span>{pendingCount} pending</span> : <span>{hasItems ? "All tasks finished" : "No tasks yet"}</span>}
           </div>
           {finishedCount > 0 && (
             <div className="queue-summary flex flex-wrap gap-x-3">
@@ -254,12 +256,12 @@ export default memo(function QueueManager({ items, onRemove, onCancel, onClearCo
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           <AnimatePresence mode="popLayout">
             {items.map((item) => (
-              <QueueItemRow key={item.id} item={item} onRemove={onRemove} onCancel={onCancel} onRetry={onRetry} />
+              <QueueItemRow key={item.id} item={item} paused={paused} onRemove={onRemove} onCancel={onCancel} onRetry={onRetry} />
             ))}
           </AnimatePresence>
         </div>
       )}
-      <div className="queue-footer">{paused ? "Running tasks finish normally. New tasks wait until you resume." : activeCount > 0 ? "You can keep working while your media processes." : "Your media, all in one place."}</div>
+      <div className="queue-footer">{paused ? "Running and waiting tasks are paused. Resume to continue from the same position." : activeCount > 0 ? "You can keep working while your media processes." : "Your media, all in one place."}</div>
     </div>
   );
 });

@@ -28,11 +28,13 @@ function freshAttempt(item: QueueItem): QueueItem {
   };
 }
 
-export function useQueue() {
+export function useQueue(onPauseChange?: (paused: boolean) => Promise<void>) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const queueRef = useRef<QueueItem[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
+  const [pausePending, setPausePending] = useState(false);
+  const pauseTransition = useRef(false);
   const concurrencyRef = useRef<ConcurrencySnapshot>({
     download: 1, convert: 1, transcoder: 1, upscale: 1,
     activeDownload: 0, activeConvert: 0, activeTranscoder: 0, activeUpscale: 0,
@@ -154,10 +156,27 @@ export function useQueue() {
     commit((items) => [...items]);
   }, [commit]);
 
-  const togglePaused = useCallback(() => {
-    pausedRef.current = !pausedRef.current;
-    setPaused(pausedRef.current);
-  }, []);
+  const togglePaused = useCallback(async () => {
+    if (pauseTransition.current) return;
+    const previous = pausedRef.current;
+    const next = !previous;
+    pauseTransition.current = true;
+    // Stop admission immediately, including while resume is being confirmed.
+    pausedRef.current = true;
+    setPausePending(true);
+    try {
+      if (onPauseChange) await onPauseChange(next);
+      pausedRef.current = next;
+      setPaused(next);
+    } catch (error) {
+      pausedRef.current = previous;
+      commit((items) => [...items]);
+      throw error;
+    } finally {
+      pauseTransition.current = false;
+      setPausePending(false);
+    }
+  }, [commit, onPauseChange]);
 
   // Each attempt needs its own ID: events and cleanup from a previous attempt
   // must never complete, fail, or release resources belonging to its retry.
@@ -192,7 +211,7 @@ export function useQueue() {
   }, [cancelActive, cancelItem]);
 
   return {
-    queue, queueRef, paused, togglePaused, retryItem, retryFailed,
+    queue, queueRef, paused, pausePending, togglePaused, retryItem, retryFailed,
     processNextBatch, enqueue, removeItem, clearCompleted,
     cancelActive, cancelItem, requestCancel, updateItemStatus, registerListeners, setConcurrency, concurrencyRef,
     isProcessing: queue.some((item) => item.status === "active") || Object.values(activeByType.current).some((count) => count > 0),

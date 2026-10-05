@@ -33,11 +33,16 @@ image formats. Transcoder compresses by quality or toward a target size.
 Upscale increases resolution, and Enhance uses Real-ESRGAN ONNX models.
 Models download when first needed.
 
-The queue supports progress, cancellation, pending-job pause/resume, and retry.
+The queue supports progress, cancellation, and retry. Pause suspends running
+media processes and holds waiting jobs; Resume continues from the same position.
+Paused jobs can still be cancelled.
 Settings control output folders, concurrency, GPU selection, and appearance.
 Hardware encoding depends on compatible NVIDIA, AMD, or Intel drivers and codec
 support. ONNX inference providers are separate from FFmpeg encoders; the bundled
-Windows AI runtime includes CPU inference. TikTok uses the third-party TikWM
+Windows AI runtime includes CPU inference. The selected media GPU controls
+encoding; another GPU may render the desktop. Dedicated encoder utilization
+can be high while general GPU utilization is low. Audio, I/O, and unsupported
+decoding/filtering operations can still use CPU resources. TikTok uses the third-party TikWM
 service; other supported sites use yt-dlp.
 
 ## Develop and build

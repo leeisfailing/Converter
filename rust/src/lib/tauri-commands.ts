@@ -311,6 +311,15 @@ export async function startEnhance(params: {
   }
 }
 
+export async function setQueuePaused(paused: boolean): Promise<void> {
+  try {
+    await invoke("set_queue_paused", { paused });
+  } catch (error) {
+    console.error(`[cmd] ${paused ? "Pause" : "Resume"} queue failed:`, error);
+    throw error;
+  }
+}
+
 export async function cancelOperation(): Promise<void> {
   console.log(`[cmd] cancelOperation()`);
   try {

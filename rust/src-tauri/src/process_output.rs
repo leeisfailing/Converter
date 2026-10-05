@@ -29,6 +29,9 @@ pub trait CancellableCommand {
 
 impl CancellableCommand for Command {
     fn output_cancellable(&mut self, operation: &Operation) -> io::Result<Output> {
+        while operation.is_paused() && !operation.is_cancelled() {
+            thread::sleep(std::time::Duration::from_millis(25));
+        }
         if operation.is_cancelled() {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
         }
@@ -43,9 +46,29 @@ impl CancellableCommand for Command {
             self.process_group(0);
         }
         let mut child = self.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
+        let registration = match operation.register_process(child.id()) {
+            Ok(registration) => registration,
+            Err(message) => {
+                kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::other(message));
+            }
+        };
         let errors = capture_tail(child.stderr.take().expect("piped stderr"));
 
-        let status = wait_for_child(&mut child, operation)?;
+        let status = match wait_for_child(&mut child, operation) {
+            Ok(status) => status,
+            Err(error) => {
+                kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                drop(registration);
+                let _ = errors.join();
+                return Err(error);
+            }
+        };
+        drop(registration);
         Ok(Output { status, stdout: Vec::new(), stderr: errors.join().unwrap_or_default() })
     }
 }
@@ -126,6 +149,43 @@ mod tests {
         operation.cancelled_flag().store(true, std::sync::atomic::Ordering::Release);
         let error = Command::new("this-command-must-not-run").output_cancellable(&operation).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn queue_pause_stops_parent_and_descendant_and_cancel_still_reaps() {
+        let folder = tempfile::tempdir().unwrap();
+        let parent_file = folder.path().join("parent.txt");
+        let descendant_file = folder.path().join("descendant.txt");
+        let state = std::sync::Arc::new(crate::operations::Operations::default());
+        let operation = std::sync::Arc::new(tokio_test::block_on(state.begin(
+            crate::operations::OpType::Convert, "pause-tree".into())).unwrap());
+        let running = operation.clone();
+        let parent = parent_file.clone();
+        let descendant = descendant_file.clone();
+        let worker = thread::spawn(move || {
+            Command::new(crate::paths::python()).args([
+                "-X", "utf8", "-c",
+                "import subprocess,sys,time,pathlib; code=\"import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); [(p.write_text(str(i)),time.sleep(.02)) for i in range(10000)]\"; subprocess.Popen([sys.executable,'-c',code,sys.argv[2]]); p=pathlib.Path(sys.argv[1]); [(p.write_text(str(i)),time.sleep(.02)) for i in range(10000)]",
+            ]).arg(parent).arg(descendant).output_cancellable(&running)
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !parent_file.exists() || !descendant_file.exists() {
+            assert!(std::time::Instant::now() < deadline, "heartbeat children did not start");
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        state.set_paused(true).unwrap();
+        thread::sleep(std::time::Duration::from_millis(100));
+        let before = (std::fs::read(&parent_file).unwrap(), std::fs::read(&descendant_file).unwrap());
+        thread::sleep(std::time::Duration::from_millis(250));
+        assert_eq!(before, (std::fs::read(&parent_file).unwrap(), std::fs::read(&descendant_file).unwrap()), "paused process tree kept working");
+        state.set_paused(false).unwrap();
+        thread::sleep(std::time::Duration::from_millis(150));
+        assert_ne!(before.0, std::fs::read(&parent_file).unwrap(), "parent did not resume");
+        assert_ne!(before.1, std::fs::read(&descendant_file).unwrap(), "descendant did not resume");
+        state.set_paused(true).unwrap();
+        assert!(state.cancel("pause-tree"));
+        assert_eq!(worker.join().unwrap().unwrap_err().kind(), io::ErrorKind::Interrupted);
     }
 
     #[cfg(target_os = "linux")]

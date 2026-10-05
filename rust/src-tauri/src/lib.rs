@@ -15,6 +15,7 @@ mod paths;
 mod persistent_cache;
 mod plugin_system;
 mod process_output;
+mod process_pause;
 mod settings;
 mod system_specs;
 mod validation;
@@ -85,6 +86,7 @@ pub fn run() {
         .manage(persistent_cache::PersistentCache::global().clone())
         .invoke_handler(tauri::generate_handler![
             commands::updater::get_update_distribution,
+            operations::set_queue_paused,
             // Existing commands (Python engine fallback)
             commands::detect::detect_file,
             commands::detect::detect_url,

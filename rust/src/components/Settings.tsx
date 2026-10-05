@@ -326,7 +326,7 @@ export default function Settings({ onSettingsChanged, disabled, onOpenAbout }: P
           </span>
         </div>
         <p className="text-[11px] text-app-text-muted">
-          Video conversion, reduction, target-size reduction, and upscaling use hardware encoding. GPU mode never silently switches to a CPU video encoder.
+          Video conversion, reduction, target-size reduction, and upscaling use hardware encoding. GPU mode never silently switches to a CPU video encoder. Supported NVIDIA inputs also use GPU decoding and scaling. Audio, unsupported input formats, and file I/O can still use the CPU. This selection does not choose the GPU that renders the app window.
         </p>
 
         <div className="space-y-2">

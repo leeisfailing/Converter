@@ -3,12 +3,45 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PyEngine.core.config import find_binary
 from PyEngine.workers.reducer import ReducerWorker
 
 
 class TargetSizeTests(unittest.TestCase):
+    def test_hardware_resolution_retries_change_bitrate_and_preserve_encoder(self):
+        from PyEngine.workers import target_size
+        for encoder in ('h264_nvenc', 'h264_amf'):
+            with self.subTest(encoder=encoder), tempfile.TemporaryDirectory() as folder:
+                source = Path(folder) / 'source.mp4'
+                source.write_bytes(b'x' * 100000)
+                output = Path(folder) / 'output.mp4'
+                worker = ReducerWorker(str(source), str(output), target_bytes=60000, preferred_encoder=encoder)
+                trials = []
+                fallback_rates = []
+                def execute(worker, command, **kwargs):
+                    if kwargs.get('capture_output'):
+                        return json.dumps({'streams': [{'codec_type': 'video', 'codec_name': 'h264',
+                            'pix_fmt': 'yuv420p', 'width': 640}], 'format': {'duration': '3'}}).encode()
+                    self.assertEqual(command[command.index('-c:v') + 1], encoder)
+                    self.assertNotIn('-pass', command)
+                    trials.append(command)
+                    size = 120000
+                    if len(trials) > 12:
+                        self.assertEqual(command[command.index('-rc') + 1], 'vbr' if encoder.endswith('_nvenc') else 'vbr_peak')
+                        self.assertNotIn('-qp', command)
+                        rate = int(command[command.index('-b:v') + 1])
+                        fallback_rates.append(rate)
+                        size = int(72000 * rate / fallback_rates[0])
+                    Path(command[-1]).write_bytes(b'x' * size)
+                    return b''
+                with patch.object(target_size, '_execute', side_effect=execute), patch.object(target_size, 'get_video_encoder', return_value=encoder):
+                    target_size.reduce_to_target(worker)
+                self.assertGreaterEqual(len(fallback_rates), 2)
+                self.assertLess(fallback_rates[1], fallback_rates[0])
+                self.assertLessEqual(output.stat().st_size, 60000)
+
     def test_complete_media_fits_target(self):
         cases = [
             ('video', '.mp4', ['-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=15',

@@ -196,8 +196,18 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
         _ => crate::operations::OpType::Convert,
     };
     let operation = ops.begin(op_type, id.clone()).await.map_err(|e| e.to_string())?;
+    operation.wait_until_resumed().await?;
     let state = app.state::<PythonEngine>();
     let mut child = command(&app)?.spawn().map_err(|e| format!("Failed to start Python: {e}"))?;
+    let registration = match operation.register_process(child.id().ok_or("Media child has no process ID")?) {
+        Ok(registration) => registration,
+        Err(error) => {
+            if let Some(pid) = child.id() { crate::process_output::kill_tree(pid); }
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(error);
+        }
+    };
     let mut stdin = child.stdin.take().ok_or("Missing engine stdin")?;
     let stdout = child.stdout.take().ok_or("Missing engine stdout")?;
     let stderr = child.stderr.take().ok_or("Missing engine stderr")?;
@@ -251,6 +261,7 @@ pub async fn run_interactive_command(app: AppHandle, value: serde_json::Value, p
             Err(error) => break Err(format!("Engine output read error: {error}")),
         }
     };
+    drop(registration);
     let process = state.active.lock().await.remove(&id);
     if let Some(mut process) = process {
         if operation.is_cancelled() {

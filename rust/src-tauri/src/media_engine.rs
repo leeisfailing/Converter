@@ -406,6 +406,7 @@ impl NativeEngine {
         if operation.is_cancelled() {
             return Err("Operation was cancelled".into());
         }
+        operation.wait_until_resumed().await?;
         let mut child = media_command(paths::ffmpeg())
             .args(args)
             .stdin(Stdio::null())
@@ -414,6 +415,17 @@ impl NativeEngine {
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("Failed to start ffmpeg: {e}"))?;
+        let pid = child.id().ok_or("Missing ffmpeg process ID")?;
+        let _registration = match operation.register_process(pid) {
+            Ok(registration) => registration,
+            Err(error) => {
+                #[cfg(target_os = "linux")]
+                crate::process_output::kill_tree(pid);
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err(error);
+            }
+        };
         let mut lines = BufReader::new(child.stderr.take().ok_or("Missing ffmpeg stderr")?).lines();
         let mut tail = VecDeque::with_capacity(MAX_STDERR_LINES);
         let mut last_progress = -1;

@@ -183,3 +183,63 @@ test('preserves default Windows-only validation for the unchanged Windows releas
   delete f.manifest.platforms['linux-x86_64'];
   await validateUpdateManifest(f.manifest, f.release, VERSION, REPO, { fetchBytes: fetchBytesFor(f) });
 });
+
+function draftFixture() {
+  const f = fixture();
+  f.release.draft = true;
+  for (const asset of f.release.assets) {
+    asset.browser_download_url = asset.browser_download_url.replace(`/v${VERSION}/`, '/untagged-2de807e7085fb9ee8a4e/');
+  }
+  return f;
+}
+
+test('verifies GitHub draft temporary browser URLs exclusively through trusted API URLs', async () => {
+  const f = draftFixture();
+  const urls = [];
+  await validateUpdateManifest(f.manifest, f.release, VERSION, REPO, {
+    requiredPlatforms: ['windows-x86_64', 'linux-x86_64'],
+    fetchBytes: async url => { urls.push(url); return fetchBytesFor(f)(url); },
+  });
+  assert.equal(urls.length, 4);
+  assert.ok(urls.every(url => url.startsWith(`https://api.github.com/repos/${REPO}/releases/assets/`)));
+  assert.ok(Object.values(f.manifest.platforms).every(artifact => artifact.url.includes(`/v${VERSION}/`)));
+});
+
+test('published releases reject temporary draft browser tags before fetching', async () => {
+  const f = draftFixture();
+  f.release.draft = false;
+  let downloads = 0;
+  await assert.rejects(() => validateUpdateManifest(f.manifest, f.release, VERSION, REPO, {
+    fetchBytes: async () => { downloads++; return Buffer.alloc(0); },
+  }), /Updater URL does not match/);
+  assert.equal(downloads, 0);
+});
+
+for (const [name, mutate] of [
+  ['hostile host', asset => { asset.browser_download_url = asset.browser_download_url.replace('github.com/', 'evil.test/'); }],
+  ['hostile repository', asset => { asset.browser_download_url = asset.browser_download_url.replace(`/${REPO}/`, '/attacker/project/'); }],
+  ['userinfo', asset => { asset.browser_download_url = asset.browser_download_url.replace('https://github.com/', 'https://evil.test@github.com/'); }],
+  ['query', asset => { asset.browser_download_url += '?token=example'; }],
+  ['wrong filename', asset => { asset.browser_download_url = asset.browser_download_url.replace(asset.name, 'other-file'); }],
+  ['wrong temporary tag', asset => { asset.browser_download_url = asset.browser_download_url.replace('untagged-2de807e7085fb9ee8a4e', 'untagged-unsafe'); }],
+  ['missing API URL', asset => { delete asset.url; }],
+  ['public URL instead of API URL', asset => { asset.url = `https://github.com/${REPO}/releases/download/v${VERSION}/${asset.name}`; }],
+]) {
+  for (const index of [0, 1]) {
+    test(`rejects draft ${name} for asset ${index} before any fetch`, async () => {
+      const f = draftFixture();
+      mutate(f.release.assets[index]);
+      let downloads = 0;
+      await assert.rejects(() => validateUpdateManifest(f.manifest, f.release, VERSION, REPO, {
+        fetchBytes: async () => { downloads++; return Buffer.alloc(0); },
+      }));
+      assert.equal(downloads, 0);
+    });
+  }
+}
+
+test('draft artifacts still fail digest verification when uploaded bytes differ', async () => {
+  const f = draftFixture();
+  f.downloads[artifactUrl(f)] = Buffer.from('changed draft bytes');
+  await assert.rejects(() => validate(f), /Digest mismatch/);
+});

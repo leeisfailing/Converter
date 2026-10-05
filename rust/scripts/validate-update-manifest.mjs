@@ -27,6 +27,23 @@ function validateAssetUrl(value, repo, prefix, label) {
   const publicAsset = url.hostname === 'github.com' && value.startsWith(prefix)
     && /^[^/]+$/.test(value.slice(prefix.length));
   if (!apiAsset && !publicAsset) throw new Error(`Untrusted download URL for ${label}.`);
+  return apiAsset ? 'api' : 'public';
+}
+
+/** GitHub drafts can expose temporary browser tags while API downloads remain stable. */
+function validateDraftBrowserUrl(value, repo, tag, label) {
+  const repoPrefix = `https://github.com/${repo}/releases/download/`;
+  if (typeof value !== 'string' || !value.startsWith(repoPrefix)) throw new Error(`Untrusted draft browser URL for ${label}.`);
+  const suffix = value.slice(repoPrefix.length);
+  const separator = suffix.indexOf('/');
+  const browserTag = suffix.slice(0, separator);
+  const filename = suffix.slice(separator + 1);
+  if ((browserTag !== tag && !/^untagged-[0-9a-f]+$/.test(browserTag)) || filename !== encodeURIComponent(label)) {
+    throw new Error(`Untrusted draft browser URL for ${label}.`);
+  }
+  if (validateAssetUrl(value, repo, `${repoPrefix}${browserTag}/`, label) !== 'public') {
+    throw new Error(`Untrusted draft browser URL for ${label}.`);
+  }
 }
 
 /** Only the GitHub API receives a token; cross-origin redirects drop it explicitly. */
@@ -155,13 +172,18 @@ export async function validateUpdateManifest(manifest, release, version, repo, o
     const name = decodeURIComponent(artifact.url.slice(prefix.length));
     const asset = assets.get(name);
     if (!asset || asset.size <= 0 || asset.state !== 'uploaded') throw new Error(`Missing or incomplete updater asset: ${name}.`);
-    if (asset.browser_download_url !== artifact.url) throw new Error(`Updater URL does not match uploaded asset: ${name}.`);
+    if (release.draft !== true && asset.browser_download_url !== artifact.url) throw new Error(`Updater URL does not match uploaded asset: ${name}.`);
     if (typeof artifact.signature !== 'string' || !artifact.signature.trim()) throw new Error(`Missing updater signature for ${platform}.`);
     const sigAsset = assets.get(`${name}.sig`);
     if (!sigAsset || sigAsset.size <= 0 || sigAsset.state !== 'uploaded') throw new Error(`Missing uploaded signature for ${name}.`);
     for (const [label, metadata] of [[name, asset], [`${name}.sig`, sigAsset]]) {
-      if (metadata.url) validateAssetUrl(metadata.url, repo, prefix, label);
-      if (metadata.browser_download_url) validateAssetUrl(metadata.browser_download_url, repo, prefix, label);
+      const kind = metadata.url ? validateAssetUrl(metadata.url, repo, prefix, label) : null;
+      if (release.draft === true) {
+        if (kind !== 'api') throw new Error(`Draft asset requires a trusted GitHub API URL: ${label}.`);
+        validateDraftBrowserUrl(metadata.browser_download_url, repo, tag, label);
+      } else if (metadata.browser_download_url) {
+        validateAssetUrl(metadata.browser_download_url, repo, prefix, label);
+      }
       if (!assetUrl(metadata)) throw new Error(`Missing download URL for ${label}.`);
     }
     targets.push({ platform, name, artifact, asset, sigAsset });

@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { publishRelease } from './publish-release.mjs';
 
@@ -45,6 +46,24 @@ test('rerun refuses to overwrite a published release', async () => fixture(async
   options.gh = () => JSON.stringify([[release]]);
   await assert.rejects(() => publishRelease(options), /already published/);
   assert.deepEqual(events, []);
+}));
+
+test('draft recovery preserves matching uploaded files and still verifies before publication', async () => fixture(async (options, release, events) => {
+  release.assets = [{ name: 'latest.json', state: 'uploaded', size: 2, digest: `sha256:${createHash('sha256').update('{}').digest('hex')}` }];
+  const original = options.gh;
+  options.gh = args => args.includes('--slurp') ? JSON.stringify([[release]]) : original(args);
+  await publishRelease(options);
+  assert.ok(!events.includes('release upload'));
+  assert.deepEqual(events.slice(-3), ['validate', 'verify bytes', 'release edit']);
+}));
+
+test('draft recovery uploads files when recorded digest differs', async () => fixture(async (options, release, events) => {
+  release.assets = [{ name: 'latest.json', state: 'uploaded', size: 2, digest: `sha256:${'0'.repeat(64)}` }];
+  const original = options.gh;
+  options.gh = args => args.includes('--slurp') ? JSON.stringify([[release]]) : original(args);
+  await publishRelease(options);
+  assert.ok(events.includes('release upload'));
+  assert.equal(events.at(-1), 'release edit');
 }));
 
 test('Linux publisher does not require a Windows portable asset', async () => fixture(async (options, release, events) => {

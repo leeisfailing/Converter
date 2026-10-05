@@ -41,7 +41,13 @@ export async function publishRelease({ directory, manifest, repo, publicKey, tag
     release = JSON.parse(gh(['api', `repos/${repo}/releases/${databaseId}`]));
   }
   const files = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isFile() && entry.name !== 'latest-linux.json').map(entry => path.join(directory, entry.name));
-  gh(['release', 'upload', tag, '--repo', repo, '--clobber', ...files]);
+  const pending = [];
+  for (const file of files) {
+    const asset = release.assets?.find(item => item.name === path.basename(file));
+    if (asset?.state === 'uploaded' && asset.digest === `sha256:${await digest(file)}`) continue;
+    pending.push(file);
+  }
+  if (pending.length) gh(['release', 'upload', tag, '--repo', repo, '--clobber', ...pending]);
   release = JSON.parse(gh(['api', `repos/${repo}/releases/${release.id}`]));
   await validate(manifest, release, manifest.version, repo, { publicKey, requiredPlatforms, tag });
   if (requirePortable) {

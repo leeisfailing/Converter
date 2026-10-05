@@ -70,7 +70,7 @@ it("pauses and resumes queue admission with an accessible pressed state", () => 
   view.rerender(<QueueManager items={[item("one", "pending")]} onRemove={vi.fn()} onCancel={vi.fn()} onClearCompleted={vi.fn()} paused onPauseToggle={onPauseToggle} onRetry={vi.fn()} onRetryFailed={vi.fn()} />);
   const resume = screen.getByRole("button", { name: "Resume queue" });
   expect(resume.getAttribute("aria-pressed")).toBe("true");
-  expect(screen.getByText(/Running tasks finish normally/)).toBeTruthy();
+  expect(screen.getByText(/Running and waiting tasks are paused/)).toBeTruthy();
   fireEvent.click(resume);
   expect(onPauseToggle).toHaveBeenCalledTimes(2);
 });
@@ -95,4 +95,23 @@ it("retains a resume control when a paused queue is cleared", () => {
   expect(screen.getByRole("button", { name: "Resume queue" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Ready when you are" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Retry failed" })).toBeNull();
+});
+
+it("shows suspended work without claiming it is processing", () => {
+  renderQueue([item("one", "active", 42), item("two", "pending")], vi.fn(), { paused: true });
+  expect(screen.getByText("1 suspended")).toBeTruthy();
+  expect(screen.getByText("Paused · 42%")).toBeTruthy();
+  expect(screen.queryByText(/Processing/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel Job one" })).toBeTruthy();
+});
+
+it("prevents overlapping native transitions and explains pending confirmation", () => {
+  const onPauseToggle = vi.fn();
+  renderQueue([item("one", "active")], vi.fn(), { pausePending: true, onPauseToggle });
+  const button = screen.getByRole("button", { name: "Pause queue" });
+  expect(button.getAttribute("disabled")).not.toBeNull();
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect(screen.getByText("Pausing…")).toBeTruthy();
+  fireEvent.click(button);
+  expect(onPauseToggle).not.toHaveBeenCalled();
 });

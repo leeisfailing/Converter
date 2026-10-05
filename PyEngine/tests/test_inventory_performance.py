@@ -9,9 +9,25 @@ from unittest.mock import patch
 from PyEngine.core import gpu
 from PyEngine.workers.ffmpeg import FfmpegWorker
 from PyEngine.workers.target_size import _execute
+from PyEngine.core.config import find_binary
 
 
 class InventoryPerformanceTests(unittest.TestCase):
+    def test_target_progress_streams_before_process_exit_and_never_regresses(self):
+        worker = FfmpegWorker()
+        worker._init_process()
+        events = []
+        worker.on_progress = lambda percent: events.append((percent, worker._process.poll()))
+        command = [find_binary('ffmpeg'), '-v', 'error', '-re', '-f', 'lavfi',
+                   '-i', 'color=s=64x64:r=10:d=2', '-f', 'null', '-']
+        _execute(worker, command, progress_duration=2, progress_range=(10, 40))
+        self.assertTrue(any(10 < percent < 40 and status is None for percent, status in events), events)
+        count = len(events)
+        _execute(worker, command, progress_duration=2, progress_range=(10, 40))
+        self.assertEqual(len(events), count)
+        self.assertEqual([percent for percent, _ in events], sorted(set(percent for percent, _ in events)))
+        self.assertIsNone(worker._process)
+
     def test_gpu_inventories_overlap_and_encodes_stay_sequential(self):
         gpu.detect_gpu.cache_clear()
         barrier = threading.Barrier(2)

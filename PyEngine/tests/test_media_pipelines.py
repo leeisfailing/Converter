@@ -160,6 +160,43 @@ class PipelineTests(unittest.TestCase):
                     self.assertEqual(command[command.index('-c:v') + 1], encoder)
                     self.assertNotIn('-pass', command)
                     self.assertNotIn('libx264', command)
+                    if encoder.endswith('_nvenc'):
+                        self.assertEqual(command[command.index('-hwaccel') + 1], 'cuda')
+                        self.assertEqual(command[command.index('-hwaccel_output_format') + 1], 'cuda')
+
+    def test_nvidia_resolution_fallback_really_fits_budget_on_cuda(self):
+        from PyEngine.workers import target_size
+        if not any(e['id'] == 'h264_nvenc' for e in detect_gpu()['all_encoders']):
+            self.skipTest('Working NVIDIA encoder required')
+        source = self.root / 'fallback-source.mp4'
+        self.encode(['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=15:duration=2',
+                     '-c:v', 'libx264', '-preset', 'ultrafast', str(source)])
+        output = self.root / 'fallback-output.mp4'
+        worker = ReducerWorker(str(source), str(output), target_bytes=30000, preferred_encoder='h264_nvenc')
+        execute = target_size._execute
+        attempts = []
+        def force_resolution_fallback(worker, command, **kwargs):
+            if kwargs.get('capture_output'):
+                return execute(worker, command, **kwargs)
+            attempts.append(command)
+            if len(attempts) <= 12:
+                # Force the resolution stage without spending twelve full
+                # encodes; every subsequent retry uses real CUDA/NVENC.
+                Path(command[-1]).write_bytes(b'x' * 60000)
+                return b''
+            return execute(worker, command, **kwargs)
+        with patch.object(target_size, '_execute', side_effect=force_resolution_fallback):
+            ok, message, _ = run_worker(worker, timeout=60)
+        self.assertTrue(ok, message)
+        self.assertLessEqual(output.stat().st_size, 30000)
+        stream = self.streams(output)[0]
+        self.assertAlmostEqual(float(stream['duration']), 2, delta=0.2)
+        self.assertLess(stream['width'], 640)
+        for command in attempts[12:]:
+            self.assertEqual(command[command.index('-c:v') + 1], 'h264_nvenc')
+            self.assertEqual(command[command.index('-rc') + 1], 'vbr')
+            self.assertEqual(command[command.index('-hwaccel') + 1], 'cuda')
+            self.assertIn('scale_cuda', command[command.index('-vf') + 1])
 
     def test_failure_and_cancel_preserve_existing_output_for_all_workers(self):
         broken = self.root / 'broken.mp4'

@@ -25,6 +25,7 @@ import {
   startConvertNative,
   startTranscoderNative,
   cancelOperationById,
+  setQueuePaused,
   getSettings,
   getConcurrency,
   sanitizePath,
@@ -213,7 +214,7 @@ export default function App() {
 
   const debugConsole = useDebugConsole({ maxLogs: 500 });
   const toast = useToast();
-  const queue = useQueue();
+  const queue = useQueue(setQueuePaused);
   const appVersion = useAppVersion();
   useQueueEvents(queue, toast.addToast);
 
@@ -345,7 +346,7 @@ export default function App() {
     const parallel = !appSettings.autoDetectGpu && appSettings.selectedGpu === "parallel";
     if (parallel && parallelEncoders === null) return;
     queue.processNextBatch(processNextCallback, parallel ? parallelEncoders ?? [] : undefined);
-  }, [queue.queue, queue.paused, processNextCallback, queue.processNextBatch, parallelEncoders, appSettings.autoDetectGpu, appSettings.selectedGpu]);
+  }, [queue.queue, queue.paused, queue.pausePending, processNextCallback, queue.processNextBatch, parallelEncoders, appSettings.autoDetectGpu, appSettings.selectedGpu]);
 
   const addToQueue = useCallback((item: QueueItem) => {
     queue.enqueue(item);
@@ -651,7 +652,8 @@ export default function App() {
                   onCancel={handleCancelItem}
                   onClearCompleted={clearCompleted}
                   paused={queue.paused}
-                  onPauseToggle={queue.togglePaused}
+                  pausePending={queue.pausePending}
+                  onPauseToggle={() => void queue.togglePaused().catch((error) => toast.addToast("error", "Queue control failed", String(error)))}
                   onRetry={queue.retryItem}
                   onRetryFailed={queue.retryFailed}
                 />

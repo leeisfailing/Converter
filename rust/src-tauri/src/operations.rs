@@ -36,10 +36,12 @@ pub struct Operation {
     _permit: Option<OwnedSemaphorePermit>,
     active_count: Arc<std::sync::atomic::AtomicUsize>,
     active_ops: Arc<Mutex<std::collections::HashMap<String, OpEntry>>>,
+    pause: Arc<crate::process_pause::PauseRegistry>,
 }
 
 impl Drop for Operation {
     fn drop(&mut self) {
+        self.pause.resume_operation(&self.id);
         if self._permit.is_some() {
             self.active_count.fetch_sub(1, Ordering::Relaxed);
         }
@@ -50,6 +52,21 @@ impl Drop for Operation {
 }
 
 impl Operation {
+    pub fn is_paused(&self) -> bool { self.pause.is_paused() }
+
+    pub async fn wait_until_resumed(&self) -> Result<(), String> {
+        while self.is_paused() {
+            if self.is_cancelled() { return Err("Operation was cancelled".into()); }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        if self.is_cancelled() { Err("Operation was cancelled".into()) } else { Ok(()) }
+    }
+
+    pub fn register_process(&self, pid: u32) -> Result<crate::process_pause::ProcessRegistration, String> {
+        if self.is_cancelled() { return Err("Operation was cancelled".into()); }
+        self.pause.register(&self.id, pid)
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
@@ -78,6 +95,7 @@ pub struct Operations {
     limits: std::collections::HashMap<OpType, usize>,
     active_counts: std::collections::HashMap<OpType, Arc<std::sync::atomic::AtomicUsize>>,
     active_ops: Arc<Mutex<std::collections::HashMap<String, OpEntry>>>,
+    pause: Arc<crate::process_pause::PauseRegistry>,
 }
 
 impl Default for Operations {
@@ -113,6 +131,7 @@ impl Operations {
             limits: limit_map,
             active_counts,
             active_ops: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            pause: Arc::new(crate::process_pause::PauseRegistry::default()),
         }
     }
 
@@ -130,7 +149,7 @@ impl Operations {
         }
         // Register before waiting, and remove registration even if this future
         // is dropped. Otherwise a queued cancellation can start work later.
-        let mut operation = Operation { id, op_type, cancelled, _permit: None, active_count: self.active_counts[&op_type].clone(), active_ops: self.active_ops.clone() };
+        let mut operation = Operation { id, op_type, cancelled, _permit: None, active_count: self.active_counts[&op_type].clone(), active_ops: self.active_ops.clone(), pause: self.pause.clone() };
         let permit = tokio::select! {
             biased;
             _ = operation.wait_cancelled() => return Err("Operation was cancelled".into()),
@@ -141,14 +160,18 @@ impl Operations {
         }
         operation.active_count.fetch_add(1, Ordering::Relaxed);
         operation._permit = Some(permit);
+        operation.wait_until_resumed().await?;
         Ok(operation)
     }
+
+    pub fn set_paused(&self, paused: bool) -> Result<(), String> { self.pause.set_paused(paused) }
 
     /// Cancel a running operation by id. Returns true if found and cancelled.
     pub fn cancel(&self, id: &str) -> bool {
         if let Ok(ops) = self.active_ops.lock() {
             if let Some(entry) = ops.get(id) {
                 entry.cancelled.store(true, Ordering::Release);
+                self.pause.resume_operation(id);
                 return true;
             }
         }
@@ -158,8 +181,9 @@ impl Operations {
     /// Cancel all active operations.
     pub fn cancel_all(&self) {
         if let Ok(ops) = self.active_ops.lock() {
-            for entry in ops.values() {
+            for (id, entry) in ops.iter() {
                 entry.cancelled.store(true, Ordering::Release);
+                self.pause.resume_operation(id);
             }
         }
     }
@@ -291,6 +315,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pause_blocks_admission_and_cancel_wakes_paused_waiter() {
+        let ops = Operations::default();
+        ops.set_paused(true).unwrap();
+        let waiting = ops.begin(OpType::Convert, "paused-waiter".into());
+        tokio::pin!(waiting);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut waiting).await.is_err());
+        assert!(ops.cancel("paused-waiter"));
+        assert!(tokio::time::timeout(std::time::Duration::from_secs(1), &mut waiting).await.unwrap().is_err());
+        ops.set_paused(false).unwrap();
+        assert!(ops.begin(OpType::Convert, "resumed".into()).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn cancellation_wakes_a_silent_operation() {
         let ops = Operations::default();
         let operation = ops.begin(OpType::Convert, "silent".into()).await.unwrap();
@@ -302,4 +339,11 @@ mod tests {
             tokio::join!(operation.wait_cancelled(), cancelled);
         }).await.expect("cancellation should not depend on engine output");
     }
+}
+
+/// Pause admission and suspend all owned media children transactionally.
+#[tauri::command]
+pub fn set_queue_paused(app: tauri::AppHandle, paused: bool) -> Result<(), String> {
+    use tauri::Manager;
+    app.state::<Operations>().set_paused(paused)
 }

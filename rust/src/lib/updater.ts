@@ -86,12 +86,14 @@ function fail(action: UpdateState["failedAction"], error: unknown) {
   console.error(`[updater] ${action} failed:`, error);
   const message = error instanceof Error ? error.message : String(error);
   let friendly = message;
-  if (message.includes("timeout") || message.includes("timed out")) {
+  if (message.includes("404") || message.includes("Not Found")) {
+    friendly = action === "check"
+      ? "No update manifest found on this update channel. The release may be missing or still publishing."
+      : "The update download is no longer available. Check for updates again or download a release from GitHub.";
+  } else if (message.includes("timeout") || message.includes("timed out")) {
     friendly = "The update check timed out. Please check your internet connection and try again.";
   } else if (message.includes("fetch") || message.includes("network") || message.includes("ENOTFOUND")) {
     friendly = "Could not reach the update server. Please check your internet connection.";
-  } else if (message.includes("404") || message.includes("Not Found")) {
-    friendly = "No update manifest found. The release may still be publishing.";
   }
   setState({ status: "error", failedAction: action, error: friendly });
 }

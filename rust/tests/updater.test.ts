@@ -37,6 +37,26 @@ function update() {
 }
 
 describe("updater lifecycle", () => {
+  it("reports a missing manifest even when the error also mentions fetching", async () => {
+    mocks.check.mockRejectedValue(new Error("Failed to fetch update: HTTP 404 Not Found"));
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    expect(store.getUpdaterState()).toMatchObject({ status: "error", failedAction: "check" });
+    expect(store.getUpdaterState().error).toContain("No update manifest");
+    expect(store.getUpdaterState().error).not.toContain("internet connection");
+  });
+
+  it("distinguishes a missing update download from a missing manifest", async () => {
+    const available = update();
+    available.downloadAndInstall.mockRejectedValue(new Error("Failed to fetch update: HTTP 404 Not Found"));
+    mocks.check.mockResolvedValue(available);
+    const store = await import("../src/lib/updater");
+    await store.checkForUpdate();
+    await store.downloadAndInstallUpdate();
+    expect(store.getUpdaterState().error).toContain("update download is no longer available");
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+  });
+
   it("explains why a bare Linux executable cannot install an AppImage update", async () => {
     mocks.invoke.mockResolvedValue("unsupported");
     const store = await import("../src/lib/updater");

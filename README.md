@@ -62,8 +62,9 @@ the shared project.
 
 Add work to the queue and keep using the other tools while jobs process.
 Progress, download speed, cancellation, and errors appear beside each job.
-**Pause queue** holds pending work while active jobs finish; **Resume queue**
-starts scheduling again. Retry failed or cancelled jobs individually, or retry
+**Pause queue** suspends running media processes and holds waiting jobs;
+**Resume queue** continues the same running jobs and starts scheduling again.
+Paused jobs can still be cancelled. Retry failed or cancelled jobs individually, or retry
 all failed jobs. Each retry starts a fresh attempt with the original options.
 Clear finished jobs when you no longer need their history.
 
@@ -77,6 +78,10 @@ Hardware encoding can use NVIDIA NVENC, AMD AMF, or Intel Quick Sync when the
 drivers and FFmpeg build support them. Choose CPU when hardware encoding is
 unavailable. ONNX model inference and FFmpeg encoding use separate acceleration
 paths. Selecting a video encoder does not install a GPU inference provider.
+The selected encoder controls media processing; the desktop may render the
+interface on another GPU. NVIDIA's dedicated encoder utilization can be high
+while its general GPU utilization is low. Audio, file I/O, and unsupported
+decoding/filtering operations may still use CPU resources.
 AI models download when first needed.
 
 TikTok links use the third-party TikWM service, including watermark options.

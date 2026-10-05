@@ -4,9 +4,8 @@ A desktop workspace for downloading, converting, compressing, upscaling, and
 AI-enhancing video, audio, and images. Built with Tauri 2, React, Rust, Python,
 C++, FFmpeg, yt-dlp, and ONNX Runtime.
 
-[Downloads](https://github.com/leeisfailing/Converter/releases) ·
-[Report an issue](https://github.com/leeisfailing/Converter/issues) ·
-[Linux release setup](docs/releases.md)
+Download packages from this repository’s **Releases** tab and report bugs through
+**Issues**. [Linux release setup](docs/releases.md) · [Privacy](PRIVACY.md)
 
 ## Download and run
 
@@ -99,7 +98,7 @@ Use **Node.js 24**, current stable Rust/Cargo, Python 3.11+, and CMake 3.20+.
 All npm commands run in `rust/`; there is no root `package.json`.
 
 ```bash
-git clone https://github.com/leeisfailing/Converter.git
+git clone https://github.com/OWNER/REPO.git Converter
 cd Converter
 ```
 
@@ -336,5 +335,5 @@ by Git. Recreate them with the setup commands after a fresh checkout.
 
 ## License
 
-MIT. Third-party components and models retain their own licenses. SF Pro is a
+[MIT](LICENSE). Third-party components and models retain their own licenses. SF Pro is a
 local font preference, not a bundled font asset.

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { parseGitHubRemote, resolveRepository } from './resolve-repository.mjs';
 
 test('prefers GITHUB_REPOSITORY when set', () => {
-  const repo = resolveRepository({ env: { GITHUB_REPOSITORY: 'leeisfailing/Converter' }, readOrigin: () => 'github.com/other/repo' });
-  assert.equal(repo, 'leeisfailing/Converter');
+  const repo = resolveRepository({ env: { GITHUB_REPOSITORY: 'example/project' }, readOrigin: () => 'github.com/other/repo' });
+  assert.equal(repo, 'example/project');
 });
 
 test('rejects a malformed GITHUB_REPOSITORY', () => {
@@ -15,8 +15,8 @@ test('rejects a malformed GITHUB_REPOSITORY', () => {
 });
 
 test('falls back to the origin remote', () => {
-  const repo = resolveRepository({ env: {}, readOrigin: () => 'https://github.com/leeisfailing/Converter.git' });
-  assert.equal(repo, 'leeisfailing/Converter');
+  const repo = resolveRepository({ env: {}, readOrigin: () => 'https://github.com/example/project.git' });
+  assert.equal(repo, 'example/project');
 });
 
 test('fails instead of guessing a repository', () => {
@@ -24,9 +24,9 @@ test('fails instead of guessing a repository', () => {
 });
 
 test('parses github remote URLs', () => {
-  assert.equal(parseGitHubRemote('https://github.com/leeisfailing/Converter.git'), 'leeisfailing/Converter');
-  assert.equal(parseGitHubRemote('git@github.com:leeisfailing/Converter.git'), 'leeisfailing/Converter');
-  assert.equal(parseGitHubRemote('ssh://git@github.com/leeisfailing/Converter'), 'leeisfailing/Converter');
-  assert.equal(parseGitHubRemote('https://gitlab.com/leeisfailing/Converter.git'), null);
+  assert.equal(parseGitHubRemote('https://github.com/example/project.git'), 'example/project');
+  assert.equal(parseGitHubRemote('git@github.com:example/project.git'), 'example/project');
+  assert.equal(parseGitHubRemote('ssh://git@github.com/example/project'), 'example/project');
+  assert.equal(parseGitHubRemote('https://gitlab.com/example/project.git'), null);
   assert.equal(parseGitHubRemote('not a remote'), null);
 });

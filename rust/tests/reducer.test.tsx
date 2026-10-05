@@ -24,9 +24,9 @@ it.each([['KB', 1500], ['MB', 1_500_000], ['GB', 1_500_000_000]])('queues a deci
 });
 
 it.each([
-  ['/home/lee/Media.v2/voice.wav', 'audio', '/home/lee/Media.v2/voice_reduced.mp3'],
-  ['/home/lee/Media.v2/photo.PNG', 'photo', '/home/lee/Media.v2/photo_reduced.webp'],
-  ['/home/lee/Media.v2/clip', 'video', '/home/lee/Media.v2/clip_reduced.mp4'],
+  ['/home/user/Media.v2/voice.wav', 'audio', '/home/user/Media.v2/voice_reduced.mp3'],
+  ['/home/user/Media.v2/photo.PNG', 'photo', '/home/user/Media.v2/photo_reduced.webp'],
+  ['/home/user/Media.v2/clip', 'video', '/home/user/Media.v2/clip_reduced.mp4'],
 ])('queues backend-compatible reduction output for %s', async (input, type, output) => {
   vi.mocked(open).mockResolvedValueOnce(input);
   vi.mocked(detectFile).mockResolvedValueOnce({ ok: true, file_type: type } as Awaited<ReturnType<typeof detectFile>>);

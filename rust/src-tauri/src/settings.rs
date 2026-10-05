@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-const APP_FOLDER: &str = "Converter by Lee";
+const APP_FOLDER: &str = "Converter";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// Where downloads are saved (default: ~/Documents/Converter by Lee/Downloads/)
+    /// Where downloads are saved (default: ~/Documents/Converter/Downloads/)
     pub download_dir: String,
-    /// Where reduced/converted files go (default: ~/Documents/Converter by Lee/Output/)
+    /// Where reduced/converted files go (default: ~/Documents/Converter/Output/)
     pub output_dir: String,
     /// Use GPU hardware encoding when available (default: true)
     #[serde(default = "default_use_gpu")]

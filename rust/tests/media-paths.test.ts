@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { splitMediaPath, transcodeExtension } from "../src/lib/media-paths";
 
 it.each([
-  ["/home/lee/Media.v2/clip", "/home/lee/Media.v2/clip", ""],
+  ["/home/user/Media.v2/clip", "/home/user/Media.v2/clip", ""],
   ["C:\\Media.v2\\clip.MOV", "C:\\Media.v2\\clip", ".mov"],
   ["/tmp/.hidden", "/tmp/.hidden", ""],
   ["/tmp/.hidden.mp4", "/tmp/.hidden", ".mp4"],

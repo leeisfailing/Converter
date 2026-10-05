@@ -20,9 +20,9 @@ describe("download path validation", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it.each([
-    String.raw`C:\Users\Lee\Documents\Converter by Lee\Downloads`,
+    String.raw`C:\Users\Sample User\Documents\Converter\Downloads`,
     String.raw`\\server\share\Downloads`,
-    "C:/Users/Lee/Documents/Converter by Lee/Downloads",
+    "C:/Users/Sample User/Documents/Converter/Downloads",
   ])("passes the destination unchanged to the download command: %s", async (outputDir) => {
     await startDownload({
       url: "https://www.youtube.com/watch?v=9tGvNx4tXKo",

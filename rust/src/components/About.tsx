@@ -40,7 +40,7 @@ export default function About({ onClose, hasPendingWork, onOpenBugReport }: Prop
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
           <h2 id="about-title" className="text-base font-semibold">About Converter</h2>
-          <p className="text-xs text-app-text-secondary mt-1">Media downloader and converter by Lee.</p>
+          <p className="text-xs text-app-text-secondary mt-1">Download, convert, and enhance your media.</p>
         </div>
         <button type="button" onClick={onClose} disabled={locked} aria-label="Close About" className="btn-icon disabled:opacity-40">
           <X size={16} aria-hidden="true" />

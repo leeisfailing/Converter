@@ -23,10 +23,10 @@ in arguments or shell history:
 
 ```bash
 gh auth login
-gh secret set TAURI_SIGNING_PRIVATE_KEY --repo leeisfailing/Converter --env linux-release < /secure/path/updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY --repo OWNER/REPO --env linux-release < /secure/path/updater.key
 # Encrypted key only:
-gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo leeisfailing/Converter --env linux-release < /secure/path/updater-password
-gh secret list --repo leeisfailing/Converter --env linux-release
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo OWNER/REPO --env linux-release < /secure/path/updater-password
+gh secret list --repo OWNER/REPO --env linux-release
 ```
 
 Protect those files with owner-only permissions. Never upload the `.pub` file as the
@@ -43,7 +43,7 @@ second location outside this repository and retain them across machine changes.
 The **linux-release** environment isolates signing secrets from Windows releases.
 
 Linux overrides the updater endpoint to use only
-`https://github.com/leeisfailing/Converter/releases/download/updater-linux/latest-linux.json`.
+`https://github.com/OWNER/REPO/releases/download/updater-linux/latest-linux.json`.
 No Supabase service or extra access token is required. Build/check jobs use read-only
 repository permissions; only the final publish job receives `contents: write`.
 

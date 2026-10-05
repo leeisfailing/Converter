@@ -59,3 +59,10 @@ rust/src-tauri/private_key_hex.txt
 
 # Updater artifacts
 rust/src-tauri/target/release/bundle/
+
+# Generated native build files may contain local machine paths
+cpp_engine/build/
+
+# Linux signing backups belong outside the checkout
+**/linux-updater.key
+**/linux-updater.key.password

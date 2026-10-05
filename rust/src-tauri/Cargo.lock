@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "converter"
-version = "4.0.8"
+version = "4.0.9"
 dependencies = [
  "dirs",
  "libloading 0.8.9",

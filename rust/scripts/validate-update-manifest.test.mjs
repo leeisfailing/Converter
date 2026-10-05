@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { validateUpdateManifest, defaultFetchBytes } from './validate-update-manifest.mjs';
 
-const REPO = 'leeisfailing/Converter';
+const REPO = 'example/project';
 const VERSION = '3.0.0';
 const SIGNATURE = 'signed-package';
 const INSTALLER_BYTES = Buffer.from('pretend installer bytes');
@@ -129,12 +129,12 @@ test('rejects corrupted Linux AppImage bytes', async () => {
 });
 
 for (const hostile of [
-  'https://api.github.com.evil.test/repos/leeisfailing/Converter/releases/assets/1001',
-  'https://api.github.com@evil.test/repos/leeisfailing/Converter/releases/assets/1001',
-  'https://evil.test@api.github.com/repos/leeisfailing/Converter/releases/assets/1001',
-  'http://api.github.com/repos/leeisfailing/Converter/releases/assets/1001',
+  'https://api.github.com.evil.test/repos/example/project/releases/assets/1001',
+  'https://api.github.com@evil.test/repos/example/project/releases/assets/1001',
+  'https://evil.test@api.github.com/repos/example/project/releases/assets/1001',
+  'http://api.github.com/repos/example/project/releases/assets/1001',
   'https://api.github.com/repos/attacker/repo/releases/assets/1001',
-  'https://api.github.com/repos/leeisfailing/Converter/releases/assets/not-a-number',
+  'https://api.github.com/repos/example/project/releases/assets/not-a-number',
   'https://github.com/attacker/repo/releases/download/v3.0.0/asset',
 ]) {
   for (const index of [0, 1, 2, 3]) {

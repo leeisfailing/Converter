@@ -49,18 +49,26 @@ export async function publishRelease({ directory, manifest, repo, publicKey, tag
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const directory = path.resolve(process.argv[2]);
-  const manifest = JSON.parse(readFileSync(path.join(directory, 'latest.json')));
-  const repo = resolveRepository();
-  const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
-  const publicKey = readReleasePublicKey(config, process.argv.includes('--linux-only'));
-  const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-  if (process.argv.includes('--linux-only')) {
-    const { publishLinuxRelease } = await import('./publish-linux-release.mjs');
-    await publishLinuxRelease({ directory, manifest, repo, publicKey, gh });
-  } else {
-    await publishRelease({ directory, manifest, repo, publicKey, gh });
-  }
-  const tag = `${process.argv.includes('--linux-only') ? 'linux-v' : 'v'}${manifest.version}`;
-  console.log(`Published complete release ${tag}: https://github.com/${repo}/releases/tag/${tag}`);
+  const main = async () => {
+    const directory = path.resolve(process.argv[2]);
+    const manifest = JSON.parse(readFileSync(path.join(directory, 'latest.json')));
+    const repo = resolveRepository();
+    const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url)));
+    const publicKey = readReleasePublicKey(config, process.argv.includes('--linux-only'));
+    const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+    if (process.argv.includes('--linux-only')) {
+      const { publishLinuxRelease } = await import('./publish-linux-release.mjs');
+      await publishLinuxRelease({ directory, manifest, repo, publicKey, gh });
+    } else {
+      await publishRelease({ directory, manifest, repo, publicKey, gh });
+    }
+    const tag = `${process.argv.includes('--linux-only') ? 'linux-v' : 'v'}${manifest.version}`;
+    console.log(`Published complete release ${tag}: https://github.com/${repo}/releases/tag/${tag}`);
+  };
+  // Start after module evaluation rather than suspending it: Linux imports this
+  // module's exports, so top-level await here would create a circular wait.
+  main().catch(error => {
+    console.error(`Release publication failed: ${error instanceof Error ? error.message : error}`);
+    process.exitCode = 1;
+  });
 }

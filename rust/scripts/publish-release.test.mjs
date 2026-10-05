@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { publishRelease } from './publish-release.mjs';
 
 async function fixture(callback) {
@@ -48,3 +50,23 @@ test('Linux publisher does not require a Windows portable asset', async () => fi
   await publishRelease(options);
   assert.equal(events.at(-1), 'release edit');
 }));
+
+for (const [label, args] of [['Linux', ['--linux-only']], ['default', []]]) {
+  test(`${label} publisher CLI finishes module loading and reaches GitHub CLI`, () => {
+    if (process.platform === 'win32') return; // Executable stub targets the Linux release runner.
+    const directory = mkdtempSync(path.join(tmpdir(), 'converter-publisher-cli-test-'));
+    try {
+      writeFileSync(path.join(directory, 'latest.json'), JSON.stringify({ version: '1.2.3', notes: 'Test' }));
+      writeFileSync(path.join(directory, 'gh'), `#!${process.execPath}\nprocess.stderr.write('publisher-gh-sentinel\\n');\nprocess.exit(42);\n`, { mode: 0o700 });
+      const env = { ...process.env, GITHUB_REPOSITORY: 'example/project', PATH: `${directory}${path.delimiter}${process.env.PATH ?? ''}` };
+      for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD']) delete env[name];
+      const result = spawnSync(process.execPath, [fileURLToPath(new URL('./publish-release.mjs', import.meta.url)), directory, ...args], {
+        env, encoding: 'utf8', timeout: 15000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /publisher-gh-sentinel/);
+      assert.doesNotMatch(result.stderr, /unsettled top-level await/i);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+}

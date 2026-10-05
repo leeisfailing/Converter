@@ -82,6 +82,31 @@ version tags to prevent simultaneous writes to the stable Linux channel.
 The manifest itself is not signed. Tauri verifies the AppImage artifact signature
 when installing an update. Keep the AppImage in a writable location so it can be replaced.
 
+## Recover publication from a successful signed package
+
+Rerunning an old tagged workflow executes the old publisher code at that tag. Use
+**Linux Release Recovery** from **main** to run the current fixed publisher against
+the original signed artifact without rebuilding, retagging or changing the version.
+
+```bash
+gh workflow run linux-release-recovery.yml --repo OWNER/REPO --ref main \
+  -f run_id=37323830893 -f tag=linux-v4.0.9
+```
+
+The read-only validation job tests the current scripts and requires the source run
+to be a completed, same-repository `push` run of the Linux Release workflow. Its
+commit must match the existing immutable tag, its selected attempt must contain a
+successful Linux package job, and its unique `release-linux` artifact must remain
+available with valid provenance and a SHA-256 digest. Recovery accepts only the
+current app version, not arbitrary earlier versions or unsigned smoke artifacts.
+
+The workflow downloads that exact artifact ID and verifies its signature using the
+current Linux public key before a separate job receives release write permission.
+The publisher repeats signature checks, validates uploaded assets, preserves already
+published binaries, and refuses to move the Linux updater channel backward. It uses
+no signing secrets and does not relax the **linux-release** environment's tag policy.
+If the artifact has expired or provenance/signature validation fails, recovery stops.
+
 ## Local build
 
 Run npm commands from `rust/`:

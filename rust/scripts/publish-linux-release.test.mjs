@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { publishLinuxRelease, compareStableVersions } from './publish-linux-release.mjs';
+import { publishLinuxRelease, compareStableVersions, releaseSourceCommit } from './publish-linux-release.mjs';
 
 async function fixture(callback) {
   const directory = mkdtempSync(path.join(tmpdir(), 'converter-linux-publish-test-'));
@@ -69,4 +69,16 @@ test('compares stable versions numerically without integer overflow', () => {
   assert.equal(compareStableVersions('1.2.3', '1.2.3'), 0);
   assert.equal(compareStableVersions('1.2.3', '1.2.4'), -1);
   assert.throws(() => compareStableVersions('1.2.3-beta', '1.2.3'), /stable semver/);
+});
+
+test('recovery channel creation targets the verified original commit rather than main', async () => fixture(async (options, release, events) => {
+  options.env = { LINUX_RELEASE_SOURCE_SHA: 'd'.repeat(40), GITHUB_SHA: 'e'.repeat(40) };
+  await publishLinuxRelease(options);
+  const create = events.find(event => event[0] === 'release' && event[1] === 'create');
+  assert.equal(create[create.indexOf('--target') + 1], 'd'.repeat(40));
+}));
+test('source commit validation rejects malformed recovery provenance', () => {
+  assert.throws(() => releaseSourceCommit({ LINUX_RELEASE_SOURCE_SHA: 'main' }), /full commit hash/);
+  assert.equal(releaseSourceCommit({ GITHUB_SHA: 'e'.repeat(40) }), 'e'.repeat(40));
+  assert.equal(releaseSourceCommit({}), 'HEAD');
 });

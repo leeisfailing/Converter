@@ -15,9 +15,18 @@ export function compareStableVersions(left, right) {
   return 0;
 }
 
+/** Recovery supplies the original verified tag commit without overriding runner defaults. */
+export function releaseSourceCommit(env = process.env) {
+  if (env.LINUX_RELEASE_SOURCE_SHA !== undefined && !/^[0-9a-f]{40}$/.test(env.LINUX_RELEASE_SOURCE_SHA)) {
+    throw new Error('Linux release source SHA must be a full commit hash.');
+  }
+  return env.LINUX_RELEASE_SOURCE_SHA ?? env.GITHUB_SHA ?? 'HEAD';
+}
+
 /** Publish immutable Linux binaries before updating the independent Linux channel. */
-export async function publishLinuxRelease({ directory, manifest, repo, publicKey, gh, publish = publishRelease, validate = validateUpdateManifest, loadPublishedManifest, loadChannelManifest }) {
+export async function publishLinuxRelease({ directory, manifest, repo, publicKey, gh, publish = publishRelease, validate = validateUpdateManifest, loadPublishedManifest, loadChannelManifest, env = process.env }) {
   const tag = `linux-v${manifest.version}`;
+  const sourceCommit = releaseSourceCommit(env);
   const pages = JSON.parse(gh(['api', `repos/${repo}/releases?per_page=100`, '--paginate', '--slurp']));
   let release = pages.flat().find(item => item.tag_name === tag);
   if (release && !release.draft) {
@@ -51,7 +60,7 @@ export async function publishLinuxRelease({ directory, manifest, repo, publicKey
     }
   }
   if (!channel) {
-    gh(['release', 'create', 'updater-linux', '--repo', repo, '--target', process.env.GITHUB_SHA ?? 'HEAD', '--title', 'Linux update channel', '--notes', 'Signed Linux AppImage updates.', '--latest=false']);
+    gh(['release', 'create', 'updater-linux', '--repo', repo, '--target', sourceCommit, '--title', 'Linux update channel', '--notes', 'Signed Linux AppImage updates.', '--latest=false']);
   }
   const channelManifest = path.join(directory, 'latest-linux.json');
   writeFileSync(channelManifest, JSON.stringify(manifest, null, 2) + '\n');
